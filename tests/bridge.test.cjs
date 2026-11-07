@@ -142,6 +142,29 @@ test('JSON-RPC errors preserve code and only allowlisted structured data', async
   await bridge.stop();
 });
 
+test('JSON-RPC errors omit secret-bearing string codes', async () => {
+  const {bridge} = createFixture();
+  await bridge.start();
+  const request = bridge.request('thread/list');
+  const id = bridge.nextId - 1;
+
+  bridge.receive({
+    id,
+    error: {
+      code: 'private-token=secret',
+      message: 'private /Users/example token=secret'
+    }
+  });
+
+  await assert.rejects(request, error => {
+    assert.equal(error.message, 'Codex request failed');
+    assert.equal(Object.hasOwn(error, 'code'), false);
+    assert.doesNotMatch(JSON.stringify(error), /private|secret|token|Users/);
+    return true;
+  });
+  await bridge.stop();
+});
+
 test('allowlisted RPC string fields accept only stable enum values', () => {
   assert.deepEqual(redactRpcData({kind: '/Users/example/private', retryable: false}), {
     retryable: false

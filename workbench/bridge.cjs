@@ -32,7 +32,7 @@ class CodexRpcError extends Error {
   constructor(error) {
     super(RPC_ERROR_MESSAGE);
     this.name = 'CodexRpcError';
-    if (typeof error?.code === 'number' || typeof error?.code === 'string') this.code = error.code;
+    if (Number.isInteger(error?.code)) this.code = error.code;
     const data = redactRpcData(error?.data);
     if (data) this.data = data;
   }

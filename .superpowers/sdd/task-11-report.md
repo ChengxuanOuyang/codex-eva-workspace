@@ -38,3 +38,31 @@ snapshot `{ready:false,status:'SIGNED_OUT',checks:{account:true,models:true}}`.
 RPC failures retain their machine-readable `code` and allowlisted structured
 data, while their public message is `Codex request failed`; disconnect events
 emit only `CODEX_DISCONNECTED`.
+
+## Review remediation
+
+The same local v2 schema generation was also checked for
+`v2/ModelListParams.json`: the first `model/list` request may use `{}`, and a
+following page uses the opaque response cursor as `{cursor: nextCursor}`.
+
+### Red evidence
+
+The added review regressions initially failed because:
+
+1. An omitted `account` property with `requiresOpenaiAuth: true` was treated as
+   ready.
+2. A string RPC error code could retain injected secret content.
+3. Only the first model-list page was read, so a later visible model was missed,
+   and later malformed or repeated-cursor pages were never checked.
+
+### Green evidence
+
+- `node --test tests/window-options.test.cjs tests/bridge.test.cjs tests/fake-codex.test.cjs`
+  passed: 40 tests, 0 failures.
+- `npm run lint` passed.
+- `npm run verify` passed: 93 tests, 0 failures (and lint passed).
+
+The catalog reader now validates every page, aggregates launchability across
+pages, rejects repeated cursors, and caps traversal at 100 pages. Only integer
+JSON-RPC codes are preserved; all other codes are omitted from the public
+error object.

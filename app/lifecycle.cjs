@@ -14,6 +14,7 @@ const CLEANUP_FAILED_MESSAGE = 'Shutdown cleanup failed; retrying once.';
 const CLEANUP_FINAL_FAILED_MESSAGE = 'Shutdown cleanup failed after retry; forcing process exit.';
 const FORCE_EXIT_TIMEOUT_MS = 2000;
 const SERVICE_CLOSE_TIMEOUT_MS = 2000;
+const MAX_MODEL_CATALOG_PAGES = 100;
 const READINESS_FAILED_MESSAGE = 'Codex readiness could not be verified.';
 const PLAN_TYPES = new Set([
   'free', 'go', 'plus', 'pro', 'prolite', 'team',
@@ -78,11 +79,25 @@ function launchableModel(model) {
 
 async function verifyCodexReadiness(bridge) {
   const account = await bridge.request('account/read', {});
-  const models = await bridge.request('model/list', {});
-  if (!validAccountResponse(account) || !validModelResponse(models) ||
-    !models.data.some(launchableModel)) throw readinessError();
+  if (!validAccountResponse(account)) throw readinessError();
 
-  if (account.account === null && account.requiresOpenaiAuth) {
+  const models = [];
+  const cursors = new Set();
+  let cursor;
+  for (let page = 0; page < MAX_MODEL_CATALOG_PAGES; page += 1) {
+    const response = await bridge.request('model/list', cursor === undefined ? {} : {cursor});
+    if (!validModelResponse(response)) throw readinessError();
+    models.push(...response.data);
+    if (response.nextCursor === undefined || response.nextCursor === null) break;
+    if (cursors.has(response.nextCursor)) throw readinessError();
+    cursors.add(response.nextCursor);
+    cursor = response.nextCursor;
+    if (page === MAX_MODEL_CATALOG_PAGES - 1) throw readinessError();
+  }
+
+  if (!models.some(launchableModel)) throw readinessError();
+
+  if ((account.account === null || account.account === undefined) && account.requiresOpenaiAuth) {
     return Object.freeze({
       ready: false,
       status: 'SIGNED_OUT',

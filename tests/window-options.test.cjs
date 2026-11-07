@@ -232,6 +232,18 @@ function validModel(overrides = {}) {
   };
 }
 
+function pagedReadinessBridge(account, pages, requests) {
+  return class ReadinessBridge {
+    async start() {}
+    async request(method, params) {
+      requests.push({method, params});
+      if (method === 'account/read') return account;
+      return pages.get(params.cursor) || pages.get(null);
+    }
+    async stop() {}
+  };
+}
+
 test('workbench rejects empty, hidden, blank, and incoherent model catalogs', async () => {
   const account = {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
   const cases = [
@@ -285,6 +297,96 @@ test('signed-out official account response starts with a stable non-ready status
     status: 'SIGNED_OUT',
     checks: {account: true, models: true}
   });
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('official account response may omit account and still reports signed out', async () => {
+  const fixture = startFixture();
+  fixture.dependencies.CodexBridgeClass = readinessBridge(
+    {requiresOpenaiAuth: true},
+    {data: [validModel()], nextCursor: null}
+  );
+  let snapshot;
+  fixture.dependencies.serviceFactory = options => {
+    snapshot = options.snapshot();
+    return {
+      async listen() { return {address: '127.0.0.1', port: 43210}; },
+      async close() {}
+    };
+  };
+
+  await startWorkbench(fixture.dependencies);
+
+  assert.deepEqual(snapshot, {
+    ready: false,
+    status: 'SIGNED_OUT',
+    checks: {account: true, models: true}
+  });
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('workbench aggregates launchable models across every official catalog page', async () => {
+  const fixture = startFixture();
+  const requests = [];
+  fixture.dependencies.CodexBridgeClass = pagedReadinessBridge(
+    {account: {type: 'apiKey'}, requiresOpenaiAuth: false},
+    new Map([
+      [null, {data: [validModel({hidden: true})], nextCursor: 'second-page'}],
+      ['second-page', {data: [validModel()], nextCursor: null}]
+    ]),
+    requests
+  );
+
+  await startWorkbench(fixture.dependencies);
+
+  assert.deepEqual(requests, [
+    {method: 'account/read', params: {}},
+    {method: 'model/list', params: {}},
+    {method: 'model/list', params: {cursor: 'second-page'}}
+  ]);
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('workbench rejects a malformed later model catalog page', async () => {
+  const fixture = startFixture();
+  const requests = [];
+  fixture.dependencies.CodexBridgeClass = pagedReadinessBridge(
+    {account: {type: 'apiKey'}, requiresOpenaiAuth: false},
+    new Map([
+      [null, {data: [validModel()], nextCursor: 'second-page'}],
+      ['second-page', {data: [{id: 'missing required fields'}], nextCursor: null}]
+    ]),
+    requests
+  );
+
+  await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_READINESS_INVALID'});
+  assert.deepEqual(requests, [
+    {method: 'account/read', params: {}},
+    {method: 'model/list', params: {}},
+    {method: 'model/list', params: {cursor: 'second-page'}}
+  ]);
+  assert.equal(fixture.calls.includes('service:create'), false);
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('workbench rejects repeated model catalog cursors without cycling', async () => {
+  const fixture = startFixture();
+  const requests = [];
+  fixture.dependencies.CodexBridgeClass = pagedReadinessBridge(
+    {account: {type: 'apiKey'}, requiresOpenaiAuth: false},
+    new Map([
+      [null, {data: [validModel()], nextCursor: 'repeated-page'}],
+      ['repeated-page', {data: [validModel()], nextCursor: 'repeated-page'}]
+    ]),
+    requests
+  );
+
+  await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_READINESS_INVALID'});
+  assert.deepEqual(requests, [
+    {method: 'account/read', params: {}},
+    {method: 'model/list', params: {}},
+    {method: 'model/list', params: {cursor: 'repeated-page'}}
+  ]);
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
