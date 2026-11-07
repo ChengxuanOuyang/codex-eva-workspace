@@ -37,11 +37,12 @@
     }
   }
 
-  async function health() {
+  async function health({signal} = {}) {
     const response = await root.fetch('/health', {
       cache: 'no-store',
       credentials: 'same-origin',
-      headers: {Accept: 'application/json'}
+      headers: {Accept: 'application/json'},
+      signal
     });
     if (!response.ok) throw Error('Health check unavailable');
     return response.json();

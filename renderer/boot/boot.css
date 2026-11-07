@@ -4,11 +4,11 @@
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-synthesis: none;
   --ink: #102934;
-  --muted: #69808a;
+  --muted: #506a74;
   --ice: #edf6f6;
   --line: rgba(16, 41, 52, 0.18);
   --orange: #f26a22;
-  --orange-deep: #c94718;
+  --orange-deep: #a83d16;
   --red: #a7272f;
   --cyan: #8dbfc5;
 }
@@ -159,7 +159,19 @@ kbd { margin-left: 5px; padding: 2px 4px; border: 1px solid var(--line); border-
 
 .boot-footer { position: fixed; left: 0; right: 0; bottom: 0; height: 36px; padding: 0 34px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; border-top: 1px solid var(--line); background: #102934; color: #dce9e8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; letter-spacing: 0.1em; }
 .boot-footer span:last-child { text-align: right; }
-body[data-phase="waiting"] .sync-assembly::before, body[data-phase="failed"] .sync-assembly::before, body[data-phase="waiting"] .orbit, body[data-phase="failed"] .orbit, body[data-phase="waiting"] .fluid-layer, body[data-phase="failed"] .fluid-layer, body[data-phase="complete"] .orbit { animation-play-state: paused; }
+body[data-phase="waiting"] .sync-assembly::before,
+body[data-phase="waiting"] .orbit,
+body[data-phase="waiting"] .fluid-layer,
+body[data-phase="waiting"] .fluid-glint,
+body[data-phase="waiting"] .telemetry span,
+body[data-phase="waiting"] .signal-dot {
+  animation: none;
+}
+body[data-phase="waiting"] .ring-progress { transition: none; }
+body[data-phase="failed"] .sync-assembly::before,
+body[data-phase="failed"] .orbit,
+body[data-phase="failed"] .fluid-layer,
+body[data-phase="complete"] .orbit { animation-play-state: paused; }
 body[data-phase="waiting"] .fluid-layer, body[data-phase="failed"] .fluid-layer { transform: translateY(22%); }
 body[data-phase="failed"] .diagnostic-message { border-left-color: var(--red); }
 body[data-phase="complete"] .sync-assembly::before { border-color: rgba(61, 143, 123, 0.55); }
@@ -190,5 +202,6 @@ body[data-phase="complete"] .ring-progress { stroke: #3d8f7b; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 120ms !important; }
   .fluid-layer, .fluid-glint, .orbit, .sync-assembly::before, .telemetry span { animation: none !important; transform: none !important; }
+  .ring-progress { transition: none !important; }
   .fluid-layer { bottom: -2%; height: 42%; }
 }

@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 const {nextBootState} = require('../renderer/boot/boot-state.cjs');
 
 test('progress cannot pass 99.2 before backend readiness and confirmation', () => {
@@ -66,4 +69,38 @@ test('complete is accepted only after confirmation and is idempotent', () => {
   assert.deepEqual(complete, {phase: 'complete', progress: 100, ready: true, confirmed: true});
   assert.equal(nextBootState(complete, {type: 'complete'}), complete);
   assert.equal(nextBootState(complete, {type: 'skip'}), complete);
+});
+
+test('browser and CommonJS reducers satisfy the same event matrix', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shared', 'api.js'), 'utf8');
+  const sandbox = {fetch: async () => ({ok: true, json: async () => ({ready: true})})};
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/shared/api.js'});
+  const browserReducer = sandbox.ProjectZeroApi.nextBootState;
+  const states = [
+    {phase: 'syncing', progress: 20, ready: false, confirmed: false},
+    {phase: 'syncing', progress: 99.2, ready: true, confirmed: false},
+    {phase: 'waiting', progress: 20, ready: false, confirmed: false},
+    {phase: 'failed', progress: 73, ready: false, confirmed: false},
+    {phase: 'completing', progress: 99.2, ready: true, confirmed: true},
+    {phase: 'complete', progress: 100, ready: true, confirmed: true}
+  ];
+  const events = [
+    {type: 'tick', delta: 4},
+    {type: 'ready'},
+    {type: 'failed', error: '/private/path'},
+    {type: 'confirm'},
+    {type: 'skip'},
+    {type: 'complete'},
+    {type: 'unknown'}
+  ];
+
+  for (const state of states) {
+    for (const event of events) {
+      const commonResult = nextBootState(state, event);
+      const browserResult = browserReducer(state, event);
+      assert.deepEqual(JSON.parse(JSON.stringify(browserResult)), commonResult, `${state.phase} + ${event.type}`);
+      if (commonResult === state) assert.equal(browserResult, state, `${state.phase} + ${event.type} identity`);
+    }
+  }
 });

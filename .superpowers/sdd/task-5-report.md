@@ -72,3 +72,40 @@ Used the production loopback service and a headless Chromium viewport of 1500×9
 
 - The current task ends at `SYSTEM ONLINE`; transition into the later functional workbench is intentionally deferred to subsequent implementation tasks.
 - The CJS test state machine and browser state machine are parallel small implementations because served code must not expose Node module APIs. Keep their shared contract tests aligned if a future build pipeline does not consolidate them.
+
+## Independent review fix
+
+### RED / GREEN
+
+- RED: the new VM/runtime and static accessibility suite produced 9 expected failures: no injectable controller, overlapping interval-based health polling, no abort/stale-response guard, ticker continuing in waiting, missing progressbar ARIA, incomplete waiting/reduced-motion CSS, and insufficient muted-text contrast.
+- GREEN: `node --test tests/boot-state.test.cjs tests/renderer-assets.test.cjs tests/boot-runtime.test.cjs` passed 19/19.
+- A separate RED/GREEN cycle verified listener cleanup on unload; another verified skip freezes the ticker even when a failed health check has already recovered into the `waiting` phase.
+
+### Runtime changes
+
+- Replaced the immediate boot IIFE with an injectable browser-only `createBootController` while preserving automatic browser startup.
+- Replaced re-entrant `setInterval` health checks with serial `setTimeout` scheduling: the next 500ms poll is created only after the current request settles.
+- Each health request receives an `AbortController` signal. Completion and `pagehide` abort active work, invalidate its generation, clear timers/listeners, and prevent stale responses from writing DOM or overwriting `SYSTEM ONLINE`.
+- The 80ms presentation ticker now stops at 99.2% and immediately on skip, including an already-waiting recovered state; health polling continues while skipped.
+- Live-region content uses change-aware writes, so repeated identical health states do not retrigger announcements.
+
+### Accessibility and motion
+
+- The synchronization ring is a dynamic progressbar with min/max/current ARIA values; `aria-valuenow` updates on every rendered progress change.
+- Waiting explicitly disables fluid, glint, orbit, telemetry, signal-dot animation and ring transition.
+- Reduced Motion explicitly sets the ring transition to `none` rather than inheriting a longer global transition duration.
+- Darkened `--muted` and `--orange-deep`; automated WCAG contrast calculations verify both functional small-text colors are at least 4.5:1 on the ice surface.
+
+### Shared contract and verification
+
+- Added a sandboxed VM contract test that loads `renderer/shared/api.js` without adding any CommonJS/Node branch and runs the same state/event matrix against the browser and CJS reducers, including identity-preserving no-ops.
+- Runtime tests use a deterministic fake clock and controllable delayed health promises; no GUI or real timer waits are involved.
+- Final `npm run verify`: lint passed; 63/63 tests passed.
+- Final `git diff --check`: passed.
+
+### Review self-check
+
+- At most one health request can be active; no next poll exists until settlement.
+- Completion and unload abort the current request and block all later writes.
+- Skip never changes readiness/confirmation and now also makes the presentation mechanically static.
+- Browser-served JavaScript still contains no Node API, embedded credential, or remote resource.
