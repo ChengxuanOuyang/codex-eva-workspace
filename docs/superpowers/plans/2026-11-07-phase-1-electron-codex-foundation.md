@@ -331,7 +331,7 @@ test('skip changes presentation only', () => {
 
 `nextBootState` 只接受 `tick`、`ready`、`failed`、`confirm`、`skip`、`complete`；任何未知事件返回原状态。`confirm` 只有在 `progress === 99.2 && ready` 时进入 `completing`。`skip` 进入无动画等待页而不是工作台。
 
-HTML/CSS 按批准视觉实现冰白控制面、原创 `PROJECT ZERO` 几何印记、侧边状态六边形、橙色流体层和同步环；不得包含 NERV、官方人物图或参考视频像素。`prefers-reduced-motion: reduce` 禁用液面大幅位移并缩短过渡。
+HTML/CSS 按批准的「徽记 + 核心侧影」视觉实现冰白控制面、原创 `PROJECT ZERO / 00` 几何印记、侧边状态六边形、橙色流体层和同步环。同步核心加入本项目原创的冰蓝短发、红瞳信号与白色驾驶服几何侧影，且不得遮挡 99.2% 读数或操作按钮；不得包含 NERV 叶片/字标、官方人物图、临摹构图或参考视频像素。`prefers-reduced-motion: reduce` 禁用液面和侧影的大幅位移并缩短过渡。
 
 `boot.js` 每 500ms 请求 `/health`；后端 ready 后派发 `ready`；3 秒后显示跳过；`Esc` 仅派发 `skip`；确认按钮按状态启用。
 

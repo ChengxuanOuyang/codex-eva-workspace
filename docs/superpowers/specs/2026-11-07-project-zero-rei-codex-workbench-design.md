@@ -36,7 +36,21 @@ They must not include:
 
 The open theme may use an original visual vocabulary built from ice white, pale blue, restrained red accents, white-hair/red-eye abstraction, LCL-like orange fluid motion, geometric control panels, warning cells, and synchronization instrumentation. It must not trace or reproduce a specific official image.
 
+### 3.1 Approved public Rei-theme composition
+
+The approved public boot composition is **Mark + Core Silhouette**:
+
+- a new `PROJECT ZERO / 00` geometric system mark appears in the upper-left identity area;
+- the synchronization core contains an original abstract pilot silhouette using ice-blue short-hair geometry, two restrained red-eye signals, and a white suit-like control shape;
+- the silhouette remains subordinate to the 99.2% synchronization readout and does not obscure controls or diagnostics;
+- the mark must not use the NERV leaf, NERV wordmark, Evangelion wordmark, official typography, or a traced official composition;
+- the pilot abstraction must be authored for this project and must not reproduce an official Rei illustration, anime frame, promotional pose, or reference-video pixel.
+
+This composition is intended to make the Rei/Unit-00 inspiration immediately legible while keeping every public visual asset original and redistributable. Its source form should remain editable and its asset record must state the author, license, and checksum before release.
+
 The application will support local private theme packs. Theme-pack files live outside the Git repository under Application Support and are excluded from export by default. The project will not download, provide, or encourage redistribution of copyrighted official assets.
+
+Private packs may reference user-supplied local images, including marks or character art the user is independently authorized to use. Those files stay in Application Support, are ignored by Git, are excluded from diagnostics and exports, and are never bundled with public releases. The application does not ship or fetch those files.
 
 ## 4. Reference sequence and boot behavior
 

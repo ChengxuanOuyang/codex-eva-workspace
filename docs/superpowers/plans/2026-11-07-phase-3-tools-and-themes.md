@@ -177,6 +177,8 @@ test('private theme export excludes local copyrighted assets by default', async 
 
 默认原创主题清单只引用仓库 `assets/themes/project-zero` 内资产，并包含 `license: MIT` 或各资产许可证标识。
 
+默认主题固定采用已批准的「徽记 + 核心侧影」构图：公开包只包含原创 `PROJECT ZERO / 00` 徽记与原创绫波丽视觉编码。私人主题可导入用户自行提供且有权使用的官方风格图片，但这些文件只安装到 Application Support，必须被 Git、诊断、设置导出和公开构建排除；应用不得下载或附带此类素材。
+
 - [ ] **步骤 4：运行测试并检查仓库**
 
 运行：`node --test tests/themes.test.cjs && git check-ignore private-themes/sample.png`
