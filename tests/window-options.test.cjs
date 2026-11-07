@@ -10,6 +10,7 @@ const {
   CLEANUP_FAILED_MESSAGE,
   CLEANUP_FINAL_FAILED_MESSAGE,
   closeServiceAndConfirm,
+  createReadinessStore,
   installCleanupHandler,
   startWorkbench,
   stopBridgeAndConfirm
@@ -64,8 +65,9 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     }
   }
 
-  class FakeBridge {
+  class FakeBridge extends EventEmitter {
     constructor(selectedExecutable) {
+      super();
       calls.push(`bridge:create:${selectedExecutable}`);
       this.connected = false;
     }
@@ -103,6 +105,7 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
 
     stop() {
       calls.push('bridge:stop');
+      this.connected = false;
     }
   }
 
@@ -116,6 +119,7 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     }
   };
 
+  let serviceOptions;
   const dependencies = {
     app,
     BrowserWindow: FakeBrowserWindow,
@@ -130,12 +134,13 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     userPath: '/chosen/codex',
     CodexBridgeClass: FakeBridge,
     serviceFactory: options => {
+      serviceOptions = options;
       calls.push('service:create');
       assert.deepEqual(options.snapshot(), {
-        ready: true,
-        checks: {account: true, models: true}
+        ready: false,
+        code: 'INITIALIZING'
       });
-      assert.doesNotMatch(JSON.stringify(options.snapshot()), /private|email|model-id|plus/);
+      assert.equal(typeof options.retryInitialization, 'function');
       assert.equal(options.bootRoot, '/renderer/boot');
       assert.equal(options.sharedRoot, '/renderer/shared');
       return service;
@@ -145,8 +150,34 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     cleanups: []
   };
 
-  return {app, calls, dependencies, getWindow: () => window};
+  return {
+    app,
+    calls,
+    dependencies,
+    getServiceOptions: () => serviceOptions,
+    getWindow: () => window
+  };
 }
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {promise, resolve, reject};
+}
+
+test('readiness store exposes only stable redacted states', () => {
+  const readiness = createReadinessStore();
+
+  assert.deepEqual(readiness.get(), {ready: false, code: 'INITIALIZING'});
+  assert.deepEqual(readiness.set('READY'), {ready: true, code: 'READY'});
+  assert.deepEqual(readiness.set('DISCONNECTED'), {ready: false, code: 'DISCONNECTED'});
+  assert.throws(() => readiness.set('/private/path: raw failure'), /readiness code/i);
+  assert.doesNotMatch(JSON.stringify(readiness.get()), /private|raw failure/);
+});
 
 test('workbench starts dependencies in lifecycle order and locks navigation to its origin', async () => {
   const fixture = startFixture();
@@ -158,17 +189,20 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
     'mkdir:/tmp/project-zero/state',
     'mkdir:/tmp/project-zero/logs',
     'mkdir:/tmp/project-zero/themes',
-    'codex:find',
-    'bridge:create:/Applications/ChatGPT.app/Contents/Resources/codex',
-    'bridge:start',
-    'bridge:request:account/read',
-    'bridge:request:model/list',
     'service:create',
     'service:listen',
     'window:create',
-    'window:load:http://127.0.0.1:43210/'
+    'window:load:http://127.0.0.1:43210/',
+    'codex:find',
+    'bridge:create:/Applications/ChatGPT.app/Contents/Resources/codex',
+    'bridge:start'
   ]);
   assert.equal(resources.origin, 'http://127.0.0.1:43210');
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'INITIALIZING'});
+
+  await resources.initialization;
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: true, code: 'READY'});
+  assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /private|email|model-id|plus/);
 
   const window = fixture.getWindow();
   assert.equal(window.options.webPreferences.preload, undefined);
@@ -182,11 +216,15 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
   window.webContents.emit('will-navigate', {preventDefault: () => { prevented = true; }}, 'http://127.0.0.1:43210/health');
   assert.equal(prevented, false);
 
+  resources.bridge.emit('disconnected', 'private details must not escape');
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
+  assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /private|details/);
+
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
   assert.deepEqual(fixture.calls.slice(-2), ['service:close', 'bridge:stop']);
 });
 
-test('workbench rejects malformed readiness responses before opening the renderer', async () => {
+test('malformed readiness keeps the renderer open with a recoverable redacted state', async () => {
   const fixture = startFixture();
   class InvalidReadinessBridge {
     async start() {}
@@ -198,13 +236,13 @@ test('workbench rejects malformed readiness responses before opening the rendere
   }
   fixture.dependencies.CodexBridgeClass = InvalidReadinessBridge;
 
-  await assert.rejects(startWorkbench(fixture.dependencies), error => {
-    assert.equal(error.code, 'CODEX_READINESS_INVALID');
-    assert.equal(error.message, 'Codex readiness could not be verified.');
-    return true;
-  });
-  assert.equal(fixture.calls.includes('service:create'), false);
-  assert.equal(fixture.calls.includes('window:create'), false);
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
+
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
+  assert.equal(fixture.calls.includes('service:create'), true);
+  assert.equal(fixture.calls.includes('window:create'), true);
+  assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /invalid|missing|required/);
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
@@ -269,8 +307,14 @@ test('workbench rejects empty, hidden, blank, and incoherent model catalogs', as
       nextCursor: null
     });
 
-    await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_READINESS_INVALID'}, modelResponse.name);
-    assert.equal(fixture.calls.includes('service:create'), false, modelResponse.name);
+    const resources = await startWorkbench(fixture.dependencies);
+    await resources.initialization;
+    assert.deepEqual(
+      fixture.getServiceOptions().snapshot(),
+      {ready: false, code: 'NO_LAUNCHABLE_MODEL'},
+      modelResponse.name
+    );
+    assert.equal(fixture.calls.includes('service:create'), true, modelResponse.name);
     await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
   }
 });
@@ -281,22 +325,19 @@ test('signed-out official account response starts with a stable non-ready status
     {account: null, requiresOpenaiAuth: true},
     {data: [validModel()], nextCursor: null}
   );
-  let snapshot;
   fixture.dependencies.serviceFactory = options => {
-    snapshot = options.snapshot();
+    fixture.serviceOptions = options;
     return {
       async listen() { return {address: '127.0.0.1', port: 43210}; },
       async close() {}
     };
   };
 
-  await startWorkbench(fixture.dependencies);
+  const resources = await startWorkbench(fixture.dependencies);
+  assert.deepEqual(fixture.serviceOptions.snapshot(), {ready: false, code: 'INITIALIZING'});
+  await resources.initialization;
 
-  assert.deepEqual(snapshot, {
-    ready: false,
-    status: 'SIGNED_OUT',
-    checks: {account: true, models: true}
-  });
+  assert.deepEqual(fixture.serviceOptions.snapshot(), {ready: false, code: 'SIGNED_OUT'});
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
@@ -306,22 +347,18 @@ test('official account response may omit account and still reports signed out', 
     {requiresOpenaiAuth: true},
     {data: [validModel()], nextCursor: null}
   );
-  let snapshot;
   fixture.dependencies.serviceFactory = options => {
-    snapshot = options.snapshot();
+    fixture.serviceOptions = options;
     return {
       async listen() { return {address: '127.0.0.1', port: 43210}; },
       async close() {}
     };
   };
 
-  await startWorkbench(fixture.dependencies);
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
 
-  assert.deepEqual(snapshot, {
-    ready: false,
-    status: 'SIGNED_OUT',
-    checks: {account: true, models: true}
-  });
+  assert.deepEqual(fixture.serviceOptions.snapshot(), {ready: false, code: 'SIGNED_OUT'});
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
@@ -337,7 +374,8 @@ test('workbench aggregates launchable models across every official catalog page'
     requests
   );
 
-  await startWorkbench(fixture.dependencies);
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
 
   assert.deepEqual(requests, [
     {method: 'account/read', params: {}},
@@ -347,7 +385,7 @@ test('workbench aggregates launchable models across every official catalog page'
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
-test('workbench rejects a malformed later model catalog page', async () => {
+test('workbench redacts a malformed later model catalog page as disconnected', async () => {
   const fixture = startFixture();
   const requests = [];
   fixture.dependencies.CodexBridgeClass = pagedReadinessBridge(
@@ -359,17 +397,18 @@ test('workbench rejects a malformed later model catalog page', async () => {
     requests
   );
 
-  await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_READINESS_INVALID'});
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
   assert.deepEqual(requests, [
     {method: 'account/read', params: {}},
     {method: 'model/list', params: {}},
     {method: 'model/list', params: {cursor: 'second-page'}}
   ]);
-  assert.equal(fixture.calls.includes('service:create'), false);
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
-test('workbench rejects repeated model catalog cursors without cycling', async () => {
+test('workbench redacts repeated model catalog cursors without cycling', async () => {
   const fixture = startFixture();
   const requests = [];
   fixture.dependencies.CodexBridgeClass = pagedReadinessBridge(
@@ -381,24 +420,28 @@ test('workbench rejects repeated model catalog cursors without cycling', async (
     requests
   );
 
-  await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_READINESS_INVALID'});
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
   assert.deepEqual(requests, [
     {method: 'account/read', params: {}},
     {method: 'model/list', params: {}},
     {method: 'model/list', params: {cursor: 'repeated-page'}}
   ]);
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
-test('missing Codex fails diagnostically without constructing a bridge or disclosing candidates', async () => {
+test('missing Codex keeps the window open with a retryable redacted diagnostic', async () => {
   const fixture = startFixture({executable: null});
 
-  await assert.rejects(startWorkbench(fixture.dependencies), error => {
-    assert.equal(error.code, 'CODEX_NOT_FOUND');
-    assert.doesNotMatch(error.message, /chosen|Applications|\/path/);
-    return true;
-  });
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
+
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'CODEX_NOT_FOUND'});
+  assert.equal(fixture.calls.includes('window:create'), true);
   assert.equal(fixture.calls.some(call => call.startsWith('bridge:create')), false);
+  assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /chosen|Applications|\/path/);
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
 test('PATH discovery happens only after ready and runtime directory creation', async () => {
@@ -413,16 +456,76 @@ test('PATH discovery happens only after ready and runtime directory creation', a
     return null;
   };
 
-  await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_NOT_FOUND'});
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
 
   assert.deepEqual(fixture.calls, [
     'ready',
     'mkdir:/tmp/project-zero/state',
     'mkdir:/tmp/project-zero/logs',
     'mkdir:/tmp/project-zero/themes',
+    'service:create',
+    'service:listen',
+    'window:create',
+    'window:load:http://127.0.0.1:43210/',
     'codex:path',
     'codex:find:/resolved/codex'
   ]);
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'CODEX_NOT_FOUND'});
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('retry shares one initialization attempt and cleanup owns every retry bridge', async () => {
+  const fixture = startFixture();
+  const firstStart = deferred();
+  const bridges = [];
+  class RetryBridge extends EventEmitter {
+    constructor() {
+      super();
+      this.connected = false;
+      this.stopCalls = 0;
+      bridges.push(this);
+    }
+    async start() {
+      this.connected = true;
+      if (bridges.length === 1) await firstStart.promise;
+    }
+    async request(method) {
+      if (method === 'account/read') {
+        return {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
+      }
+      return {data: [validModel()], nextCursor: null};
+    }
+    async stop() {
+      this.stopCalls += 1;
+      this.connected = false;
+    }
+  }
+  fixture.dependencies.CodexBridgeClass = RetryBridge;
+
+  const resources = await startWorkbench(fixture.dependencies);
+  const retryDuringStart = fixture.getServiceOptions().retryInitialization();
+  assert.equal(retryDuringStart, resources.initialization);
+  assert.equal(fixture.getServiceOptions().retryInitialization(), resources.initialization);
+  assert.equal(bridges.length, 1);
+
+  firstStart.resolve();
+  await resources.initialization;
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: true, code: 'READY'});
+
+  bridges[0].emit('disconnected', '/private/raw disconnect');
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
+
+  const retry = fixture.getServiceOptions().retryInitialization();
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'INITIALIZING'});
+  assert.equal(fixture.getServiceOptions().retryInitialization(), retry);
+  await retry;
+  assert.equal(bridges.length, 2);
+  assert.equal(bridges[0].stopCalls, 1);
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: true, code: 'READY'});
+
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+  assert.equal(bridges[1].stopCalls, 1);
 });
 
 test('before-quit waits for cleanup and does not enter a repeated quit loop', async () => {

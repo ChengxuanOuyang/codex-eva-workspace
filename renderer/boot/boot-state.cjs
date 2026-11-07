@@ -17,7 +17,7 @@ function nextBootState(state, event) {
       if (state.ready || state.phase === 'complete') return state;
       return {...state, phase: state.phase === 'failed' ? 'waiting' : state.phase, ready: true};
     case 'failed':
-      if (state.phase === 'completing' || state.phase === 'complete') return state;
+      if (state.phase === 'complete') return state;
       if (state.phase === 'failed' && !state.ready) return state;
       return {...state, phase: 'failed', ready: false, confirmed: false};
     case 'confirm':

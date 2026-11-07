@@ -13,6 +13,7 @@ let bootRoot;
 let sharedRoot;
 let service;
 let address;
+let retryCalls;
 
 test.before(async () => {
   fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-service-'));
@@ -29,7 +30,16 @@ test.before(async () => {
   await fs.writeFile(path.join(bootRoot, 'assets', 'scene-c-online.webp'), 'scene-c');
   await fs.writeFile(path.join(sharedRoot, 'api.js'), 'globalThis.apiLoaded = true;');
   await fs.writeFile(path.join(bootRoot, 'secret.txt'), 'must not be served');
-  service = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
+  retryCalls = 0;
+  service = createWorkbenchService({
+    snapshot: () => ({ready: true, code: 'READY'}),
+    retryInitialization: () => {
+      retryCalls += 1;
+      return Promise.resolve({ready: true, code: 'READY'});
+    },
+    bootRoot,
+    sharedRoot
+  });
   address = await service.listen();
 });
 
@@ -120,6 +130,44 @@ test('rejects unsupported methods with an exact Allow header', async () => {
   }
 });
 
+test('retry is an exact authenticated POST bound to the loopback origin', async () => {
+  const {cookie} = await openWorkbench();
+  retryCalls = 0;
+
+  const wrongMethod = await request({
+    requestPath: '/api/readiness/retry',
+    method: 'GET',
+    headers: {Cookie: cookie}
+  });
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.allow, 'POST');
+
+  const unauthenticated = await request({
+    requestPath: '/api/readiness/retry',
+    method: 'POST',
+    headers: {Origin: `http://127.0.0.1:${address.port}`}
+  });
+  assert.equal(unauthenticated.status, 403);
+  assert.deepEqual(JSON.parse(unauthenticated.body), {error: 'Open the workbench first'});
+
+  const foreignOrigin = await request({
+    requestPath: '/api/readiness/retry',
+    method: 'POST',
+    headers: {Cookie: cookie, Origin: 'https://example.com'}
+  });
+  assert.equal(foreignOrigin.status, 403);
+  assert.deepEqual(JSON.parse(foreignOrigin.body), {error: 'Invalid origin'});
+
+  const accepted = await request({
+    requestPath: '/api/readiness/retry',
+    method: 'POST',
+    headers: {Cookie: cookie, Origin: `http://127.0.0.1:${address.port}`}
+  });
+  assert.equal(accepted.status, 202);
+  assert.deepEqual(JSON.parse(accepted.body), {accepted: true});
+  assert.equal(retryCalls, 1);
+});
+
 test('rejects unsupported request media and oversized bodies before routing', async () => {
   const unsupported = await request({
     requestPath: '/health',
@@ -153,7 +201,7 @@ test('accepts only bounded valid JSON when a request body is present', async () 
     body: '{}'
   });
   assert.equal(valid.status, 200);
-  assert.deepEqual(JSON.parse(valid.body), {app: 'PROJECT-ZERO', ready: true});
+  assert.deepEqual(JSON.parse(valid.body), {app: 'PROJECT-ZERO', ready: true, code: 'READY'});
 });
 
 test('contains aborted request-body streams without unhandled rejections and remains healthy', async () => {
@@ -187,7 +235,7 @@ test('contains aborted request-body streams without unhandled rejections and rem
 
     const response = await request({requestPath: '/health'});
     assert.equal(response.status, 200);
-    assert.deepEqual(JSON.parse(response.body), {app: 'PROJECT-ZERO', ready: true});
+    assert.deepEqual(JSON.parse(response.body), {app: 'PROJECT-ZERO', ready: true, code: 'READY'});
   } finally {
     process.off('unhandledRejection', recordUnhandledRejection);
   }

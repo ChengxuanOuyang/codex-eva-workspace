@@ -16,6 +16,14 @@ const FORCE_EXIT_TIMEOUT_MS = 2000;
 const SERVICE_CLOSE_TIMEOUT_MS = 2000;
 const MAX_MODEL_CATALOG_PAGES = 100;
 const READINESS_FAILED_MESSAGE = 'Codex readiness could not be verified.';
+const READINESS_CODES = new Set([
+  'INITIALIZING',
+  'CODEX_NOT_FOUND',
+  'SIGNED_OUT',
+  'NO_LAUNCHABLE_MODEL',
+  'DISCONNECTED',
+  'READY'
+]);
 const PLAN_TYPES = new Set([
   'free', 'go', 'plus', 'pro', 'prolite', 'team',
   'self_serve_business_prolite', 'self_serve_business_usage_based', 'business',
@@ -27,6 +35,19 @@ function readinessError() {
   const error = Error(READINESS_FAILED_MESSAGE);
   error.code = 'CODEX_READINESS_INVALID';
   return error;
+}
+
+function createReadinessStore() {
+  let snapshot = Object.freeze({ready: false, code: 'INITIALIZING'});
+  return Object.freeze({
+    get: () => snapshot,
+    set(code) {
+      if (!READINESS_CODES.has(code)) throw TypeError('Invalid readiness code');
+      if (snapshot.code === code) return snapshot;
+      snapshot = Object.freeze({ready: code === 'READY', code});
+      return snapshot;
+    }
+  });
 }
 
 function validAccountResponse(response) {
@@ -95,19 +116,11 @@ async function verifyCodexReadiness(bridge) {
     if (page === MAX_MODEL_CATALOG_PAGES - 1) throw readinessError();
   }
 
-  if (!models.some(launchableModel)) throw readinessError();
-
   if ((account.account === null || account.account === undefined) && account.requiresOpenaiAuth) {
-    return Object.freeze({
-      ready: false,
-      status: 'SIGNED_OUT',
-      checks: Object.freeze({account: true, models: true})
-    });
+    return 'SIGNED_OUT';
   }
-  return Object.freeze({
-    ready: true,
-    checks: Object.freeze({account: true, models: true})
-  });
+  if (!models.some(launchableModel)) return 'NO_LAUNCHABLE_MODEL';
+  return 'READY';
 }
 
 function executableOnPath(name, environmentPath = process.env.PATH) {
@@ -218,6 +231,107 @@ async function closeServiceAndConfirm(service, {closeTimeoutMs = SERVICE_CLOSE_T
   if (service.server?.listening) throw Error(CLEANUP_FAILED_MESSAGE);
 }
 
+function createReadinessCoordinator({
+  readiness,
+  locateCodex,
+  pathCodex,
+  resolvePathCodex,
+  userPath,
+  CodexBridgeClass
+}) {
+  const ownedBridges = new Set();
+  const disconnectHandlers = new Map();
+  let activeBridge = null;
+  let attempt = 0;
+  let closed = false;
+  let inFlight = null;
+
+  function detachDisconnectHandler(bridge) {
+    const handler = disconnectHandlers.get(bridge);
+    if (!handler) return;
+    bridge.off?.('disconnected', handler);
+    bridge.removeListener?.('disconnected', handler);
+    disconnectHandlers.delete(bridge);
+  }
+
+  async function stopOwnedBridge(bridge) {
+    if (!bridge) return;
+    detachDisconnectHandler(bridge);
+    await stopBridgeAndConfirm(bridge);
+    ownedBridges.delete(bridge);
+    if (activeBridge === bridge) activeBridge = null;
+  }
+
+  async function initialize(attemptId) {
+    const previousBridge = activeBridge;
+    if (previousBridge) await stopOwnedBridge(previousBridge);
+    if (closed || attemptId !== attempt) return readiness.get();
+
+    const discoveredPathCodex = pathCodex === undefined ? resolvePathCodex('codex') : pathCodex;
+    const executable = locateCodex({pathCodex: discoveredPathCodex, userPath});
+    if (!executable) {
+      readiness.set('CODEX_NOT_FOUND');
+      return readiness.get();
+    }
+    if (closed || attemptId !== attempt) return readiness.get();
+
+    const bridge = new CodexBridgeClass(executable);
+    ownedBridges.add(bridge);
+    activeBridge = bridge;
+    let disconnected = false;
+    const revokeReadiness = () => {
+      if (closed || activeBridge !== bridge || attemptId !== attempt) return;
+      disconnected = true;
+      readiness.set('DISCONNECTED');
+    };
+    if (typeof bridge.on === 'function') {
+      disconnectHandlers.set(bridge, revokeReadiness);
+      bridge.on('disconnected', revokeReadiness);
+    }
+
+    await bridge.start();
+    if (closed || attemptId !== attempt || disconnected || bridge.connected === false) {
+      return readiness.get();
+    }
+    const code = await verifyCodexReadiness(bridge);
+    if (!closed && attemptId === attempt && !disconnected && bridge.connected !== false) {
+      readiness.set(code);
+    }
+    return readiness.get();
+  }
+
+  function retry() {
+    if (inFlight) return inFlight;
+    if (closed) return Promise.resolve(readiness.get());
+    readiness.set('INITIALIZING');
+    const attemptId = ++attempt;
+    const operation = Promise.resolve()
+      .then(() => initialize(attemptId))
+      .catch(() => {
+        if (!closed && attemptId === attempt) readiness.set('DISCONNECTED');
+        return readiness.get();
+      })
+      .finally(() => {
+        if (inFlight === operation) inFlight = null;
+      });
+    inFlight = operation;
+    return operation;
+  }
+
+  async function close() {
+    closed = true;
+    attempt += 1;
+    const results = await Promise.allSettled([...ownedBridges].map(stopOwnedBridge));
+    if (results.some(result => result.status === 'rejected')) throw Error(CLEANUP_FAILED_MESSAGE);
+  }
+
+  return Object.freeze({
+    close,
+    get bridge() { return activeBridge; },
+    retry
+  });
+}
+
 async function startWorkbench({
   app,
   BrowserWindow,
@@ -239,21 +353,20 @@ async function startWorkbench({
   await mkdir(paths.logs, {recursive: true});
   await mkdir(paths.themes, {recursive: true});
 
-  const discoveredPathCodex = pathCodex === undefined ? resolvePathCodex('codex') : pathCodex;
-  const executable = locateCodex({pathCodex: discoveredPathCodex, userPath});
-  if (!executable) {
-    const error = Error(CODEX_NOT_FOUND_MESSAGE);
-    error.code = 'CODEX_NOT_FOUND';
-    throw error;
-  }
-
-  const bridge = new CodexBridgeClass(executable);
-  cleanups.unshift(() => stopBridgeAndConfirm(bridge));
-  await bridge.start();
-  const readiness = await verifyCodexReadiness(bridge);
+  const readiness = createReadinessStore();
+  const coordinator = createReadinessCoordinator({
+    readiness,
+    locateCodex,
+    pathCodex,
+    resolvePathCodex,
+    userPath,
+    CodexBridgeClass
+  });
+  cleanups.unshift(() => coordinator.close());
 
   const service = serviceFactory({
-    snapshot: () => readiness,
+    snapshot: readiness.get,
+    retryInitialization: coordinator.retry,
     bootRoot,
     sharedRoot
   });
@@ -265,7 +378,13 @@ async function startWorkbench({
   restrictNavigation(window.webContents, origin);
   await window.loadURL(`${origin}/`);
 
-  return {bridge, service, window, origin, paths};
+  const initialization = coordinator.retry();
+  const resources = {service, window, origin, paths, initialization, retryInitialization: coordinator.retry};
+  Object.defineProperty(resources, 'bridge', {
+    enumerable: true,
+    get: () => coordinator.bridge
+  });
+  return resources;
 }
 
 function installCleanupHandler(app, cleanups, {
@@ -331,6 +450,8 @@ module.exports = {
   READINESS_FAILED_MESSAGE,
   bootstrap,
   closeServiceAndConfirm,
+  createReadinessCoordinator,
+  createReadinessStore,
   executableOnPath,
   forceChildExit,
   installCleanupHandler,

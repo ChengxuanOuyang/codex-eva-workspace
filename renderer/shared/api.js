@@ -18,7 +18,7 @@
         if (state.ready || state.phase === 'complete') return state;
         return {...state, phase: state.phase === 'failed' ? 'waiting' : state.phase, ready: true};
       case 'failed':
-        if (state.phase === 'completing' || state.phase === 'complete') return state;
+        if (state.phase === 'complete') return state;
         if (state.phase === 'failed' && !state.ready) return state;
         return {...state, phase: 'failed', ready: false, confirmed: false};
       case 'confirm':
@@ -48,5 +48,17 @@
     return response.json();
   }
 
-  root.ProjectZeroApi = Object.freeze({health, MAX_UNCONFIRMED_PROGRESS, nextBootState});
+  async function retryReadiness({signal} = {}) {
+    const response = await root.fetch('/api/readiness/retry', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: {Accept: 'application/json'},
+      signal
+    });
+    if (response.status !== 202) throw Error('Readiness retry unavailable');
+    return response.json();
+  }
+
+  root.ProjectZeroApi = Object.freeze({health, retryReadiness, MAX_UNCONFIRMED_PROGRESS, nextBootState});
 }(globalThis));

@@ -130,7 +130,7 @@ function hasSession(req, token) {
   return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 }
 
-function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
+function createWorkbenchService({snapshot, retryInitialization = () => Promise.resolve(), bootRoot, sharedRoot}) {
   const token = crypto.randomBytes(32).toString('hex');
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
@@ -140,7 +140,13 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
   ]);
-  const allowedRoutes = new Set(['/', '/health', '/api/state', ...staticFiles.keys()]);
+  const routeMethods = new Map([
+    ['/', ['GET']],
+    ['/health', ['GET']],
+    ['/api/state', ['GET']],
+    ['/api/readiness/retry', ['POST']],
+    ...[...staticFiles.keys()].map(route => [route, ['GET']])
+  ]);
   let server;
   async function handleRequest(req, res) {
     const port = server.address().port;
@@ -149,8 +155,9 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
     if (req.headers.host !== `127.0.0.1:${port}`) {
       return send(res, 403, {error: 'Invalid host'});
     }
-    if (allowedRoutes.has(req.url) && req.method !== 'GET') {
-      return methodNotAllowed(res, ['GET']);
+    const allowedMethods = routeMethods.get(req.url);
+    if (allowedMethods && !allowedMethods.includes(req.method)) {
+      return methodNotAllowed(res, allowedMethods);
     }
     if (req.url.startsWith('/api/') && !hasSession(req, token)) {
       return send(res, 403, {error: 'Open the workbench first'});
@@ -159,7 +166,7 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
       return send(res, 403, {error: 'Invalid origin'});
     }
     if (!await validateRequestBody(req, res)) return;
-    if (req.url === '/health') return send(res, 200, {app: 'PROJECT-ZERO', ready: snapshot().ready});
+    if (req.url === '/health') return send(res, 200, {app: 'PROJECT-ZERO', ...snapshot()});
     if (req.url === '/') {
       res.setHeader('Set-Cookie', `project_zero_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
       return serveFile(bootRoot, 'index.html', 'text/html; charset=utf-8', res);
@@ -169,6 +176,10 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
       return serveFile(staticFile.root, staticFile.fileName, staticFile.contentType, res);
     }
     if (req.url === '/api/state') return send(res, 200, snapshot());
+    if (req.url === '/api/readiness/retry') {
+      void Promise.resolve(retryInitialization()).catch(() => {});
+      return send(res, 202, {accepted: true});
+    }
     return send(res, 404, {error: 'Not found'});
   }
   server = http.createServer((req, res) => {

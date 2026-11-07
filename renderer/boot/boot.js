@@ -1,6 +1,35 @@
 'use strict';
 
 (function installProjectZeroBoot(root) {
+  const READINESS_DETAILS = Object.freeze({
+    INITIALIZING: Object.freeze({
+      backend: '初始化中',
+      diagnostic: '正在连接官方 Codex 服务；请稍候。',
+      retry: false
+    }),
+    CODEX_NOT_FOUND: Object.freeze({
+      backend: '未找到 Codex',
+      diagnostic: '未检测到可用的 Codex 安装。请安装或配置后重试。',
+      retry: true
+    }),
+    SIGNED_OUT: Object.freeze({
+      backend: '需要登录',
+      diagnostic: 'Codex 尚未登录。请完成官方 ChatGPT 登录后重试。',
+      retry: true
+    }),
+    NO_LAUNCHABLE_MODEL: Object.freeze({
+      backend: '无可用模型',
+      diagnostic: '当前账户没有可启动的 Codex 模型。请检查账户后重试。',
+      retry: true
+    }),
+    DISCONNECTED: Object.freeze({
+      backend: '连接已断开',
+      diagnostic: 'Codex 连接已断开。请重试建立本地连接。',
+      retry: true
+    }),
+    READY: Object.freeze({backend: '已就绪', retry: false})
+  });
+
   function createBootController({api, clock, document, now, reducedMotion, root: eventRoot}) {
     const circumference = 2 * Math.PI * 132;
     const startedAt = now();
@@ -13,6 +42,7 @@
       heading: document.querySelector('#sync-heading'),
       progress: document.querySelector('#progress-value'),
       progressbar: document.querySelector('#ring-progress'),
+      retry: document.querySelector('#retry-button'),
       ring: document.querySelector('#ring-stroke'),
       skip: document.querySelector('#skip-button')
     };
@@ -22,6 +52,8 @@
     let skipAvailable = false;
     let healthGeneration = 0;
     let healthController;
+    let retryController;
+    let retryInFlight = false;
     let healthTimer;
     let tickTimer;
     let clockTimer;
@@ -87,6 +119,10 @@
     function dispatch(event) {
       if (destroyed) return false;
       const next = api.nextBootState(state, event);
+      if (event.type === 'failed' && completeTimer !== undefined) {
+        clock.clearTimeout(completeTimer);
+        completeTimer = undefined;
+      }
       if (next === state) {
         if (state.phase === 'waiting') freezePresentation();
         return false;
@@ -97,6 +133,35 @@
       if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
       if (state.phase === 'complete') unbindInteractions();
       return true;
+    }
+
+    function normalizeReadiness(health) {
+      if (!health || typeof health !== 'object') return 'DISCONNECTED';
+      if (Object.hasOwn(READINESS_DETAILS, health.code)) {
+        if (health.code === 'READY') return health.ready === true ? 'READY' : 'DISCONNECTED';
+        return health.ready === true ? 'DISCONNECTED' : health.code;
+      }
+      return health.ready === true ? 'READY' : 'INITIALIZING';
+    }
+
+    function applyReadiness(health, {retrying = false} = {}) {
+      const code = normalizeReadiness(health);
+      document.body.dataset.readiness = code.toLowerCase();
+      if (code === 'READY') {
+        dispatch({type: 'ready'});
+        setText(elements.backend, READINESS_DETAILS.READY.backend);
+        setText(elements.diagnostic, state.progress === api.MAX_UNCONFIRMED_PROGRESS
+          ? '安全条件已满足，请进行用户确认。'
+          : '本地后端已就绪，等待同步演示完成。');
+      } else {
+        if (code !== 'INITIALIZING' || state.ready || state.confirmed) dispatch({type: 'failed'});
+        const details = READINESS_DETAILS[code];
+        setText(elements.backend, details.backend);
+        setText(elements.diagnostic, details.diagnostic);
+      }
+      const canRetry = READINESS_DETAILS[code].retry;
+      elements.retry.hidden = !(canRetry || retrying);
+      elements.retry.disabled = retrying || !canRetry;
     }
 
     function scheduleHealth(delay) {
@@ -114,27 +179,36 @@
       try {
         const health = await api.health({signal: controller.signal});
         if (destroyed || generation !== healthGeneration || state.phase === 'complete') return;
-        if (health && health.ready === true) {
-          dispatch({type: 'ready'});
-          setText(elements.backend, '已就绪');
-          setText(elements.diagnostic, state.progress === api.MAX_UNCONFIRMED_PROGRESS
-            ? '安全条件已满足，请进行用户确认。'
-            : '本地后端已就绪，等待同步演示完成。');
-        } else {
-          if (state.ready) dispatch({type: 'failed'});
-          setText(elements.backend, '初始化中');
-          setText(elements.diagnostic, '本地后端尚未就绪；检查将在 500ms 后重试。');
-        }
+        applyReadiness(health);
       } catch {
         if (destroyed || generation !== healthGeneration || controller.signal.aborted || state.phase === 'complete') return;
-        dispatch({type: 'failed'});
-        setText(elements.backend, '暂不可用');
-        setText(elements.diagnostic, '连接检查暂不可用；已隐藏底层错误，正在重试。');
+        applyReadiness({ready: false, code: 'DISCONNECTED'});
       } finally {
         if (generation === healthGeneration) {
           healthController = undefined;
           scheduleHealth(500);
         }
+      }
+    }
+
+    async function retryInitialization() {
+      if (destroyed || retryInFlight || elements.retry.hidden) return;
+      retryInFlight = true;
+      stopHealth();
+      applyReadiness({ready: false, code: 'INITIALIZING'}, {retrying: true});
+      const controller = new root.AbortController();
+      retryController = controller;
+      try {
+        await api.retryReadiness({signal: controller.signal});
+        if (destroyed || controller.signal.aborted) return;
+        scheduleHealth(0);
+      } catch {
+        if (destroyed || controller.signal.aborted) return;
+        applyReadiness({ready: false, code: 'DISCONNECTED'});
+        scheduleHealth(500);
+      } finally {
+        if (retryController === controller) retryController = undefined;
+        if (!destroyed) retryInFlight = false;
       }
     }
 
@@ -163,6 +237,7 @@
 
     function unbindInteractions() {
       elements.confirm.removeEventListener('click', confirm);
+      elements.retry.removeEventListener('click', retryInitialization);
       elements.skip.removeEventListener('click', skipPresentation);
       eventRoot.removeEventListener('keydown', onKeydown);
     }
@@ -172,6 +247,8 @@
       destroyed = true;
       stopTicker();
       stopHealth();
+      retryController?.abort();
+      retryController = undefined;
       if (clockTimer !== undefined) clock.clearInterval(clockTimer);
       if (skipTimer !== undefined) clock.clearTimeout(skipTimer);
       if (completeTimer !== undefined) clock.clearTimeout(completeTimer);
@@ -186,6 +263,7 @@
       document.body.dataset.motion = reducedMotion ? 'reduced' : 'full';
       elements.ring.setAttribute('stroke-dasharray', String(circumference));
       elements.confirm.addEventListener('click', confirm);
+      elements.retry.addEventListener('click', retryInitialization);
       elements.skip.addEventListener('click', skipPresentation);
       eventRoot.addEventListener('keydown', onKeydown);
       eventRoot.addEventListener('pagehide', destroy);

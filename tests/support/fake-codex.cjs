@@ -31,14 +31,30 @@ class InMemoryCodexBridge extends EventEmitter {
     if (this.connected) throw Error('Bridge already started');
     this.stopPromise = null;
     this.connected = true;
+    const disconnectSignal = process.env.PROJECT_ZERO_TEST_DISCONNECT_SIGNAL;
+    if (typeof disconnectSignal === 'string' && disconnectSignal.length > 0) {
+      this.disconnectTimer = setInterval(() => {
+        if (!this.connected || !fs.existsSync(disconnectSignal)) return;
+        clearInterval(this.disconnectTimer);
+        this.disconnectTimer = null;
+        this.connected = false;
+        this.record('disconnected');
+        this.emit('disconnected', 'CODEX_DISCONNECTED');
+      }, 25);
+      this.disconnectTimer.unref?.();
+    }
+  }
+
+  record(event) {
+    if (process.env.PROJECT_ZERO_TEST_TRACE) {
+      fs.appendFileSync(process.env.PROJECT_ZERO_TEST_TRACE, `${event}\n`, {encoding: 'utf8'});
+    }
   }
 
   async request(method) {
     if (!this.connected) throw Error('Codex is disconnected');
     this.calls.push(method);
-    if (process.env.PROJECT_ZERO_TEST_TRACE) {
-      fs.appendFileSync(process.env.PROJECT_ZERO_TEST_TRACE, `${method}\n`, {encoding: 'utf8'});
-    }
+    this.record(method);
     if (method === 'account/read') {
       return {
         account: {type: 'chatgpt', email: null, planType: 'plus'},
@@ -59,6 +75,8 @@ class InMemoryCodexBridge extends EventEmitter {
   }
 
   stop() {
+    clearInterval(this.disconnectTimer);
+    this.disconnectTimer = null;
     this.connected = false;
     this.stopPromise ||= Promise.resolve();
     return this.stopPromise;

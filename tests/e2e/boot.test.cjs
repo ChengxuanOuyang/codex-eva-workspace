@@ -49,6 +49,7 @@ test('application reaches user confirmation without remote content and closes cl
   let taskProcessIds = [];
   const traceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-e2e-'));
   const tracePath = path.join(traceRoot, 'codex-calls.txt');
+  const disconnectSignalPath = path.join(traceRoot, 'disconnect.signal');
 
   try {
     app = await electron.launch({
@@ -57,7 +58,8 @@ test('application reaches user confirmation without remote content and closes cl
         ...process.env,
         NODE_ENV: 'test',
         PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs'),
-        PROJECT_ZERO_TEST_TRACE: tracePath
+        PROJECT_ZERO_TEST_TRACE: tracePath,
+        PROJECT_ZERO_TEST_DISCONNECT_SIGNAL: disconnectSignalPath
       }
     });
     const page = await app.firstWindow();
@@ -100,6 +102,17 @@ test('application reaches user confirmation without remote content and closes cl
       assert.equal(new URL(resourceUrl).origin, origin, `remote resource loaded: ${resourceUrl}`);
     }
 
+    await fs.writeFile(disconnectSignalPath, 'disconnect');
+    await page.waitForFunction(() => document.querySelector('#confirm-button').disabled);
+    await page.getByText('Codex 连接已断开。请重试建立本地连接。', {exact: true}).waitFor();
+    await page.evaluate(() => document.querySelector('#confirm-button').click());
+    await page.waitForTimeout(800);
+    assert.notEqual(await page.locator('body').getAttribute('data-scene'), 'online');
+
+    await fs.rm(disconnectSignalPath, {force: true});
+    await page.getByRole('button', {name: '重新检查 Codex'}).click();
+    await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
+
     await confirm.click();
     await page.getByRole('heading', {name: 'SYSTEM ONLINE'}).waitFor();
     await page.getByText('100.0', {exact: true}).waitFor();
@@ -110,7 +123,7 @@ test('application reaches user confirmation without remote content and closes cl
   }
 
   const calls = (await fs.readFile(tracePath, 'utf8')).trim().split('\n');
-  assert.deepEqual(calls, ['account/read', 'model/list']);
+  assert.deepEqual(calls, ['account/read', 'model/list', 'disconnected', 'account/read', 'model/list']);
   await fs.rm(traceRoot, {recursive: true, force: true});
 
   assert.ok(origin, 'the workbench origin was captured before shutdown');

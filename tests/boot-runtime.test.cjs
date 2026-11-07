@@ -26,7 +26,7 @@ class FakeElement {
   removeEventListener(type, listener) {
     if (this.listeners.get(type) === listener) this.listeners.delete(type);
   }
-  dispatch(type, event = {}) { this.listeners.get(type)?.(event); }
+  dispatch(type, event = {}) { return this.listeners.get(type)?.(event); }
 }
 
 class FakeClock {
@@ -81,7 +81,8 @@ function fixture(api) {
 
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
-    '#diagnostic-text', '#sync-heading', '#progress-value', '#ring-progress', '#ring-stroke', '#skip-button'
+    '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
+    '#ring-stroke', '#skip-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
   const document = {
@@ -153,6 +154,90 @@ test('failed recovery resumes logical progress while decorative presentation sta
   assert.equal(view.controller.getState().progress, 99.2);
   assert.equal(view.elements['#clock-readout'].textContent, clockText);
   assert.equal(view.elements['#confirm-button'].disabled, false);
+});
+
+test('stable readiness codes render accurate redacted recovery diagnostics', async () => {
+  const cases = [
+    ['INITIALIZING', '初始化中', '正在连接官方 Codex', true],
+    ['CODEX_NOT_FOUND', '未找到 Codex', '未检测到可用的 Codex', false],
+    ['SIGNED_OUT', '需要登录', '官方 ChatGPT 登录', false],
+    ['NO_LAUNCHABLE_MODEL', '无可用模型', '没有可启动的 Codex 模型', false],
+    ['DISCONNECTED', '连接已断开', 'Codex 连接已断开', false]
+  ];
+
+  for (const [code, backend, diagnostic, retryHidden] of cases) {
+    const view = fixture({
+      health: () => Promise.resolve({ready: false, code, message: '/private/raw failure'}),
+      retryReadiness: () => Promise.resolve()
+    });
+    await view.clock.fireTimeout(0);
+
+    assert.equal(view.elements['#backend-state'].textContent, backend, code);
+    assert.match(view.elements['#diagnostic-text'].textContent, new RegExp(diagnostic), code);
+    assert.equal(view.elements['#retry-button'].hidden, retryHidden, code);
+    assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|raw failure/, code);
+    view.controller.destroy();
+  }
+});
+
+test('post-ready disconnect revokes an in-progress confirmation and cannot enter online', async () => {
+  let calls = 0;
+  const view = fixture({
+    health: () => Promise.resolve(++calls === 1
+      ? {ready: true, code: 'READY'}
+      : {ready: false, code: 'DISCONNECTED'}),
+    retryReadiness: () => Promise.resolve()
+  });
+
+  await view.clock.fireTimeout(0);
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
+  view.elements['#confirm-button'].dispatch('click');
+  assert.equal(view.controller.getState().phase, 'completing');
+
+  await view.clock.fireTimeout(500);
+  assert.equal(view.controller.getState().phase, 'failed');
+  assert.equal(view.controller.getState().ready, false);
+  assert.equal(view.elements['#confirm-button'].disabled, true);
+  view.clock.fireTimeout(720);
+  assert.equal(view.controller.getState().phase, 'failed');
+  assert.notEqual(view.document.body.dataset.scene, 'online');
+});
+
+test('retry aborts and invalidates stale health so it cannot restore ready', async () => {
+  const stale = deferred();
+  const retry = deferred();
+  let healthCalls = 0;
+  let staleSignal;
+  let retryCalls = 0;
+  const view = fixture({
+    health: ({signal}) => {
+      healthCalls += 1;
+      if (healthCalls === 1) return Promise.resolve({ready: false, code: 'DISCONNECTED'});
+      staleSignal = signal;
+      return stale.promise;
+    },
+    retryReadiness: () => {
+      retryCalls += 1;
+      return retry.promise;
+    }
+  });
+
+  await view.clock.fireTimeout(0);
+  const staleRun = view.clock.fireTimeout(500);
+  const retryRun = view.elements['#retry-button'].dispatch('click');
+
+  assert.equal(retryCalls, 1);
+  assert.equal(staleSignal.aborted, true);
+  assert.equal(view.elements['#retry-button'].disabled, true);
+  stale.resolve({ready: true, code: 'READY'});
+  await staleRun;
+  assert.equal(view.controller.getState().ready, false);
+  assert.equal(view.elements['#confirm-button'].disabled, true);
+
+  retry.resolve({accepted: true});
+  await retryRun;
+  assert.equal(view.controller.getState().ready, false);
+  assert.equal(view.clock.countTimeouts(0), 1);
 });
 
 test('health polling is serial and never has more than one request in flight', async () => {
@@ -280,7 +365,8 @@ test('automatic startup is a window singleton across repeated script execution',
   const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
-    '#diagnostic-text', '#sync-heading', '#progress-value', '#ring-progress', '#ring-stroke', '#skip-button'
+    '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
+    '#ring-stroke', '#skip-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
   const document = {body: new FakeElement(), querySelector: selector => elements[selector]};
@@ -292,6 +378,7 @@ test('automatic startup is a window singleton across repeated script execution',
     ProjectZeroApi: {
       MAX_UNCONFIRMED_PROGRESS,
       health: () => new Promise(() => {}),
+      retryReadiness: () => Promise.resolve(),
       nextBootState
     },
     addEventListener(type, listener) { listenerAdds += 1; listeners.set(type, listener); },
@@ -317,4 +404,24 @@ test('automatic startup is a window singleton across repeated script execution',
   assert.equal(clock.countIntervals(80), 1);
   assert.equal(clock.countIntervals(100), 1);
   assert.equal(listenerAdds, 2);
+});
+
+test('shared API uses the exact same-origin POST retry route', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shared', 'api.js'), 'utf8');
+  const calls = [];
+  const sandbox = {
+    fetch: async (url, options) => {
+      calls.push({url, options});
+      return {ok: true, status: 202, json: async () => ({accepted: true})};
+    }
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/shared/api.js'});
+
+  await sandbox.ProjectZeroApi.retryReadiness();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/readiness/retry');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.credentials, 'same-origin');
 });
