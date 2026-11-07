@@ -1,0 +1,99 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {execFile} = require('node:child_process');
+const http = require('node:http');
+const {promisify} = require('node:util');
+const {_electron: electron} = require('playwright');
+
+const execFileAsync = promisify(execFile);
+
+function requestFails(url) {
+  return new Promise(resolve => {
+    const request = http.get(url, () => resolve(false));
+    request.setTimeout(1000, () => request.destroy(Error('request timed out')));
+    request.on('error', () => resolve(true));
+  });
+}
+
+async function processTable() {
+  const {stdout} = await execFileAsync('ps', ['-axo', 'pid=,ppid=,command=']);
+  return stdout.trim().split('\n').map(line => {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+    return match && {pid: Number(match[1]), ppid: Number(match[2]), command: match[3]};
+  }).filter(Boolean);
+}
+
+function descendants(rows, rootPid) {
+  const pids = new Set([rootPid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (pids.has(row.ppid) && !pids.has(row.pid)) {
+        pids.add(row.pid);
+        changed = true;
+      }
+    }
+  }
+  return rows.filter(row => pids.has(row.pid));
+}
+
+test('application reaches user confirmation without remote content and closes cleanly', {timeout: 30000}, async () => {
+  let app;
+  let origin;
+  let taskProcessIds = [];
+
+  try {
+    app = await electron.launch({
+      args: ['.'],
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        PROJECT_ZERO_FAKE_CODEX: '1'
+      }
+    });
+    const page = await app.firstWindow();
+    const confirm = page.getByRole('button', {name: '确认并完成同步'});
+
+    await page.getByRole('heading', {name: '等待用户确认'}).waitFor();
+    await assert.doesNotReject(confirm.waitFor({state: 'visible'}));
+    await assert.doesNotReject(page.getByText('99.2', {exact: true}).waitFor());
+    await assert.doesNotReject(confirm.waitFor({state: 'attached'}));
+    await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
+
+    const taskProcesses = descendants(await processTable(), app.process().pid);
+    taskProcessIds = taskProcesses.map(row => row.pid);
+    assert.equal(
+      taskProcesses.some(row => /\bcodex\b.*\bapp-server\b/.test(row.command)),
+      false,
+      'the in-memory bridge must not spawn a Codex child'
+    );
+
+    const url = new URL(page.url());
+    assert.equal(url.hostname, '127.0.0.1');
+    assert.equal(url.protocol, 'http:');
+    origin = url.origin;
+
+    assert.equal(await page.locator('script[src^="http"]').count(), 0);
+    assert.equal(await page.locator('link[rel="stylesheet"][href^="http"]').count(), 0);
+    const resourceUrls = await page.evaluate(() =>
+      performance.getEntriesByType('resource').map(entry => entry.name)
+    );
+    for (const resourceUrl of resourceUrls) {
+      assert.equal(new URL(resourceUrl).origin, origin, `remote resource loaded: ${resourceUrl}`);
+    }
+
+    await confirm.click();
+    await page.getByRole('heading', {name: 'SYSTEM ONLINE'}).waitFor();
+    await page.getByText('100.0', {exact: true}).waitFor();
+  } finally {
+    await app?.close();
+  }
+
+  assert.ok(origin, 'the workbench origin was captured before shutdown');
+  assert.equal(await requestFails(`${origin}/health`), true, 'the loopback listener closed with the app');
+  const survivingPids = new Set((await processTable()).map(row => row.pid));
+  assert.deepEqual(taskProcessIds.filter(pid => survivingPids.has(pid)), [], 'the app left no task child alive');
+});

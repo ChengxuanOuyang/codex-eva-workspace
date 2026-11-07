@@ -196,12 +196,12 @@ function installCleanupHandler(app, cleanups, {
   });
 }
 
-function bootstrap({app, BrowserWindow, dialog}) {
+function bootstrap({app, BrowserWindow, dialog}, startOptions = {}) {
   const cleanups = [];
   installCleanupHandler(app, cleanups);
   app.on('window-all-closed', () => app.quit());
 
-  startWorkbench({app, BrowserWindow, cleanups}).catch(error => {
+  startWorkbench({app, BrowserWindow, cleanups, ...startOptions}).catch(error => {
     const message = error.code === 'CODEX_NOT_FOUND'
       ? CODEX_NOT_FOUND_MESSAGE
       : 'The workbench could not be started.';
