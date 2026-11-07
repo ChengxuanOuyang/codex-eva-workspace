@@ -109,3 +109,24 @@ Used the production loopback service and a headless Chromium viewport of 1500×9
 - Completion and unload abort the current request and block all later writes.
 - Skip never changes readiness/confirmation and now also makes the presentation mechanically static.
 - Browser-served JavaScript still contains no Node API, embedded credential, or remote resource.
+
+## Second independent review fix
+
+### RED / GREEN
+
+- RED: the focused suite produced 6 expected failures covering the still-running display clock in `waiting`, failed→ready recovery not freezing presentation centrally, complete retaining interaction listeners, `Escape` calling `preventDefault`, duplicate automatic controller startup, and progressbar semantics remaining on the SVG child circle.
+- GREEN: `node --test tests/boot-state.test.cjs tests/renderer-assets.test.cjs tests/boot-runtime.test.cjs` passed 21/21 with deterministic FakeClock/VM coverage and no GUI.
+
+### Changes and self-review
+
+- Centralized the `waiting` invariant in dispatch: every event result in `waiting`, including failed→ready recovery and explicit skip, clears both the 80ms progress ticker and 100ms display clock. The independent serial 500ms health schedule remains active.
+- Moved `role="progressbar"`, its accessible label, range, and current value to the `<svg>` itself. The controller updates that SVG while the visual stroke remains a separate circle.
+- Stored automatic startup as a window-level singleton. Re-evaluating the browser script reuses the existing controller and creates no duplicate timers or global listeners.
+- Entering `complete` immediately removes confirm/skip click handlers and the keydown handler, while retaining `pagehide` for final destruction. `Escape` still performs presentation-only skip but no longer prevents the browser default.
+- Confirmed the waiting freeze does not fabricate readiness/confirmation, stale health responses remain guarded, and completion still aborts the active health request.
+
+### Final verification
+
+- Focused: 21/21 passed.
+- `npm run verify`: lint passed; 65/65 tests passed.
+- `git diff --check`: passed.

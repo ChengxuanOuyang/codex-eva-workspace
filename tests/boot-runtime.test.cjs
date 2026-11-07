@@ -81,7 +81,7 @@ function fixture(api) {
 
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
-    '#diagnostic-text', '#sync-heading', '#progress-value', '#ring-progress', '#skip-button'
+    '#diagnostic-text', '#sync-heading', '#progress-value', '#ring-progress', '#ring-stroke', '#skip-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
   const document = {
@@ -108,7 +108,7 @@ function fixture(api) {
   return {clock, controller, document, elements, rootListeners};
 }
 
-test('skip freezes the 80ms presentation ticker while health polling remains scheduled', async () => {
+test('skip freezes progress and display clock while health polling remains scheduled', async () => {
   const health = deferred();
   const view = fixture({health: () => health.promise});
 
@@ -119,12 +119,19 @@ test('skip freezes the 80ms presentation ticker while health polling remains sch
 
   assert.equal(view.controller.getState().phase, 'waiting');
   assert.equal(view.clock.countIntervals(80), 0);
+  assert.equal(view.clock.countIntervals(100), 0);
+  const progress = view.controller.getState().progress;
+  const clockText = view.elements['#clock-readout'].textContent;
+  view.clock.fireInterval(80);
+  view.clock.fireInterval(100);
+  assert.equal(view.controller.getState().progress, progress);
+  assert.equal(view.elements['#clock-readout'].textContent, clockText);
   health.resolve({ready: false});
   await healthRun;
   assert.equal(view.clock.countTimeouts(500), 1);
 });
 
-test('skip freezes the ticker when health recovery already selected waiting presentation', async () => {
+test('failed recovery entering waiting freezes presentation without stopping health polling', async () => {
   let calls = 0;
   const view = fixture({
     health: () => {
@@ -137,11 +144,15 @@ test('skip freezes the ticker when health recovery already selected waiting pres
   assert.equal(view.controller.getState().phase, 'failed');
   await view.clock.fireTimeout(500);
   assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.clock.countIntervals(80), 1);
-  view.clock.fireTimeout(3000);
-  view.elements['#skip-button'].dispatch('click');
-
   assert.equal(view.clock.countIntervals(80), 0);
+  assert.equal(view.clock.countIntervals(100), 0);
+  assert.equal(view.clock.countTimeouts(500), 1);
+  const progress = view.controller.getState().progress;
+  const clockText = view.elements['#clock-readout'].textContent;
+  view.clock.fireInterval(80);
+  view.clock.fireInterval(100);
+  assert.equal(view.controller.getState().progress, progress);
+  assert.equal(view.elements['#clock-readout'].textContent, clockText);
 });
 
 test('health polling is serial and never has more than one request in flight', async () => {
@@ -197,6 +208,10 @@ test('completion aborts health and a late response cannot overwrite SYSTEM ONLIN
   assert.equal(view.document.body.dataset.phase, 'complete');
   assert.equal(view.elements['#sync-heading'].textContent, 'SYSTEM ONLINE');
   assert.equal(lateSignal.aborted, true);
+  assert.equal(view.elements['#confirm-button'].listeners.has('click'), false);
+  assert.equal(view.elements['#skip-button'].listeners.has('click'), false);
+  assert.equal(view.rootListeners.has('keydown'), false);
+  assert.equal(view.rootListeners.has('pagehide'), true);
   const writes = view.elements['#diagnostic-text'].textWrites;
   late.resolve({ready: false});
   await lateRun;
@@ -230,4 +245,57 @@ test('render updates aria-valuenow and identical health states do not rewrite th
   view.clock.fireInterval(80);
   assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '0.4');
   assert.equal(view.elements['#diagnostic-text'].textWrites, writes);
+});
+
+test('Escape skips without preventing the browser default', () => {
+  const view = fixture({health: () => new Promise(() => {})});
+  view.clock.fireTimeout(3000);
+  let prevented = false;
+  view.rootListeners.get('keydown')({key: 'Escape', preventDefault: () => { prevented = true; }});
+
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(prevented, false);
+});
+
+test('automatic startup is a window singleton across repeated script execution', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
+  const selectors = [
+    '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
+    '#diagnostic-text', '#sync-heading', '#progress-value', '#ring-progress', '#ring-stroke', '#skip-button'
+  ];
+  const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
+  const document = {body: new FakeElement(), querySelector: selector => elements[selector]};
+  const clock = new FakeClock();
+  const listeners = new Map();
+  let listenerAdds = 0;
+  const sandbox = {
+    AbortController,
+    ProjectZeroApi: {
+      MAX_UNCONFIRMED_PROGRESS,
+      health: () => new Promise(() => {}),
+      nextBootState
+    },
+    addEventListener(type, listener) { listenerAdds += 1; listeners.set(type, listener); },
+    clearInterval: clock.clearInterval,
+    clearTimeout: clock.clearTimeout,
+    document,
+    matchMedia: () => ({matches: false}),
+    performance: {now: () => 0},
+    removeEventListener(type, listener) {
+      if (listeners.get(type) === listener) listeners.delete(type);
+    },
+    setInterval: clock.setInterval,
+    setTimeout: clock.setTimeout
+  };
+  sandbox.globalThis = sandbox;
+
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
+  const controller = sandbox.ProjectZeroBootController;
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
+
+  assert.ok(controller);
+  assert.equal(sandbox.ProjectZeroBootController, controller);
+  assert.equal(clock.countIntervals(80), 1);
+  assert.equal(clock.countIntervals(100), 1);
+  assert.equal(listenerAdds, 2);
 });

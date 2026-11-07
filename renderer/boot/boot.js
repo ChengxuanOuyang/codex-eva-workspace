@@ -12,7 +12,8 @@
       diagnostic: document.querySelector('#diagnostic-text'),
       heading: document.querySelector('#sync-heading'),
       progress: document.querySelector('#progress-value'),
-      ring: document.querySelector('#ring-progress'),
+      progressbar: document.querySelector('#ring-progress'),
+      ring: document.querySelector('#ring-stroke'),
       skip: document.querySelector('#skip-button')
     };
     let state = {phase: 'syncing', progress: 0, ready: false, confirmed: false};
@@ -37,6 +38,12 @@
       tickTimer = undefined;
     }
 
+    function freezePresentation() {
+      stopTicker();
+      if (clockTimer !== undefined) clock.clearInterval(clockTimer);
+      clockTimer = undefined;
+    }
+
     function stopHealth() {
       healthGeneration += 1;
       if (healthTimer !== undefined) clock.clearTimeout(healthTimer);
@@ -51,7 +58,7 @@
       document.body.dataset.phase = state.phase;
       setText(elements.progress, progress.toFixed(1).padStart(4, '0'));
       elements.ring.setAttribute('stroke-dashoffset', String(circumference * (1 - progress / 100)));
-      elements.ring.setAttribute('aria-valuenow', progress.toFixed(1));
+      elements.progressbar.setAttribute('aria-valuenow', progress.toFixed(1));
       elements.confirm.disabled = !(progress === api.MAX_UNCONFIRMED_PROGRESS && state.ready && !state.confirmed);
 
       if (state.phase === 'complete') {
@@ -78,10 +85,15 @@
     function dispatch(event) {
       if (destroyed) return false;
       const next = api.nextBootState(state, event);
-      if (next === state) return false;
+      if (next === state) {
+        if (state.phase === 'waiting') freezePresentation();
+        return false;
+      }
       state = next;
       render();
-      if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
+      if (state.phase === 'waiting') freezePresentation();
+      else if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
+      if (state.phase === 'complete') unbindInteractions();
       return true;
     }
 
@@ -127,7 +139,6 @@
     function skipPresentation() {
       if (!skipAvailable) return;
       dispatch({type: 'skip'});
-      stopTicker();
     }
 
     function confirm() {
@@ -144,8 +155,13 @@
 
     function onKeydown(event) {
       if (event.key !== 'Escape') return;
-      event.preventDefault();
       skipPresentation();
+    }
+
+    function unbindInteractions() {
+      elements.confirm.removeEventListener('click', confirm);
+      elements.skip.removeEventListener('click', skipPresentation);
+      eventRoot.removeEventListener('keydown', onKeydown);
     }
 
     function destroy() {
@@ -156,9 +172,7 @@
       if (clockTimer !== undefined) clock.clearInterval(clockTimer);
       if (skipTimer !== undefined) clock.clearTimeout(skipTimer);
       if (completeTimer !== undefined) clock.clearTimeout(completeTimer);
-      elements.confirm.removeEventListener('click', confirm);
-      elements.skip.removeEventListener('click', skipPresentation);
-      eventRoot.removeEventListener('keydown', onKeydown);
+      unbindInteractions();
       eventRoot.removeEventListener('pagehide', destroy);
     }
 
@@ -194,8 +208,8 @@
 
   root.ProjectZeroBoot = Object.freeze({createBootController});
 
-  if (root.document && root.ProjectZeroApi) {
-    const controller = createBootController({
+  if (root.document && root.ProjectZeroApi && !root.ProjectZeroBootController) {
+    root.ProjectZeroBootController = createBootController({
       api: root.ProjectZeroApi,
       clock: root,
       document: root.document,
@@ -203,6 +217,6 @@
       reducedMotion: root.matchMedia('(prefers-reduced-motion: reduce)').matches,
       root
     });
-    controller.start();
+    root.ProjectZeroBootController.start();
   }
 }(globalThis));

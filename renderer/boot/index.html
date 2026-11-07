@@ -42,12 +42,12 @@
       <div class="sync-assembly">
         <div class="orbit orbit-outer" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="orbit orbit-inner" aria-hidden="true"></div>
-        <svg class="progress-ring" viewBox="0 0 320 320" role="img" aria-labelledby="ring-title ring-desc">
+        <svg id="ring-progress" class="progress-ring" viewBox="0 0 320 320"
+          role="progressbar" aria-label="同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <title id="ring-title">同步进度</title>
           <desc id="ring-desc">启动同步会在后端就绪且用户确认前停留在百分之九十九点二。</desc>
           <circle class="ring-track" cx="160" cy="160" r="132"></circle>
-          <circle id="ring-progress" class="ring-progress" cx="160" cy="160" r="132"
-            role="progressbar" aria-label="同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></circle>
+          <circle id="ring-stroke" class="ring-progress" cx="160" cy="160" r="132"></circle>
         </svg>
         <div class="fluid-window" aria-hidden="true"><div class="fluid-layer"></div><div class="fluid-glint"></div></div>
         <div class="sync-readout">

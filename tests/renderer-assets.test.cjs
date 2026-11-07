@@ -35,10 +35,13 @@ test('boot document uses the exact product name and only local allowlisted asset
 test('dynamic synchronization ring exposes progressbar semantics', async () => {
   const html = await read('boot/index.html');
 
-  assert.match(html, /id="ring-progress"[^>]*role="progressbar"/);
-  assert.match(html, /id="ring-progress"[^>]*aria-valuemin="0"/);
-  assert.match(html, /id="ring-progress"[^>]*aria-valuemax="100"/);
-  assert.match(html, /id="ring-progress"[^>]*aria-valuenow="0"/);
+  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*role="progressbar"/);
+  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-label="同步进度"/);
+  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-valuemin="0"/);
+  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-valuemax="100"/);
+  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-valuenow="0"/);
+  assert.doesNotMatch(html, /<svg[^>]*role="img"/);
+  assert.match(html, /<circle[^>]*id="ring-stroke"[^>]*class="ring-progress"/);
 });
 
 test('served renderer code contains no Node API, embedded token, or remote resource', async () => {
