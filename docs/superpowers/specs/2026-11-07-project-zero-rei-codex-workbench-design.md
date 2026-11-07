@@ -46,7 +46,19 @@ The approved public boot composition is **Mark + Core Silhouette**:
 - the mark must not use the NERV leaf, NERV wordmark, Evangelion wordmark, official typography, or a traced official composition;
 - the pilot abstraction must be authored for this project and must not reproduce an official Rei illustration, anime frame, promotional pose, or reference-video pixel.
 
-This composition is intended to make the Rei/Unit-00 inspiration immediately legible while keeping every public visual asset original and redistributable. Its source form should remain editable and its asset record must state the author, license, and checksum before release.
+The earlier CSS-only geometric silhouette is a layout prototype, not accepted final art. Final public art uses one consistent original adult pilot design: an ice-blue short bob, restrained red eyes, and an original white biomechanical pilot suit with pale-cyan seams and muted red accents. The face, hair accessories, suit construction, pose, and framing must remain distinct from official character sheets, animation frames, and promotional art.
+
+The approved final sequence is **B → A → C**:
+
+1. **B — System Awakening / LCL:** a close side-profile half-body portrait behind a translucent warm-amber fluid or glass layer. It appears only during the opening awakening/LCL beat.
+2. **A — Synchronization:** the primary composition places the pilot on the right, looking left toward the synchronization core, with protected negative space for the ring, 99.2% readout, status, and confirmation controls. It remains the default background while Codex readiness is checked and while waiting for pilot confirmation.
+3. **C — System Online:** after confirmation reaches 100%, a wider cockpit half-body composition appears for the `SYSTEM ONLINE` beat and transitions into the workbench shell.
+
+The three scenes use the same character model, suit design, line quality, palette, and lighting language. Runtime motion is limited to masks, cross-fades, subtle parallax, the existing synchronization instrumentation, and the LCL overlay; the artwork itself is not generated as a copied animation. Reduced Motion replaces masks and parallax with short cross-fades and preserves all controls.
+
+Each final scene is stored as a separate optimized local raster asset with no embedded logo, text, watermark, or remote dependency. Editable source or lossless master files remain available for project maintenance, while runtime derivatives are sized for the target macOS window. Every public asset record states the authoring method, license, source/master checksum, runtime checksum, and the prompt or production notes needed to audit its origin before release.
+
+This composition is intended to make the Rei/Unit-00 inspiration immediately legible while keeping every public visual asset original and redistributable.
 
 The application will support local private theme packs. Theme-pack files live outside the Git repository under Application Support and are excluded from export by default. The project will not download, provide, or encourage redistribution of copyrighted official assets.
 
