@@ -12,6 +12,7 @@ function candidatePaths(userPath, pathCodex) {
 
 function isExecutable(path) {
   try {
+    if (!fs.statSync(path).isFile()) return false;
     fs.accessSync(path, fs.constants.X_OK);
     return true;
   } catch {

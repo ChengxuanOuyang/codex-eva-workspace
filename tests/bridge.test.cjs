@@ -71,22 +71,29 @@ test('stop rejects every pending request', async () => {
   await assert.rejects(second, /Codex connection stopped/);
 });
 
-test('a delayed exit from an old child does not disconnect a new child', async () => {
+test('delayed events from an old child do not disconnect a new child', async () => {
   const {bridge, children} = createFixture();
   let disconnected = 0;
+  const notifications = [];
   bridge.on('disconnected', () => {
     disconnected += 1;
   });
+  bridge.on('notification', message => notifications.push(message));
   await bridge.start();
   const oldChild = children[0];
   bridge.stop();
   await bridge.start();
 
   oldChild.emit('exit', 9);
+  oldChild.emit('error', Error('old child error'));
+  oldChild.stdout.emit('error', Error('old stdout error'));
+  oldChild.stderr.emit('error', Error('old stderr error'));
+  oldChild.stdout.write(`${JSON.stringify({method: 'old/notification', params: {}})}\n`);
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(bridge.connected, true);
   assert.equal(disconnected, 0);
+  assert.deepEqual(notifications, []);
   bridge.stop();
 });
 
