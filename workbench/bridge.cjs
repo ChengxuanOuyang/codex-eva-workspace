@@ -6,14 +6,19 @@ const {spawn} = require('node:child_process');
 const {EventEmitter} = require('node:events');
 const readline = require('node:readline');
 
+const STOP_TIMEOUT_MS = 2000;
+
 class CodexBridge extends EventEmitter {
-  constructor(executable = 'codex', spawnProcess = spawn) {
+  constructor(executable = 'codex', spawnProcess = spawn, {stopTimeoutMs = STOP_TIMEOUT_MS} = {}) {
     super();
     this.executable = executable;
     this.spawnProcess = spawnProcess;
     this.pending = new Map();
     this.nextId = 1;
     this.connected = false;
+    this.stopTimeoutMs = stopTimeoutMs;
+    this.stopPromise = null;
+    this.stoppingChild = null;
   }
 
   async start() {
@@ -62,7 +67,11 @@ class CodexBridge extends EventEmitter {
       this.send({method: 'initialized', params: {}});
       this.connected = true;
     } catch (error) {
-      if (this.child === child) this.stop(error);
+      try {
+        await this.stop(error);
+      } catch {
+        // The caller's lifecycle cleanup can retry or force the retained child.
+      }
       throw error;
     }
   }
@@ -113,7 +122,7 @@ class CodexBridge extends EventEmitter {
 
   fail(error, child) {
     if (child && this.child !== child) return;
-    this.stop(error);
+    void this.stop(error).catch(() => {});
     this.emit('disconnected', error.message);
   }
 
@@ -130,8 +139,51 @@ class CodexBridge extends EventEmitter {
     }
     this.pending.clear();
 
-    child?.stdin.end();
-    if (child && !child.killed) child.kill();
+    if (!child) return this.stopPromise || Promise.resolve();
+
+    this.stoppingChild = child;
+    const stopPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      let timer;
+      const cleanup = () => {
+        clearTimeout(timer);
+        child.removeListener('exit', exited);
+        child.removeListener('close', exited);
+      };
+      const exited = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (this.stoppingChild === child) this.stoppingChild = null;
+        resolve();
+      };
+      const failed = stopError => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(stopError);
+      };
+
+      child.once('exit', exited);
+      child.once('close', exited);
+      timer = setTimeout(() => {
+        failed(Error('Codex process did not exit after the termination signal'));
+      }, this.stopTimeoutMs);
+
+      try {
+        if (child.exitCode !== null || child.signalCode !== null) return exited();
+        child.stdin.end();
+        if (!child.killed && child.kill() === false && child.pid !== null && child.pid !== undefined) {
+          return failed(Error('Codex process did not accept the termination signal'));
+        }
+        if (child.pid === null || child.pid === undefined) return exited();
+        if (child.exitCode !== null || child.signalCode !== null) exited();
+      } catch (stopError) {
+        failed(stopError);
+      }
+    });
+    this.stopPromise = stopPromise;
+    return stopPromise;
   }
 }
 

@@ -4,14 +4,26 @@ const {EventEmitter} = require('node:events');
 const {PassThrough} = require('node:stream');
 const {CodexBridge} = require('../workbench/bridge.cjs');
 
-function createFakeChild(onMessage) {
+function exitChild(child, code = null, signal = 'SIGTERM') {
+  child.exitCode = code;
+  child.signalCode = signal;
+  child.emit('exit', code, signal);
+  child.emit('close', code, signal);
+}
+
+function createFakeChild(onMessage, {autoExit, childPid, hasPid, killResult}) {
   const child = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   child.killed = false;
+  if (hasPid) child.pid = childPid;
+  child.exitCode = null;
+  child.signalCode = null;
   child.kill = () => {
     child.killed = true;
+    if (autoExit) setImmediate(() => exitChild(child));
+    return killResult;
   };
 
   let input = '';
@@ -26,7 +38,14 @@ function createFakeChild(onMessage) {
   return child;
 }
 
-function createFixture({initializeResponses = []} = {}) {
+function createFixture({
+  initializeResponses = [],
+  autoExit = true,
+  childPid = 1234,
+  hasPid = true,
+  killResult = true,
+  stopTimeoutMs
+} = {}) {
   const calls = [];
   const children = [];
   const messages = [];
@@ -37,12 +56,17 @@ function createFixture({initializeResponses = []} = {}) {
         const response = initializeResponses.shift() || {result: {}};
         setImmediate(() => currentChild.stdout.write(`${JSON.stringify({id: message.id, ...response})}\n`));
       }
-    });
+    }, {autoExit, childPid, hasPid, killResult});
     calls.push({executable, args, options});
     children.push(child);
     return child;
   };
-  return {bridge: new CodexBridge('/path/codex', spawnProcess), calls, children, messages};
+  return {
+    bridge: new CodexBridge('/path/codex', spawnProcess, {stopTimeoutMs}),
+    calls,
+    children,
+    messages
+  };
 }
 
 test('start launches app-server and completes the initialize handshake', async () => {
@@ -121,6 +145,84 @@ test('an initialize failure cleans up the child and permits retry', async () => 
   await bridge.start();
   assert.equal(bridge.connected, true);
   bridge.stop();
+});
+
+test('an initialize failure does not reject until the child has exited', async () => {
+  const {bridge, children} = createFixture({
+    initializeResponses: [{error: {message: 'initialize rejected'}}],
+    autoExit: false
+  });
+  let outcome;
+  const starting = bridge.start().then(
+    () => { outcome = {status: 'resolved'}; },
+    error => { outcome = {status: 'rejected', error}; }
+  );
+
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(children[0].killed, true);
+  assert.equal(outcome, undefined);
+
+  exitChild(children[0]);
+  await starting;
+  assert.equal(outcome.status, 'rejected');
+  assert.match(outcome.error.message, /initialize rejected/);
+});
+
+test('an initialize failure remains the startup error when stopping times out', async () => {
+  const {bridge} = createFixture({
+    initializeResponses: [{error: {message: 'initialize rejected'}}],
+    autoExit: false,
+    stopTimeoutMs: 5
+  });
+
+  await assert.rejects(bridge.start(), /initialize rejected/);
+  await assert.rejects(bridge.stop(), /did not exit/);
+});
+
+test('repeated stop returns the same promise until the child exits', async () => {
+  const {bridge, children} = createFixture({autoExit: false});
+  await bridge.start();
+
+  const first = bridge.stop();
+  const second = bridge.stop();
+  assert.ok(first instanceof Promise);
+  assert.equal(second, first);
+
+  let stopped = false;
+  first.then(() => { stopped = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stopped, false);
+
+  exitChild(children[0]);
+  await first;
+  assert.equal(stopped, true);
+});
+
+test('stop rejects within its bound when a live child ignores termination', async () => {
+  const {bridge} = createFixture({autoExit: false, stopTimeoutMs: 5});
+  await bridge.start();
+  const stopping = bridge.stop().then(
+    () => 'resolved',
+    () => 'rejected'
+  );
+
+  const outcome = await Promise.race([
+    stopping,
+    new Promise(resolve => setTimeout(() => resolve('test-timeout'), 30))
+  ]);
+
+  assert.equal(outcome, 'rejected');
+});
+
+test('a spawn error stops without waiting for an exit from an unspawned child', async () => {
+  const {bridge, children} = createFixture({autoExit: false, hasPid: false, killResult: false});
+  const starting = bridge.start();
+
+  children[0].emit('error', Error('spawn failed'));
+
+  await assert.rejects(starting, /spawn failed/);
+  assert.equal(children[0].killed, true);
 });
 
 test('active stdout and stderr pipe errors disconnect the bridge', async () => {

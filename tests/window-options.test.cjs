@@ -2,14 +2,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const {spawnSync} = require('node:child_process');
 const {EventEmitter} = require('node:events');
 const {windowOptions} = require('../app/window-options.cjs');
 const {
+  CLEANUP_FAILED_MESSAGE,
+  closeServiceAndConfirm,
   installCleanupHandler,
-  shouldBootstrap,
   startWorkbench,
-  stopBridgeAndWait
-} = require('../app/main.cjs');
+  stopBridgeAndConfirm
+} = require('../app/lifecycle.cjs');
 
 test('renderer is isolated from Node', () => {
   const options = windowOptions('/app/preload.cjs');
@@ -23,9 +26,14 @@ test('renderer is isolated from Node', () => {
   assert.equal(options.webPreferences.preload, '/app/preload.cjs');
 });
 
-test('Electron bootstraps even when CommonJS does not mark the entry as require.main', () => {
-  assert.equal(shouldBootstrap({electronVersion: '45.2.3', isMainModule: false}), true);
-  assert.equal(shouldBootstrap({electronVersion: undefined, isMainModule: false}), false);
+test('the Electron entry is harmless when executed by plain Node', () => {
+  const result = spawnSync(process.execPath, [path.join(__dirname, '..', 'app', 'main.cjs')], {
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
 });
 
 function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resources/codex'} = {}) {
@@ -208,29 +216,130 @@ test('before-quit waits for cleanup and does not enter a repeated quit loop', as
   assert.equal(prevented, 2);
 });
 
-test('before-quit waits for the Codex child to exit after bridge stop', async () => {
+test('before-quit does not quit after cleanup rejection and permits a retry', async () => {
   const app = new EventEmitter();
   let quitCalls = 0;
   app.quit = () => { quitCalls += 1; };
-
-  const child = new EventEmitter();
-  child.exitCode = null;
-  child.signalCode = null;
-  let stopCalls = 0;
-  const bridge = {
-    child,
-    stop() {
-      stopCalls += 1;
+  const server = {
+    listening: true,
+    closeAllConnections() {}
+  };
+  let closeCalls = 0;
+  const service = {
+    server,
+    async close() {
+      closeCalls += 1;
+      if (closeCalls === 1) throw Error('/private/path cleanup failed');
+      server.listening = false;
     }
   };
-  installCleanupHandler(app, [() => stopBridgeAndWait(bridge)]);
+  const diagnostics = [];
+  installCleanupHandler(app, [
+    () => closeServiceAndConfirm(service)
+  ], {onCleanupError: message => diagnostics.push(message)});
 
   app.emit('before-quit', {preventDefault() {}});
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(stopCalls, 1);
   assert.equal(quitCalls, 0);
+  assert.equal(closeCalls, 1);
+  assert.deepEqual(diagnostics, [CLEANUP_FAILED_MESSAGE]);
+  assert.doesNotMatch(diagnostics[0], /private|path/);
 
-  child.emit('exit');
+  app.emit('before-quit', {preventDefault() {}});
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(quitCalls, 1);
+  assert.equal(closeCalls, 2);
+});
+
+test('service cleanup forces connections closed and confirms the listener stopped', async () => {
+  const calls = [];
+  const server = {
+    listening: true,
+    closeAllConnections() {
+      calls.push('force');
+    }
+  };
+  const service = {
+    server,
+    async close() {
+      calls.push('close');
+      server.listening = false;
+    }
+  };
+
+  await closeServiceAndConfirm(service);
+
+  assert.deepEqual(calls, ['force', 'close']);
+  assert.equal(server.listening, false);
+});
+
+test('service cleanup fails within its bound when close cannot be confirmed', async () => {
+  const service = {
+    server: {
+      listening: true,
+      closeAllConnections() {}
+    },
+    close: () => new Promise(() => {})
+  };
+  const closing = closeServiceAndConfirm(service, {closeTimeoutMs: 5}).then(
+    () => 'resolved',
+    () => 'rejected'
+  );
+
+  const outcome = await Promise.race([
+    closing,
+    new Promise(resolve => setTimeout(() => resolve('test-timeout'), 30))
+  ]);
+
+  assert.equal(outcome, 'rejected');
+});
+
+test('bridge cleanup uses its stop promise and confirms the child exited', async () => {
+  const child = new EventEmitter();
+  child.pid = 1234;
+  child.exitCode = null;
+  child.signalCode = null;
+  const bridge = {
+    child,
+    stop() {
+      return new Promise(resolve => child.once('exit', resolve));
+    }
+  };
+  let stopped = false;
+  const stopping = stopBridgeAndConfirm(bridge).then(() => { stopped = true; });
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stopped, false);
+  child.exitCode = 0;
+  child.emit('exit', 0);
+  await stopping;
+  assert.equal(stopped, true);
+});
+
+test('bridge cleanup force-kills and waits when graceful stop rejects', async () => {
+  const child = new EventEmitter();
+  child.pid = 1234;
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  child.kill = signal => {
+    signals.push(signal);
+    setImmediate(() => {
+      child.signalCode = signal;
+      child.emit('exit', null, signal);
+    });
+    return true;
+  };
+  const bridge = {
+    child: null,
+    stoppingChild: child,
+    async stop() {
+      throw Error('graceful stop failed');
+    }
+  };
+
+  await stopBridgeAndConfirm(bridge, {forceExitTimeoutMs: 50});
+
+  assert.deepEqual(signals, ['SIGKILL']);
+  assert.equal(child.signalCode, 'SIGKILL');
 });
