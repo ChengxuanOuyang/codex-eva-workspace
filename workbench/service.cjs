@@ -8,6 +8,8 @@ const path = require('node:path');
 
 const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -22,6 +24,50 @@ function send(res, status, payload) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Length', Buffer.byteLength(body));
   res.end(body);
+}
+
+function methodNotAllowed(res, allowedMethods) {
+  res.setHeader('Allow', allowedMethods.join(', '));
+  return send(res, 405, {error: 'Method not allowed'});
+}
+
+async function validateRequestBody(req, res) {
+  const declaredLength = Number(req.headers['content-length'] || 0);
+  const hasBody = declaredLength > 0 || req.headers['transfer-encoding'] !== undefined;
+  if (!hasBody) return true;
+  if (!JSON_CONTENT_TYPE.test(req.headers['content-type'] || '')) {
+    req.resume();
+    send(res, 415, {error: 'Unsupported media type'});
+    return false;
+  }
+  if (!Number.isSafeInteger(declaredLength) || declaredLength > MAX_REQUEST_BODY_BYTES) {
+    req.resume();
+    send(res, 413, {error: 'Request body too large'});
+    return false;
+  }
+
+  const chunks = [];
+  let size = 0;
+  let tooLarge = false;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_REQUEST_BODY_BYTES) {
+      tooLarge = true;
+      continue;
+    }
+    chunks.push(chunk);
+  }
+  if (tooLarge) {
+    send(res, 413, {error: 'Request body too large'});
+    return false;
+  }
+  try {
+    JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    send(res, 400, {error: 'Invalid JSON'});
+    return false;
+  }
+  return true;
 }
 
 async function readRegularFile(rootDirectory, fileName) {
@@ -74,12 +120,16 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
     ['/boot.js', {root: bootRoot, fileName: 'boot.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/shared/api.js', {root: sharedRoot, fileName: 'api.js', contentType: 'text/javascript; charset=utf-8'}]
   ]);
-  const server = http.createServer((req, res) => {
+  const allowedRoutes = new Set(['/', '/boot.css', '/boot.js', '/shared/api.js', '/health', '/api/state']);
+  const server = http.createServer(async (req, res) => {
     const port = server.address().port;
     const origin = `http://127.0.0.1:${port}`;
 
     if (req.headers.host !== `127.0.0.1:${port}`) {
       return send(res, 403, {error: 'Invalid host'});
+    }
+    if (allowedRoutes.has(req.url) && req.method !== 'GET') {
+      return methodNotAllowed(res, ['GET']);
     }
     if (req.url.startsWith('/api/') && !hasSession(req, token)) {
       return send(res, 403, {error: 'Open the workbench first'});
@@ -87,6 +137,7 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
     if (STATE_CHANGING_METHODS.has(req.method) && req.headers.origin !== origin) {
       return send(res, 403, {error: 'Invalid origin'});
     }
+    if (!await validateRequestBody(req, res)) return;
     if (req.url === '/health') return send(res, 200, {app: 'PROJECT-ZERO', ready: snapshot().ready});
     if (req.url === '/') {
       res.setHeader('Set-Cookie', `project_zero_session=${token}; HttpOnly; SameSite=Strict; Path=/`);

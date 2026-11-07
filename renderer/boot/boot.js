@@ -39,7 +39,6 @@
     }
 
     function freezePresentation() {
-      stopTicker();
       if (clockTimer !== undefined) clock.clearInterval(clockTimer);
       clockTimer = undefined;
     }
@@ -92,7 +91,7 @@
       state = next;
       render();
       if (state.phase === 'waiting') freezePresentation();
-      else if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
+      if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
       if (state.phase === 'complete') unbindInteractions();
       return true;
     }

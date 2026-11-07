@@ -10,9 +10,69 @@ const {CodexBridge} = require('../workbench/bridge.cjs');
 const {createWorkbenchService} = require('../workbench/service.cjs');
 
 const CODEX_NOT_FOUND_MESSAGE = 'No executable Codex installation was found.';
-const CLEANUP_FAILED_MESSAGE = 'Shutdown could not be confirmed; PROJECT ZERO will remain open.';
+const CLEANUP_FAILED_MESSAGE = 'Shutdown cleanup failed; retrying once.';
+const CLEANUP_FINAL_FAILED_MESSAGE = 'Shutdown cleanup failed after retry; forcing process exit.';
 const FORCE_EXIT_TIMEOUT_MS = 2000;
 const SERVICE_CLOSE_TIMEOUT_MS = 2000;
+const READINESS_FAILED_MESSAGE = 'Codex readiness could not be verified.';
+const PLAN_TYPES = new Set([
+  'free', 'go', 'plus', 'pro', 'prolite', 'team',
+  'self_serve_business_prolite', 'self_serve_business_usage_based', 'business',
+  'ent26', 'enterprise_cbp_automation', 'enterprise_cbp_usage_based', 'enterprise',
+  'edu', 'edu_plus', 'edu_pro', 'unknown'
+]);
+
+function readinessError() {
+  const error = Error(READINESS_FAILED_MESSAGE);
+  error.code = 'CODEX_READINESS_INVALID';
+  return error;
+}
+
+function validAccountResponse(response) {
+  if (!response || typeof response !== 'object' || typeof response.requiresOpenaiAuth !== 'boolean') return false;
+  const account = response.account;
+  if (!account || typeof account !== 'object' || typeof account.type !== 'string') return false;
+  if (account.type === 'apiKey') return true;
+  if (account.type === 'amazonBedrock') {
+    return account.usesCodexManagedCredentials === undefined ||
+      typeof account.usesCodexManagedCredentials === 'boolean';
+  }
+  return account.type === 'chatgpt' &&
+    (typeof account.email === 'string' || account.email === null) &&
+    PLAN_TYPES.has(account.planType);
+}
+
+function validModel(model) {
+  return model && typeof model === 'object' &&
+    ['id', 'model', 'displayName', 'description', 'defaultReasoningEffort']
+      .every(field => typeof model[field] === 'string') &&
+    typeof model.hidden === 'boolean' &&
+    typeof model.isDefault === 'boolean' &&
+    Array.isArray(model.supportedReasoningEfforts) &&
+    model.supportedReasoningEfforts.every(option =>
+      option && typeof option === 'object' &&
+      typeof option.reasoningEffort === 'string' &&
+      typeof option.description === 'string'
+    );
+}
+
+function validModelResponse(response) {
+  return response && typeof response === 'object' &&
+    Array.isArray(response.data) &&
+    response.data.every(validModel) &&
+    (response.nextCursor === undefined || response.nextCursor === null ||
+      typeof response.nextCursor === 'string');
+}
+
+async function verifyCodexReadiness(bridge) {
+  const account = await bridge.request('account/read', {});
+  const models = await bridge.request('model/list', {});
+  if (!validAccountResponse(account) || !validModelResponse(models)) throw readinessError();
+  return Object.freeze({
+    ready: true,
+    checks: Object.freeze({account: true, models: true})
+  });
+}
 
 function executableOnPath(name, environmentPath = process.env.PATH) {
   if (!environmentPath) return null;
@@ -154,9 +214,10 @@ async function startWorkbench({
   const bridge = new CodexBridgeClass(executable);
   cleanups.unshift(() => stopBridgeAndConfirm(bridge));
   await bridge.start();
+  const readiness = await verifyCodexReadiness(bridge);
 
   const service = serviceFactory({
-    snapshot: () => ({ready: bridge.connected}),
+    snapshot: () => readiness,
     bootRoot,
     sharedRoot
   });
@@ -172,27 +233,43 @@ async function startWorkbench({
 }
 
 function installCleanupHandler(app, cleanups, {
-  onCleanupError = message => console.error(`[PROJECT ZERO] ${message}`)
+  onCleanupError = message => console.error(`[PROJECT ZERO] ${message}`),
+  retryDelayMs = 50,
+  maxCleanupAttempts = 2
 } = {}) {
   let cleanupStarted = false;
   let readyToQuit = false;
+  let cleanupAttempts = 0;
 
-  app.on('before-quit', event => {
-    if (readyToQuit) return;
-    event.preventDefault();
-    if (cleanupStarted) return;
+  const runCleanup = () => {
     cleanupStarted = true;
-
+    cleanupAttempts += 1;
     Promise.allSettled(cleanups.map(cleanup => Promise.resolve().then(cleanup)))
       .then(results => {
         if (results.some(result => result.status === 'rejected')) {
-          cleanupStarted = false;
-          onCleanupError(CLEANUP_FAILED_MESSAGE);
+          if (cleanupAttempts < maxCleanupAttempts) {
+            onCleanupError(CLEANUP_FAILED_MESSAGE);
+            setTimeout(() => {
+              cleanupStarted = false;
+              runCleanup();
+            }, retryDelayMs);
+            return;
+          }
+          onCleanupError(CLEANUP_FINAL_FAILED_MESSAGE);
+          readyToQuit = true;
+          app.exit(1);
           return;
         }
         readyToQuit = true;
         app.quit();
       });
+  };
+
+  app.on('before-quit', event => {
+    if (readyToQuit) return;
+    event.preventDefault();
+    if (cleanupStarted) return;
+    runCleanup();
   });
 }
 
@@ -213,7 +290,9 @@ function bootstrap({app, BrowserWindow, dialog}, startOptions = {}) {
 
 module.exports = {
   CLEANUP_FAILED_MESSAGE,
+  CLEANUP_FINAL_FAILED_MESSAGE,
   CODEX_NOT_FOUND_MESSAGE,
+  READINESS_FAILED_MESSAGE,
   bootstrap,
   closeServiceAndConfirm,
   executableOnPath,
@@ -221,5 +300,6 @@ module.exports = {
   installCleanupHandler,
   restrictNavigation,
   startWorkbench,
-  stopBridgeAndConfirm
+  stopBridgeAndConfirm,
+  verifyCodexReadiness
 };

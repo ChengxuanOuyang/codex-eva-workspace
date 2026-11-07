@@ -34,14 +34,18 @@ test.after(async () => {
   if (fixtureRoot) await fs.rm(fixtureRoot, {recursive: true, force: true});
 });
 
-function requestAt(targetAddress, {requestPath = '/', method = 'GET', headers = {}} = {}) {
+function requestAt(targetAddress, {requestPath = '/', method = 'GET', headers = {}, body} = {}) {
   return new Promise((resolve, reject) => {
+    const requestHeaders = {...headers};
+    if (body !== undefined && requestHeaders['Content-Length'] === undefined) {
+      requestHeaders['Content-Length'] = Buffer.byteLength(body);
+    }
     const req = http.request({
       host: '127.0.0.1',
       port: targetAddress.port,
       path: requestPath,
       method,
-      headers
+      headers: requestHeaders
     }, res => {
       let body = '';
       res.setEncoding('utf8');
@@ -51,7 +55,7 @@ function requestAt(targetAddress, {requestPath = '/', method = 'GET', headers = 
       res.on('end', () => resolve({status: res.statusCode, headers: res.headers, body}));
     });
     req.on('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 
@@ -98,28 +102,54 @@ test('rejects API access without the session cookie', async () => {
   assert.deepEqual(JSON.parse(response.body), {error: 'Open the workbench first'});
 });
 
-test('rejects a state-changing request with a non-matching Origin', async () => {
+test('rejects unsupported methods with an exact Allow header', async () => {
   const {cookie} = await openWorkbench();
-  const response = await request({
-    requestPath: '/api/state',
-    method: 'POST',
-    headers: {Cookie: cookie, Origin: `http://localhost:${address.port}`}
-  });
-
-  assert.equal(response.status, 403);
-  assert.deepEqual(JSON.parse(response.body), {error: 'Invalid origin'});
+  for (const requestPath of ['/', '/boot.css', '/boot.js', '/shared/api.js', '/health', '/api/state']) {
+    const response = await request({
+      requestPath,
+      method: 'POST',
+      headers: {Cookie: cookie, Origin: `http://127.0.0.1:${address.port}`}
+    });
+    assert.equal(response.status, 405, requestPath);
+    assert.equal(response.headers.allow, 'GET', requestPath);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Method not allowed'});
+  }
 });
 
-test('allows state-changing requests only with the exact Origin', async () => {
-  const {cookie} = await openWorkbench();
-  const response = await request({
-    requestPath: '/api/state',
-    method: 'POST',
-    headers: {Cookie: cookie, Origin: `http://127.0.0.1:${address.port}`}
+test('rejects unsupported request media and oversized bodies before routing', async () => {
+  const unsupported = await request({
+    requestPath: '/health',
+    headers: {'Content-Type': 'text/plain'},
+    body: '{}'
   });
+  assert.equal(unsupported.status, 415);
+  assert.deepEqual(JSON.parse(unsupported.body), {error: 'Unsupported media type'});
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(JSON.parse(response.body), {ready: true});
+  const oversized = await request({
+    requestPath: '/health',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({payload: 'x'.repeat(70 * 1024)})
+  });
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(JSON.parse(oversized.body), {error: 'Request body too large'});
+});
+
+test('accepts only bounded valid JSON when a request body is present', async () => {
+  const invalid = await request({
+    requestPath: '/health',
+    headers: {'Content-Type': 'application/json; charset=utf-8'},
+    body: '{invalid'
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(JSON.parse(invalid.body), {error: 'Invalid JSON'});
+
+  const valid = await request({
+    requestPath: '/health',
+    headers: {'Content-Type': 'application/json'},
+    body: '{}'
+  });
+  assert.equal(valid.status, 200);
+  assert.deepEqual(JSON.parse(valid.body), {app: 'PROJECT-ZERO', ready: true});
 });
 
 test('adds browser hardening headers to every response type', async () => {

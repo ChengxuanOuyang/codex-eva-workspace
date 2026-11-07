@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
 const {PassThrough} = require('node:stream');
-const {CodexBridge} = require('../workbench/bridge.cjs');
+const {CodexBridge, CodexRpcError, redactRpcData} = require('../workbench/bridge.cjs');
 
 function exitChild(child, code = null, signal = 'SIGTERM') {
   child.exitCode = code;
@@ -78,9 +78,86 @@ test('start launches app-server and completes the initialize handshake', async (
     'app-server', '--listen', 'stdio://', '-c', 'analytics.enabled=false'
   ]);
   assert.equal(messages[0].message.method, 'initialize');
-  assert.deepEqual(messages[1].message, {method: 'initialized', params: {}});
+  assert.deepEqual(messages[1].message, {method: 'initialized'});
   assert.equal(bridge.connected, true);
   bridge.stop();
+});
+
+test('start waits for an in-flight stop before spawning a replacement child', async () => {
+  const {bridge, children} = createFixture({autoExit: false});
+  await bridge.start();
+
+  const stopping = bridge.stop();
+  const restarting = bridge.start();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(children.length, 1);
+
+  exitChild(children[0]);
+  await stopping;
+  await restarting;
+  assert.equal(children.length, 2);
+  exitChild(children[1]);
+  await bridge.stop();
+});
+
+test('a failed in-flight stop blocks restart and retains cleanup ownership', async () => {
+  const {bridge, children} = createFixture({autoExit: false, stopTimeoutMs: 5});
+  await bridge.start();
+
+  const stopping = bridge.stop();
+  await assert.rejects(stopping, /did not exit/);
+  await assert.rejects(bridge.start(), /did not exit/);
+  assert.equal(children.length, 1);
+  assert.equal(bridge.stoppingChild, children[0]);
+});
+
+test('JSON-RPC errors preserve code and only allowlisted structured data', async () => {
+  const {bridge} = createFixture();
+  await bridge.start();
+  const request = bridge.request('thread/list');
+  const id = bridge.nextId - 1;
+
+  bridge.receive({
+    id,
+    error: {
+      code: -32001,
+      message: 'private /Users/example token=secret',
+      data: {
+        kind: 'rate_limit',
+        retryable: true,
+        opaque: '/Users/example/private',
+        nested: {token: 'secret'}
+      }
+    }
+  });
+
+  await assert.rejects(request, error => {
+    assert.ok(error instanceof CodexRpcError);
+    assert.equal(error.code, -32001);
+    assert.deepEqual(error.data, {kind: 'rate_limit', retryable: true});
+    assert.doesNotMatch(JSON.stringify(error.data), /Users|secret|token/);
+    return true;
+  });
+  await bridge.stop();
+});
+
+test('allowlisted RPC string fields accept only stable enum values', () => {
+  assert.deepEqual(redactRpcData({kind: '/Users/example/private', retryable: false}), {
+    retryable: false
+  });
+});
+
+test('invalid JSON emits one stable redacted diagnostic', async () => {
+  const {bridge, children} = createFixture();
+  const diagnostics = [];
+  bridge.on('diagnostic', diagnostic => diagnostics.push(diagnostic));
+  await bridge.start();
+
+  children[0].stdout.write('{private-path:/Users/example}\n');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(diagnostics, ['CODEX_PROTOCOL_INVALID_JSON']);
+  await bridge.stop();
 });
 
 test('stop rejects every pending request', async () => {

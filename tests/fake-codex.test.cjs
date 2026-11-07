@@ -2,41 +2,52 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {
-  InMemoryCodexBridge,
-  bridgeOptionsForEnvironment
-} = require('../app/main.cjs');
+const path = require('node:path');
+const {bridgeOptionsForEnvironment} = require('../app/main.cjs');
+const {InMemoryCodexBridge, createBridgeOptions} = require('./support/fake-codex.cjs');
 
-class RealCodexBridge {}
+const fakeModule = path.join(__dirname, 'support', 'fake-codex.cjs');
 
-test('fake bridge requires both the test environment and explicit fake switch', () => {
+test('test bridge requires explicit development-only module injection', () => {
   for (const environment of [
     {},
     {NODE_ENV: 'test'},
-    {PROJECT_ZERO_FAKE_CODEX: '1'},
-    {NODE_ENV: 'production', PROJECT_ZERO_FAKE_CODEX: '1'},
-    {NODE_ENV: 'test', PROJECT_ZERO_FAKE_CODEX: '0'}
+    {PROJECT_ZERO_TEST_BRIDGE_MODULE: fakeModule},
+    {NODE_ENV: 'production', PROJECT_ZERO_TEST_BRIDGE_MODULE: fakeModule}
   ]) {
-    assert.deepEqual(bridgeOptionsForEnvironment(environment, RealCodexBridge), {});
+    assert.deepEqual(bridgeOptionsForEnvironment(environment, {isPackaged: false}), {});
   }
 
-  const options = bridgeOptionsForEnvironment({
-    NODE_ENV: 'test',
-    PROJECT_ZERO_FAKE_CODEX: '1'
-  }, RealCodexBridge);
+  const environment = {NODE_ENV: 'test', PROJECT_ZERO_TEST_BRIDGE_MODULE: fakeModule};
+  const options = bridgeOptionsForEnvironment(environment, {isPackaged: false});
   assert.equal(options.CodexBridgeClass, InMemoryCodexBridge);
   assert.equal(options.locateCodex(), 'in-memory-test-codex');
 });
 
-test('in-memory bridge exposes signed-in account and a fixed usable model catalog', async () => {
-  const bridge = new InMemoryCodexBridge();
+test('packaged production refuses test bridge injection even with hostile environment flags', () => {
+  let loads = 0;
+  const options = bridgeOptionsForEnvironment({
+    NODE_ENV: 'test',
+    PROJECT_ZERO_TEST_BRIDGE_MODULE: fakeModule
+  }, {
+    isPackaged: true,
+    loadTestBridge() {
+      loads += 1;
+      return {createBridgeOptions};
+    }
+  });
 
-  assert.equal(bridge.child, undefined);
-  assert.equal(bridge.connected, false);
+  assert.deepEqual(options, {});
+  assert.equal(loads, 0);
+});
+
+test('external in-memory bridge matches official account and model response shapes', async () => {
+  const bridge = new InMemoryCodexBridge();
   await bridge.start();
-  assert.equal(bridge.connected, true);
+
   assert.deepEqual(await bridge.request('account/read'), {
-    account: {signedIn: true}
+    account: {type: 'chatgpt', email: null, planType: 'plus'},
+    requiresOpenaiAuth: true
   });
   assert.deepEqual(await bridge.request('model/list'), {
     data: [{
@@ -45,25 +56,23 @@ test('in-memory bridge exposes signed-in account and a fixed usable model catalo
       displayName: 'PROJECT ZERO Test Model',
       description: 'Deterministic in-memory model for Electron tests',
       hidden: false,
+      isDefault: true,
       defaultReasoningEffort: 'medium',
-      supportedReasoningEfforts: ['low', 'medium', 'high'],
+      supportedReasoningEfforts: [
+        {reasoningEffort: 'low', description: 'Low'},
+        {reasoningEffort: 'medium', description: 'Medium'},
+        {reasoningEffort: 'high', description: 'High'}
+      ],
       inputModalities: ['text', 'image']
     }],
     nextCursor: null
   });
-  assert.equal(bridge.child, undefined);
-
-  const firstStop = bridge.stop();
-  const secondStop = bridge.stop();
-  assert.ok(firstStop instanceof Promise);
-  assert.equal(secondStop, firstStop);
-  await firstStop;
-  assert.equal(bridge.connected, false);
+  assert.deepEqual(bridge.calls, ['account/read', 'model/list']);
+  await bridge.stop();
 });
 
-test('in-memory bridge rejects unsupported requests instead of inventing responses', async () => {
+test('external bridge rejects unsupported requests instead of inventing responses', async () => {
   const bridge = new InMemoryCodexBridge();
   await bridge.start();
-
   await assert.rejects(bridge.request('thread/list'), /Unsupported in-memory Codex request/);
 });

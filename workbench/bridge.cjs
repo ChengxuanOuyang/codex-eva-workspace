@@ -7,6 +7,34 @@ const {EventEmitter} = require('node:events');
 const readline = require('node:readline');
 
 const STOP_TIMEOUT_MS = 2000;
+const ALLOWED_RPC_DATA_FIELDS = new Map([
+  ['kind', 'string'],
+  ['retryable', 'boolean']
+]);
+const ALLOWED_RPC_KINDS = new Set([
+  'authentication', 'conflict', 'internal', 'not_found', 'permission', 'rate_limit', 'validation'
+]);
+
+function redactRpcData(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const redacted = {};
+  for (const [field, expectedType] of ALLOWED_RPC_DATA_FIELDS) {
+    if (typeof data[field] !== expectedType) continue;
+    if (field === 'kind' && !ALLOWED_RPC_KINDS.has(data[field])) continue;
+    redacted[field] = data[field];
+  }
+  return Object.keys(redacted).length ? redacted : undefined;
+}
+
+class CodexRpcError extends Error {
+  constructor(error) {
+    super(typeof error?.message === 'string' ? error.message : 'Codex request failed');
+    this.name = 'CodexRpcError';
+    if (typeof error?.code === 'number' || typeof error?.code === 'string') this.code = error.code;
+    const data = redactRpcData(error?.data);
+    if (data) this.data = data;
+  }
+}
 
 class CodexBridge extends EventEmitter {
   constructor(executable = 'codex', spawnProcess = spawn, {stopTimeoutMs = STOP_TIMEOUT_MS} = {}) {
@@ -22,6 +50,10 @@ class CodexBridge extends EventEmitter {
   }
 
   async start() {
+    if (this.stopPromise) {
+      await this.stopPromise;
+      this.stopPromise = null;
+    }
     if (this.child) throw Error('Bridge already started');
 
     const child = this.spawnProcess(this.executable, [
@@ -49,7 +81,7 @@ class CodexBridge extends EventEmitter {
       try {
         this.receive(JSON.parse(line));
       } catch (error) {
-        this.emit('diagnostic', `Invalid app-server message: ${error.message}`);
+        this.emit('diagnostic', 'CODEX_PROTOCOL_INVALID_JSON');
       }
     });
 
@@ -64,7 +96,7 @@ class CodexBridge extends EventEmitter {
       });
       if (this.child !== child) throw Error('Codex initialization interrupted');
 
-      this.send({method: 'initialized', params: {}});
+      this.send({method: 'initialized'});
       this.connected = true;
     } catch (error) {
       try {
@@ -82,7 +114,7 @@ class CodexBridge extends EventEmitter {
       if (!pending) return;
       this.pending.delete(message.id);
       clearTimeout(pending.timer);
-      if (message.error) pending.reject(Error(message.error.message));
+      if (message.error) pending.reject(new CodexRpcError(message.error));
       else pending.resolve(message.result);
       return;
     }
@@ -187,4 +219,4 @@ class CodexBridge extends EventEmitter {
   }
 }
 
-module.exports = {CodexBridge};
+module.exports = {CodexBridge, CodexRpcError, redactRpcData};

@@ -7,7 +7,7 @@ const pkg = require('../package.json');
 test('unit verification cannot discover or launch Electron end-to-end tests', () => {
   assert.equal(pkg.scripts.test, 'node --test tests/*.test.cjs');
   assert.equal(pkg.scripts.verify, 'npm run lint && npm test');
-  assert.equal(pkg.scripts['test:e2e'], 'node --test tests/e2e/*.test.cjs');
+  assert.equal(pkg.scripts['test:e2e'], 'npm run pack && node --test tests/e2e/*.test.cjs');
 });
 
 test('production scripts and packaging never enable the test bridge', () => {

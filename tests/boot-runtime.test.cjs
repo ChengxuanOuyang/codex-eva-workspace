@@ -108,7 +108,7 @@ function fixture(api) {
   return {clock, controller, document, elements, rootListeners};
 }
 
-test('skip freezes progress and display clock while health polling remains scheduled', async () => {
+test('skip freezes the display clock while logical progress remains confirmable', async () => {
   const health = deferred();
   const view = fixture({health: () => health.promise});
 
@@ -118,20 +118,20 @@ test('skip freezes progress and display clock while health polling remains sched
   view.elements['#skip-button'].dispatch('click');
 
   assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.clock.countIntervals(80), 0);
+  assert.equal(view.clock.countIntervals(80), 1);
   assert.equal(view.clock.countIntervals(100), 0);
-  const progress = view.controller.getState().progress;
   const clockText = view.elements['#clock-readout'].textContent;
-  view.clock.fireInterval(80);
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
   view.clock.fireInterval(100);
-  assert.equal(view.controller.getState().progress, progress);
+  assert.equal(view.controller.getState().progress, 99.2);
   assert.equal(view.elements['#clock-readout'].textContent, clockText);
+  assert.equal(view.elements['#confirm-button'].disabled, true);
   health.resolve({ready: false});
   await healthRun;
   assert.equal(view.clock.countTimeouts(500), 1);
 });
 
-test('failed recovery entering waiting freezes presentation without stopping health polling', async () => {
+test('failed recovery resumes logical progress while decorative presentation stays frozen', async () => {
   let calls = 0;
   const view = fixture({
     health: () => {
@@ -144,15 +144,15 @@ test('failed recovery entering waiting freezes presentation without stopping hea
   assert.equal(view.controller.getState().phase, 'failed');
   await view.clock.fireTimeout(500);
   assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.clock.countIntervals(80), 0);
+  assert.equal(view.clock.countIntervals(80), 1);
   assert.equal(view.clock.countIntervals(100), 0);
   assert.equal(view.clock.countTimeouts(500), 1);
-  const progress = view.controller.getState().progress;
   const clockText = view.elements['#clock-readout'].textContent;
-  view.clock.fireInterval(80);
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
   view.clock.fireInterval(100);
-  assert.equal(view.controller.getState().progress, progress);
+  assert.equal(view.controller.getState().progress, 99.2);
   assert.equal(view.elements['#clock-readout'].textContent, clockText);
+  assert.equal(view.elements['#confirm-button'].disabled, false);
 });
 
 test('health polling is serial and never has more than one request in flight', async () => {

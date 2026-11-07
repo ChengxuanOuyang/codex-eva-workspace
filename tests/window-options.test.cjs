@@ -8,6 +8,7 @@ const {EventEmitter} = require('node:events');
 const {windowOptions} = require('../app/window-options.cjs');
 const {
   CLEANUP_FAILED_MESSAGE,
+  CLEANUP_FINAL_FAILED_MESSAGE,
   closeServiceAndConfirm,
   installCleanupHandler,
   startWorkbench,
@@ -74,6 +75,32 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
       this.connected = true;
     }
 
+    async request(method) {
+      calls.push(`bridge:request:${method}`);
+      if (method === 'account/read') {
+        return {
+          account: {type: 'chatgpt', email: 'private@example.com', planType: 'plus'},
+          requiresOpenaiAuth: true
+        };
+      }
+      if (method === 'model/list') {
+        return {
+          data: [{
+            id: 'private-model-id',
+            model: 'gpt-test',
+            displayName: 'Test',
+            description: 'Test model',
+            hidden: false,
+            isDefault: true,
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [{reasoningEffort: 'medium', description: 'Balanced'}]
+          }],
+          nextCursor: null
+        };
+      }
+      throw Error(`unexpected method: ${method}`);
+    }
+
     stop() {
       calls.push('bridge:stop');
     }
@@ -104,7 +131,11 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     CodexBridgeClass: FakeBridge,
     serviceFactory: options => {
       calls.push('service:create');
-      assert.equal(options.snapshot().ready, true);
+      assert.deepEqual(options.snapshot(), {
+        ready: true,
+        checks: {account: true, models: true}
+      });
+      assert.doesNotMatch(JSON.stringify(options.snapshot()), /private|email|model-id|plus/);
       assert.equal(options.bootRoot, '/renderer/boot');
       assert.equal(options.sharedRoot, '/renderer/shared');
       return service;
@@ -130,6 +161,8 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
     'codex:find',
     'bridge:create:/Applications/ChatGPT.app/Contents/Resources/codex',
     'bridge:start',
+    'bridge:request:account/read',
+    'bridge:request:model/list',
     'service:create',
     'service:listen',
     'window:create',
@@ -151,6 +184,28 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
 
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
   assert.deepEqual(fixture.calls.slice(-2), ['service:close', 'bridge:stop']);
+});
+
+test('workbench rejects malformed readiness responses before opening the renderer', async () => {
+  const fixture = startFixture();
+  class InvalidReadinessBridge {
+    async start() {}
+    async request(method) {
+      if (method === 'account/read') return {account: {signedIn: true}};
+      return {data: [{id: 'missing-required-model-fields'}]};
+    }
+    async stop() {}
+  }
+  fixture.dependencies.CodexBridgeClass = InvalidReadinessBridge;
+
+  await assert.rejects(startWorkbench(fixture.dependencies), error => {
+    assert.equal(error.code, 'CODEX_READINESS_INVALID');
+    assert.equal(error.message, 'Codex readiness could not be verified.');
+    return true;
+  });
+  assert.equal(fixture.calls.includes('service:create'), false);
+  assert.equal(fixture.calls.includes('window:create'), false);
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
 test('missing Codex fails diagnostically without constructing a bridge or disclosing candidates', async () => {
@@ -218,7 +273,7 @@ test('before-quit waits for cleanup and does not enter a repeated quit loop', as
   assert.equal(prevented, 2);
 });
 
-test('before-quit does not quit after cleanup rejection and permits a retry', async () => {
+test('before-quit automatically retries a transient cleanup failure', async () => {
   const app = new EventEmitter();
   let quitCalls = 0;
   app.quit = () => { quitCalls += 1; };
@@ -238,19 +293,43 @@ test('before-quit does not quit after cleanup rejection and permits a retry', as
   const diagnostics = [];
   installCleanupHandler(app, [
     () => closeServiceAndConfirm(service)
-  ], {onCleanupError: message => diagnostics.push(message)});
+  ], {
+    onCleanupError: message => diagnostics.push(message),
+    retryDelayMs: 0
+  });
 
   app.emit('before-quit', {preventDefault() {}});
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(quitCalls, 0);
-  assert.equal(closeCalls, 1);
-  assert.deepEqual(diagnostics, [CLEANUP_FAILED_MESSAGE]);
-  assert.doesNotMatch(diagnostics[0], /private|path/);
-
-  app.emit('before-quit', {preventDefault() {}});
-  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(quitCalls, 1);
   assert.equal(closeCalls, 2);
+  assert.deepEqual(diagnostics, [CLEANUP_FAILED_MESSAGE]);
+  assert.doesNotMatch(diagnostics[0], /private|path/);
+});
+
+test('persistent cleanup failure exits instead of leaving a headless resident process', async () => {
+  const app = new EventEmitter();
+  let quitCalls = 0;
+  const exits = [];
+  app.quit = () => { quitCalls += 1; };
+  app.exit = code => exits.push(code);
+  let cleanupCalls = 0;
+  const diagnostics = [];
+  installCleanupHandler(app, [async () => {
+    cleanupCalls += 1;
+    throw Error('/private/path cleanup failed');
+  }], {
+    onCleanupError: message => diagnostics.push(message),
+    retryDelayMs: 0
+  });
+
+  app.emit('before-quit', {preventDefault() {}});
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  assert.equal(cleanupCalls, 2);
+  assert.equal(quitCalls, 0);
+  assert.deepEqual(exits, [1]);
+  assert.deepEqual(diagnostics, [CLEANUP_FAILED_MESSAGE, CLEANUP_FINAL_FAILED_MESSAGE]);
+  assert.doesNotMatch(diagnostics.join(' '), /private|path/);
 });
 
 test('service cleanup forces connections closed and confirms the listener stopped', async () => {

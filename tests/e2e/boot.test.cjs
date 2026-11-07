@@ -3,7 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {execFile} = require('node:child_process');
+const fs = require('node:fs/promises');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 const {promisify} = require('node:util');
 const {_electron: electron} = require('playwright');
 
@@ -44,6 +47,8 @@ test('application reaches user confirmation without remote content and closes cl
   let app;
   let origin;
   let taskProcessIds = [];
+  const traceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-e2e-'));
+  const tracePath = path.join(traceRoot, 'codex-calls.txt');
 
   try {
     app = await electron.launch({
@@ -51,7 +56,8 @@ test('application reaches user confirmation without remote content and closes cl
       env: {
         ...process.env,
         NODE_ENV: 'test',
-        PROJECT_ZERO_FAKE_CODEX: '1'
+        PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs'),
+        PROJECT_ZERO_TEST_TRACE: tracePath
       }
     });
     const page = await app.firstWindow();
@@ -91,6 +97,10 @@ test('application reaches user confirmation without remote content and closes cl
   } finally {
     await app?.close();
   }
+
+  const calls = (await fs.readFile(tracePath, 'utf8')).trim().split('\n');
+  assert.deepEqual(calls, ['account/read', 'model/list']);
+  await fs.rm(traceRoot, {recursive: true, force: true});
 
   assert.ok(origin, 'the workbench origin was captured before shutdown');
   assert.equal(await requestFails(`${origin}/health`), true, 'the loopback listener closed with the app');
