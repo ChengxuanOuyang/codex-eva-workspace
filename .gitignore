@@ -1,3 +1,11 @@
 .worktrees/
 .superpowers/
-
+node_modules/
+dist/
+.env
+.env.*
+auth.json
+private-themes/
+workbench/data/
+*.log
+.DS_Store
