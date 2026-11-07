@@ -132,7 +132,8 @@ async function startWorkbench({
   userPath = process.env.PROJECT_ZERO_CODEX_PATH,
   CodexBridgeClass = CodexBridge,
   serviceFactory = createWorkbenchService,
-  publicRoot = path.join(__dirname, '..', 'renderer', 'boot'),
+  bootRoot = path.join(__dirname, '..', 'renderer', 'boot'),
+  sharedRoot = path.join(__dirname, '..', 'renderer', 'shared'),
   cleanups = []
 }) {
   await app.whenReady();
@@ -156,7 +157,8 @@ async function startWorkbench({
 
   const service = serviceFactory({
     snapshot: () => ({ready: bridge.connected}),
-    publicRoot
+    bootRoot,
+    sharedRoot
   });
   cleanups.unshift(() => closeServiceAndConfirm(service));
   const address = await service.listen();

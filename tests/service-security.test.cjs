@@ -8,21 +8,30 @@ const {createWorkbenchService} = require('../workbench/service.cjs');
 
 const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 
-let publicRoot;
+let fixtureRoot;
+let bootRoot;
+let sharedRoot;
 let service;
 let address;
 
 test.before(async () => {
-  publicRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-service-'));
-  await fs.writeFile(path.join(publicRoot, 'index.html'), '<!doctype html><title>PROJECT ZERO</title>');
-  await fs.writeFile(path.join(publicRoot, 'secret.txt'), 'must not be served');
-  service = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+  fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-service-'));
+  bootRoot = path.join(fixtureRoot, 'boot');
+  sharedRoot = path.join(fixtureRoot, 'shared');
+  await fs.mkdir(bootRoot);
+  await fs.mkdir(sharedRoot);
+  await fs.writeFile(path.join(bootRoot, 'index.html'), '<!doctype html><title>PROJECT ZERO</title>');
+  await fs.writeFile(path.join(bootRoot, 'boot.css'), 'body { color: #102934; }');
+  await fs.writeFile(path.join(bootRoot, 'boot.js'), 'globalThis.bootLoaded = true;');
+  await fs.writeFile(path.join(sharedRoot, 'api.js'), 'globalThis.apiLoaded = true;');
+  await fs.writeFile(path.join(bootRoot, 'secret.txt'), 'must not be served');
+  service = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
   address = await service.listen();
 });
 
 test.after(async () => {
   await service?.close();
-  if (publicRoot) await fs.rm(publicRoot, {recursive: true, force: true});
+  if (fixtureRoot) await fs.rm(fixtureRoot, {recursive: true, force: true});
 });
 
 function requestAt(targetAddress, {requestPath = '/', method = 'GET', headers = {}} = {}) {
@@ -116,6 +125,9 @@ test('allows state-changing requests only with the exact Origin', async () => {
 test('adds browser hardening headers to every response type', async () => {
   const responses = await Promise.all([
     request(),
+    request({requestPath: '/boot.css'}),
+    request({requestPath: '/boot.js'}),
+    request({requestPath: '/shared/api.js'}),
     request({requestPath: '/health'}),
     request({requestPath: '/api/state'}),
     request({requestPath: '/missing'}),
@@ -129,8 +141,31 @@ test('adds browser hardening headers to every response type', async () => {
   }
 });
 
-test('serves only the root index from publicRoot', async () => {
-  for (const requestPath of ['/index.html', '/secret.txt', '/../package.json', '/..%2fpackage.json']) {
+test('serves the exact static allowlist with explicit MIME types', async () => {
+  const expected = new Map([
+    ['/boot.css', ['text/css; charset=utf-8', 'body { color: #102934; }']],
+    ['/boot.js', ['text/javascript; charset=utf-8', 'globalThis.bootLoaded = true;']],
+    ['/shared/api.js', ['text/javascript; charset=utf-8', 'globalThis.apiLoaded = true;']]
+  ]);
+
+  for (const [requestPath, [contentType, body]] of expected) {
+    const response = await request({requestPath});
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['content-type'], contentType);
+    assert.equal(response.body, body);
+  }
+});
+
+test('serves no path outside the exact static allowlist', async () => {
+  for (const requestPath of [
+    '/index.html',
+    '/secret.txt',
+    '/boot-state.cjs',
+    '/shared/../boot/boot.js',
+    '/../package.json',
+    '/..%2fpackage.json',
+    '/boot.css?debug=true'
+  ]) {
     const response = await request({requestPath});
     assert.equal(response.status, 404);
     assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
@@ -139,14 +174,20 @@ test('serves only the root index from publicRoot', async () => {
 
 test('does not follow an index symlink outside publicRoot', async () => {
   const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-symlink-'));
-  const isolatedPublicRoot = path.join(fixtureRoot, 'public');
+  const isolatedBootRoot = path.join(fixtureRoot, 'boot');
+  const isolatedSharedRoot = path.join(fixtureRoot, 'shared');
   const outsideIndex = path.join(fixtureRoot, 'outside.html');
-  const isolatedService = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot: isolatedPublicRoot});
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot
+  });
 
   try {
-    await fs.mkdir(isolatedPublicRoot);
+    await fs.mkdir(isolatedBootRoot);
+    await fs.mkdir(isolatedSharedRoot);
     await fs.writeFile(outsideIndex, 'private content outside publicRoot');
-    await fs.symlink(outsideIndex, path.join(isolatedPublicRoot, 'index.html'));
+    await fs.symlink(outsideIndex, path.join(isolatedBootRoot, 'index.html'));
     const isolatedAddress = await isolatedService.listen();
 
     const response = await requestAt(isolatedAddress);
@@ -161,11 +202,19 @@ test('does not follow an index symlink outside publicRoot', async () => {
 });
 
 test('rejects a non-regular index without disclosing its path', async () => {
-  const isolatedPublicRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-directory-'));
-  const isolatedService = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot: isolatedPublicRoot});
+  const isolatedFixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-directory-'));
+  const isolatedBootRoot = path.join(isolatedFixtureRoot, 'boot');
+  const isolatedSharedRoot = path.join(isolatedFixtureRoot, 'shared');
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot
+  });
 
   try {
-    await fs.mkdir(path.join(isolatedPublicRoot, 'index.html'));
+    await fs.mkdir(isolatedBootRoot);
+    await fs.mkdir(isolatedSharedRoot);
+    await fs.mkdir(path.join(isolatedBootRoot, 'index.html'));
     const isolatedAddress = await isolatedService.listen();
 
     const response = await requestAt(isolatedAddress);
@@ -175,19 +224,50 @@ test('rejects a non-regular index without disclosing its path', async () => {
     assert.doesNotMatch(response.body, /index\.html|project-zero-directory/);
   } finally {
     await isolatedService.close();
-    await fs.rm(isolatedPublicRoot, {recursive: true, force: true});
+    await fs.rm(isolatedFixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test('returns safe 404s for symlinked, directory, and missing allowlisted assets', async () => {
+  const isolatedFixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-assets-'));
+  const isolatedBootRoot = path.join(isolatedFixtureRoot, 'boot');
+  const isolatedSharedRoot = path.join(isolatedFixtureRoot, 'shared');
+  const outsideAsset = path.join(isolatedFixtureRoot, 'outside.css');
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot
+  });
+
+  try {
+    await fs.mkdir(isolatedBootRoot);
+    await fs.mkdir(isolatedSharedRoot);
+    await fs.writeFile(outsideAsset, 'private asset outside static roots');
+    await fs.symlink(outsideAsset, path.join(isolatedBootRoot, 'boot.css'));
+    await fs.mkdir(path.join(isolatedBootRoot, 'boot.js'));
+    const isolatedAddress = await isolatedService.listen();
+
+    for (const requestPath of ['/boot.css', '/boot.js', '/shared/api.js']) {
+      const response = await requestAt(isolatedAddress, {requestPath});
+      assert.equal(response.status, 404);
+      assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
+      assert.doesNotMatch(response.body, /outside|boot\.css|boot\.js|api\.js|project-zero-assets/);
+    }
+  } finally {
+    await isolatedService.close();
+    await fs.rm(isolatedFixtureRoot, {recursive: true, force: true});
   }
 });
 
 test('close resolves when the service has never listened', async () => {
-  const unopened = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+  const unopened = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
 
   await unopened.close();
   await unopened.close();
 });
 
 test('close resolves when the service is already closed', async () => {
-  const disposable = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+  const disposable = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
   await disposable.listen();
 
   await disposable.close();
@@ -195,7 +275,7 @@ test('close resolves when the service is already closed', async () => {
 });
 
 test('close rejects errors other than ERR_SERVER_NOT_RUNNING', async () => {
-  const failing = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+  const failing = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
   const closeError = Object.assign(Error('close failed'), {code: 'EIO'});
   failing.server.close = callback => callback(closeError);
 

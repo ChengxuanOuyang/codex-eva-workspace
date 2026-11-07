@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>PROJECT ZERO // REI CODEX WORKBENCH</title>
+  <link rel="stylesheet" href="/boot.css">
+  <script src="/shared/api.js" defer></script>
+  <script src="/boot.js" defer></script>
+</head>
+<body data-phase="syncing">
+  <div class="screen-grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="identity">
+      <div class="project-mark" aria-hidden="true"><strong>PZ</strong><small>00</small></div>
+      <div>
+        <p class="eyebrow">独立本地控制界面 <span lang="ja">起動準備</span></p>
+        <h1>PROJECT ZERO <span>//</span> REI CODEX WORKBENCH</h1>
+      </div>
+    </div>
+    <div class="top-status" aria-label="安全状态">
+      <span class="signal-dot"></span><span>LOOPBACK / LOCAL</span><span class="build-tag">PREVIEW 0.1</span>
+    </div>
+  </header>
+
+  <main class="boot-grid">
+    <aside class="status-rail" aria-label="启动子系统">
+      <p class="rail-title">SUBSYSTEM / 06</p>
+      <ol>
+        <li class="hex-cell active"><span>01</span><strong>核心</strong><small>CORE</small></li>
+        <li class="hex-cell active"><span>02</span><strong>桥接</strong><small>BRIDGE</small></li>
+        <li class="hex-cell active"><span>03</span><strong>会话</strong><small>SESSION</small></li>
+        <li class="hex-cell"><span>04</span><strong>模型</strong><small>MODEL</small></li>
+        <li class="hex-cell"><span>05</span><strong>界面</strong><small>RENDER</small></li>
+        <li class="hex-cell"><span>06</span><strong>确认</strong><small>PILOT</small></li>
+      </ol>
+    </aside>
+
+    <section class="sync-stage" aria-labelledby="sync-heading">
+      <div class="stage-index" aria-hidden="true">00—SYNC / A</div>
+      <div class="sync-assembly">
+        <div class="orbit orbit-outer" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="orbit orbit-inner" aria-hidden="true"></div>
+        <svg class="progress-ring" viewBox="0 0 320 320" role="img" aria-labelledby="ring-title ring-desc">
+          <title id="ring-title">同步进度</title>
+          <desc id="ring-desc">启动同步会在后端就绪且用户确认前停留在百分之九十九点二。</desc>
+          <circle class="ring-track" cx="160" cy="160" r="132"></circle>
+          <circle id="ring-progress" class="ring-progress" cx="160" cy="160" r="132"></circle>
+        </svg>
+        <div class="fluid-window" aria-hidden="true"><div class="fluid-layer"></div><div class="fluid-glint"></div></div>
+        <div class="sync-readout">
+          <p class="sync-label" lang="ja">同期率</p>
+          <p class="sync-number"><span id="progress-value">00.0</span><small>%</small></p>
+          <h2 id="sync-heading">系统同步中</h2>
+          <p id="phase-caption">正在建立本地工作台链路</p>
+        </div>
+      </div>
+
+      <div class="action-panel">
+        <button id="confirm-button" class="confirm-button" type="button" disabled>
+          <span class="button-code">PILOT / 00</span><strong>确认并完成同步</strong><span class="button-arrow" aria-hidden="true">→</span>
+        </button>
+        <button id="skip-button" class="skip-button" type="button" hidden>跳过动态演示 <kbd>ESC</kbd></button>
+      </div>
+    </section>
+
+    <aside class="diagnostic-panel" aria-label="启动诊断">
+      <div class="diagnostic-heading"><p class="eyebrow" lang="ja">接続待機</p><h2>链路诊断</h2></div>
+      <dl>
+        <div><dt>渲染隔离</dt><dd class="ok">已启用</dd></div>
+        <div><dt>服务边界</dt><dd>127.0.0.1</dd></div>
+        <div><dt>远程资源</dt><dd class="ok">已阻止</dd></div>
+        <div><dt>后端状态</dt><dd id="backend-state">检查中</dd></div>
+      </dl>
+      <div class="diagnostic-message" role="status" aria-live="polite">
+        <span class="message-index">D-00</span><p id="diagnostic-text">正在检查本地服务，请稍候。</p>
+      </div>
+      <div class="telemetry" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <p class="privacy-note">启动诊断仅显示脱敏状态。凭据不会进入渲染进程。</p>
+    </aside>
+  </main>
+
+  <footer class="boot-footer">
+    <span>ORIGINAL INTERFACE SYSTEM / PROJECT ZERO</span><span id="clock-readout">T+000.0</span><span>按确认键前不会进入工作台</span>
+  </footer>
+</body>
+</html>

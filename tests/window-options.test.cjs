@@ -105,10 +105,12 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     serviceFactory: options => {
       calls.push('service:create');
       assert.equal(options.snapshot().ready, true);
-      assert.equal(options.publicRoot, '/renderer/boot');
+      assert.equal(options.bootRoot, '/renderer/boot');
+      assert.equal(options.sharedRoot, '/renderer/shared');
       return service;
     },
-    publicRoot: '/renderer/boot',
+    bootRoot: '/renderer/boot',
+    sharedRoot: '/renderer/shared',
     cleanups: []
   };
 
