@@ -100,8 +100,8 @@ test('artifact verification rejects an unsigned or wrong-architecture app', asyn
 - [ ] **步骤 2：添加 electron-builder 配置**
 
 ```yaml
-appId: io.github.chengxuanouyang.project-zero
-productName: Project Zero Rei Codex Workbench
+appId: io.github.chengxuanouyang.codex-eva-workspace
+productName: PROJECT ZERO — REI CODEX WORKBENCH
 asar: true
 afterPack: scripts/after-pack.cjs
 files:
@@ -143,7 +143,7 @@ artifactName: '${productName}-${version}-${arch}.${ext}'
 
 ```bash
 npm run build:mac:arm64
-npm run verify:artifact -- "dist/Project Zero Rei Codex Workbench-0.1.0-arm64.dmg" arm64
+npm run verify:artifact -- "dist/PROJECT ZERO — REI CODEX WORKBENCH-0.1.0-preview.0-arm64.dmg" arm64
 ```
 
 预期：DMG 验证 PASS；`codesign` 显示 ad-hoc；架构包含 `arm64`。`spctl --assess` 可能因未公证而拒绝，此结果必须记录为预期限制，不能改写为通过。
@@ -272,7 +272,7 @@ Release body 模板必须包含：未公证说明、Gatekeeper 首次打开步�
 运行：`node --test tests/workflows.test.cjs`
 预期：PASS。
 
-创建并推送 `v0.1.0-rc.1` 之前先确认工作树干净；等待 workflow 完成后保持 release 为 draft，下载并验证全部产物。只有检查清单全绿时才手动发布。
+创建并推送 `v0.1.0-preview.0` 之前先确认工作树干净；等待 workflow 完成后保持 release 为 draft，下载并验证全部产物。只有检查清单全绿时才手动发布。
 
 - [ ] **步骤 4：Commit**
 
@@ -326,7 +326,7 @@ git commit -m "docs: publish the complete open-source workflow"
 
 ### 任务 6：执行发行候选验收与真机安装
 
-**文件：** 修改 `docs/release-checklist.md`，创建 `docs/validation/0.1.0-rc.1.md`
+**文件：** 修改 `docs/release-checklist.md`，创建 `docs/validation/0.1.0-preview.0.md`
 
 - [ ] **步骤 1：从干净 clone 执行完整验证**
 
@@ -353,12 +353,12 @@ Intel 状态必须分开记录：CI 构建与产物检查通过后写“CI verif
 
 - [ ] **步骤 4：记录验收证据并关闭清单**
 
-`docs/validation/0.1.0-rc.1.md` 记录每项 PASS/FAIL、命令、版本、GitHub Actions run 链接、两个 SHA-256、已知问题。任何安全、数据隔离、启动或 Codex 连接失败都阻止发布；纯视觉小问题可建 issue 后接受。
+`docs/validation/0.1.0-preview.0.md` 记录每项 PASS/FAIL、命令、版本、GitHub Actions run 链接、两个 SHA-256、已知问题。任何安全、数据隔离、启动或 Codex 连接失败都阻止发布；纯视觉小问题可建 issue 后接受。
 
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add docs/release-checklist.md docs/validation/0.1.0-rc.1.md
+git add docs/release-checklist.md docs/validation/0.1.0-preview.0.md
 git commit -m "docs: record release candidate validation"
 ```
 

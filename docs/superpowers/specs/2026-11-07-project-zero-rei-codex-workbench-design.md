@@ -3,7 +3,7 @@
 Date: 2026-11-07  
 Status: Approved design, pending written-spec review  
 Target repository: `ChengxuanOuyang/codex-eva-workspace`  
-Initial release: `v0.1.0-preview`
+Initial release: `v0.1.0-preview.0`
 
 ## 1. Objective
 
@@ -14,6 +14,8 @@ The product is an independent local client, not a skin or modification of the of
 ## 2. Product identity
 
 - Display name: `PROJECT ZERO // REI CODEX WORKBENCH`.
+- macOS product/artifact name: `PROJECT ZERO — REI CODEX WORKBENCH` (the filesystem-safe form without `/`).
+- Bundle identifier: `io.github.chengxuanouyang.codex-eva-workspace`.
 - Functional language: Simplified Chinese.
 - Atmospheric labels and announcements: Japanese, with Chinese functional meaning visible where needed.
 - Public description: unofficial fan project with no affiliation, endorsement, or authorization from the Evangelion rights holders or OpenAI.
@@ -263,7 +265,7 @@ The preview is releasable only when:
 - the documented clean-install workflow can be reproduced from a new directory;
 - tests, lint, dependency audit, license checks, and security checks pass before release.
 
-## 14. Out of scope for `v0.1.0-preview`
+## 14. Out of scope for `v0.1.0-preview.0`
 
 - modifying or theming the official ChatGPT/Codex application;
 - macOS login-item auto-start;

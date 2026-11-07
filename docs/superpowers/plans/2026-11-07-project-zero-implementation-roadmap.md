@@ -22,7 +22,7 @@
    产物：终端、Git、插件、私人主题包、原创声音、设置和诊断完整可用。
 
 4. [阶段 4：安全、构建与发布](./2026-11-07-phase-4-release-and-documentation.md)
-   产物：安全回归、双架构构建、GitHub Actions、完整文档和 `v0.1.0-preview` Release。
+   产物：安全回归、双架构构建、GitHub Actions、完整文档和 `v0.1.0-preview.0` Release。
 
 ## 共同执行规则
 

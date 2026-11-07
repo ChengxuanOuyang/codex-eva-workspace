@@ -95,8 +95,8 @@ test('private and credential-bearing paths are ignored', () => {
     "playwright": "1.65.0"
   },
   "build": {
-    "appId": "dev.chengxuan.projectzero",
-    "productName": "PROJECT ZERO",
+    "appId": "io.github.chengxuanouyang.codex-eva-workspace",
+    "productName": "PROJECT ZERO — REI CODEX WORKBENCH",
     "asar": true,
     "files": ["app/**/*", "workbench/**/*", "renderer/**/*", "package.json", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
     "mac": {"category": "public.app-category.developer-tools", "hardenedRuntime": false, "identity": null}
@@ -371,7 +371,7 @@ test('application reaches pilot confirmation without remote content', async () =
 - [ ] **步骤 4：运行全阶段验证和未签名目录构建**
 
 运行：`npm run verify && npm run test:e2e && npm run pack`
-预期：全部测试 PASS；`dist/mac*/PROJECT ZERO.app` 生成；应用包内不存在参考视频、`auth.json` 或 `private-themes`。
+预期：全部测试 PASS；`dist/mac*/PROJECT ZERO — REI CODEX WORKBENCH.app` 生成；应用包内不存在参考视频、`auth.json` 或 `private-themes`。
 
 - [ ] **步骤 5：Commit**
 
