@@ -298,7 +298,7 @@ git commit -m "feat: host workbench in isolated Electron window"
 
 ### 任务 5：实现 99.2% 启动状态机和原创界面
 
-**文件：** 创建 `renderer/boot/boot-state.cjs`、`renderer/boot/index.html`、`renderer/boot/boot.css`、`renderer/boot/boot.js`、`renderer/shared/api.js`、`tests/boot-state.test.cjs`
+**文件：** 创建 `renderer/boot/boot-state.cjs`、`renderer/boot/index.html`、`renderer/boot/boot.css`、`renderer/boot/boot.js`、`renderer/shared/api.js`、`tests/boot-state.test.cjs`，修改 `app/lifecycle.cjs`、`workbench/service.cjs`、`tests/service-security.test.cjs`、`tests/window-options.test.cjs`
 
 - [ ] **步骤 1：编写状态机失败测试**
 
@@ -334,6 +334,8 @@ test('skip changes presentation only', () => {
 HTML/CSS 按批准视觉实现冰白控制面、原创 `PROJECT ZERO` 几何印记、侧边状态六边形、橙色流体层和同步环；不得包含 NERV、官方人物图或参考视频像素。`prefers-reduced-motion: reduce` 禁用液面大幅位移并缩短过渡。
 
 `boot.js` 每 500ms 请求 `/health`；后端 ready 后派发 `ready`；3 秒后显示跳过；`Esc` 仅派发 `skip`；确认按钮按状态启用。
+
+回环服务必须通过固定白名单提供 `/boot.css`、`/boot.js`、`/shared/api.js`，不提供通用静态目录路由。每个文件继续使用 `O_NOFOLLOW` 打开、对同一文件描述符执行 `fstat` 并确认普通文件；缺失、符号链接或非普通文件返回安全 404。CSS 和 JavaScript 使用正确的 `Content-Type`，所有响应保留既有安全头。`app/lifecycle.cjs` 显式传入 boot 与 shared 资源根目录。
 
 - [ ] **步骤 4：运行测试并人工确认三种路径**
 
