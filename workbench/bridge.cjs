@@ -7,6 +7,8 @@ const {EventEmitter} = require('node:events');
 const readline = require('node:readline');
 
 const STOP_TIMEOUT_MS = 2000;
+const RPC_ERROR_MESSAGE = 'Codex request failed';
+const DISCONNECTED_CODE = 'CODEX_DISCONNECTED';
 const ALLOWED_RPC_DATA_FIELDS = new Map([
   ['kind', 'string'],
   ['retryable', 'boolean']
@@ -28,7 +30,7 @@ function redactRpcData(data) {
 
 class CodexRpcError extends Error {
   constructor(error) {
-    super(typeof error?.message === 'string' ? error.message : 'Codex request failed');
+    super(RPC_ERROR_MESSAGE);
     this.name = 'CodexRpcError';
     if (typeof error?.code === 'number' || typeof error?.code === 'string') this.code = error.code;
     const data = redactRpcData(error?.data);
@@ -154,8 +156,10 @@ class CodexBridge extends EventEmitter {
 
   fail(error, child) {
     if (child && this.child !== child) return;
-    void this.stop(error).catch(() => {});
-    this.emit('disconnected', error.message);
+    const disconnected = Error('Codex connection stopped');
+    disconnected.code = DISCONNECTED_CODE;
+    void this.stop(disconnected).catch(() => {});
+    this.emit('disconnected', DISCONNECTED_CODE);
   }
 
   stop(error = Error('Codex connection stopped')) {

@@ -31,6 +31,7 @@ function readinessError() {
 function validAccountResponse(response) {
   if (!response || typeof response !== 'object' || typeof response.requiresOpenaiAuth !== 'boolean') return false;
   const account = response.account;
+  if (account === undefined || account === null) return true;
   if (!account || typeof account !== 'object' || typeof account.type !== 'string') return false;
   if (account.type === 'apiKey') return true;
   if (account.type === 'amazonBedrock') {
@@ -48,10 +49,11 @@ function validModel(model) {
       .every(field => typeof model[field] === 'string') &&
     typeof model.hidden === 'boolean' &&
     typeof model.isDefault === 'boolean' &&
+    model.defaultReasoningEffort.length > 0 &&
     Array.isArray(model.supportedReasoningEfforts) &&
     model.supportedReasoningEfforts.every(option =>
       option && typeof option === 'object' &&
-      typeof option.reasoningEffort === 'string' &&
+      typeof option.reasoningEffort === 'string' && option.reasoningEffort.length > 0 &&
       typeof option.description === 'string'
     );
 }
@@ -64,10 +66,29 @@ function validModelResponse(response) {
       typeof response.nextCursor === 'string');
 }
 
+function launchableModel(model) {
+  return validModel(model) && !model.hidden &&
+    ['id', 'model', 'displayName'].every(field => model[field].trim().length > 0) &&
+    model.defaultReasoningEffort.trim().length > 0 &&
+    model.supportedReasoningEfforts.length > 0 &&
+    model.supportedReasoningEfforts.some(option =>
+      option.reasoningEffort === model.defaultReasoningEffort
+    );
+}
+
 async function verifyCodexReadiness(bridge) {
   const account = await bridge.request('account/read', {});
   const models = await bridge.request('model/list', {});
-  if (!validAccountResponse(account) || !validModelResponse(models)) throw readinessError();
+  if (!validAccountResponse(account) || !validModelResponse(models) ||
+    !models.data.some(launchableModel)) throw readinessError();
+
+  if (account.account === null && account.requiresOpenaiAuth) {
+    return Object.freeze({
+      ready: false,
+      status: 'SIGNED_OUT',
+      checks: Object.freeze({account: true, models: true})
+    });
+  }
   return Object.freeze({
     ready: true,
     checks: Object.freeze({account: true, models: true})

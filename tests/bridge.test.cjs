@@ -134,8 +134,9 @@ test('JSON-RPC errors preserve code and only allowlisted structured data', async
   await assert.rejects(request, error => {
     assert.ok(error instanceof CodexRpcError);
     assert.equal(error.code, -32001);
+    assert.equal(error.message, 'Codex request failed');
     assert.deepEqual(error.data, {kind: 'rate_limit', retryable: true});
-    assert.doesNotMatch(JSON.stringify(error.data), /Users|secret|token/);
+    assert.doesNotMatch(JSON.stringify(error), /Users|secret|token/);
     return true;
   });
   await bridge.stop();
@@ -216,7 +217,7 @@ test('an initialize failure cleans up the child and permits retry', async () => 
     initializeResponses: [{error: {message: 'initialize rejected'}}, {result: {}}]
   });
 
-  await assert.rejects(bridge.start(), /initialize rejected/);
+  await assert.rejects(bridge.start(), {message: 'Codex request failed'});
 
   assert.equal(children[0].killed, true);
   await bridge.start();
@@ -243,7 +244,7 @@ test('an initialize failure does not reject until the child has exited', async (
   exitChild(children[0]);
   await starting;
   assert.equal(outcome.status, 'rejected');
-  assert.match(outcome.error.message, /initialize rejected/);
+  assert.equal(outcome.error.message, 'Codex request failed');
 });
 
 test('an initialize failure remains the startup error when stopping times out', async () => {
@@ -253,7 +254,7 @@ test('an initialize failure remains the startup error when stopping times out', 
     stopTimeoutMs: 5
   });
 
-  await assert.rejects(bridge.start(), /initialize rejected/);
+  await assert.rejects(bridge.start(), {message: 'Codex request failed'});
   await assert.rejects(bridge.stop(), /did not exit/);
 });
 
@@ -298,19 +299,23 @@ test('a spawn error stops without waiting for an exit from an unspawned child', 
 
   children[0].emit('error', Error('spawn failed'));
 
-  await assert.rejects(starting, /spawn failed/);
+  await assert.rejects(starting, error => {
+    assert.equal(error.message, 'Codex connection stopped');
+    assert.equal(error.code, 'CODEX_DISCONNECTED');
+    return true;
+  });
   assert.equal(children[0].killed, true);
 });
 
-test('active stdout and stderr pipe errors disconnect the bridge', async () => {
+test('active stdout and stderr pipe errors emit only a stable disconnected code', async () => {
   for (const streamName of ['stdout', 'stderr']) {
     const {bridge, children} = createFixture();
     await bridge.start();
     const disconnected = new Promise(resolve => bridge.once('disconnected', resolve));
 
-    children[0][streamName].emit('error', Error(`${streamName} pipe failed`));
+    children[0][streamName].emit('error', Error(`${streamName} pipe failed token=secret /Users/example/private`));
 
-    assert.equal(await disconnected, `${streamName} pipe failed`);
+    assert.equal(await disconnected, 'CODEX_DISCONNECTED');
     assert.equal(bridge.connected, false);
   }
 });

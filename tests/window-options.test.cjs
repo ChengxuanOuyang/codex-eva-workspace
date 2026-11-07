@@ -208,6 +208,86 @@ test('workbench rejects malformed readiness responses before opening the rendere
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
 });
 
+function readinessBridge(account, models) {
+  return class ReadinessBridge {
+    async start() {}
+    async request(method) {
+      return method === 'account/read' ? account : models;
+    }
+    async stop() {}
+  };
+}
+
+function validModel(overrides = {}) {
+  return {
+    id: 'test-model',
+    model: 'test-model',
+    displayName: 'Test model',
+    description: 'A valid test model',
+    hidden: false,
+    isDefault: true,
+    defaultReasoningEffort: 'medium',
+    supportedReasoningEfforts: [{reasoningEffort: 'medium', description: 'Balanced'}],
+    ...overrides
+  };
+}
+
+test('workbench rejects empty, hidden, blank, and incoherent model catalogs', async () => {
+  const account = {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
+  const cases = [
+    {name: 'empty', data: []},
+    {name: 'hidden', data: [validModel({hidden: true})]},
+    {name: 'blank id', data: [validModel({id: ''})]},
+    {name: 'blank model', data: [validModel({model: '   '})]},
+    {name: 'blank display name', data: [validModel({displayName: ''})]},
+    {name: 'no reasoning efforts', data: [validModel({supportedReasoningEfforts: []})]},
+    {
+      name: 'default effort not supported',
+      data: [validModel({
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: [{reasoningEffort: 'medium', description: 'Balanced'}]
+      })]
+    }
+  ];
+
+  for (const modelResponse of cases) {
+    const fixture = startFixture();
+    fixture.dependencies.CodexBridgeClass = readinessBridge(account, {
+      data: modelResponse.data,
+      nextCursor: null
+    });
+
+    await assert.rejects(startWorkbench(fixture.dependencies), {code: 'CODEX_READINESS_INVALID'}, modelResponse.name);
+    assert.equal(fixture.calls.includes('service:create'), false, modelResponse.name);
+    await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+  }
+});
+
+test('signed-out official account response starts with a stable non-ready status', async () => {
+  const fixture = startFixture();
+  fixture.dependencies.CodexBridgeClass = readinessBridge(
+    {account: null, requiresOpenaiAuth: true},
+    {data: [validModel()], nextCursor: null}
+  );
+  let snapshot;
+  fixture.dependencies.serviceFactory = options => {
+    snapshot = options.snapshot();
+    return {
+      async listen() { return {address: '127.0.0.1', port: 43210}; },
+      async close() {}
+    };
+  };
+
+  await startWorkbench(fixture.dependencies);
+
+  assert.deepEqual(snapshot, {
+    ready: false,
+    status: 'SIGNED_OUT',
+    checks: {account: true, models: true}
+  });
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
 test('missing Codex fails diagnostically without constructing a bridge or disclosing candidates', async () => {
   const fixture = startFixture({executable: null});
 
