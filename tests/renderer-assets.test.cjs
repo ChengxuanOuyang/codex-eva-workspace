@@ -32,6 +32,20 @@ test('boot document uses the exact product name and only local allowlisted asset
   assert.doesNotMatch(html, /https?:\/\//i);
 });
 
+test('public boot theme exposes the original PROJECT ZERO 00 mark and Rei-coded core silhouette', async () => {
+  const html = await read('boot/index.html');
+  const css = await read('boot/boot.css');
+
+  assert.match(html, /class="project-mark"[^>]*aria-label="PROJECT ZERO 00 原创系统徽记"/);
+  assert.match(html, /class="pilot-silhouette"[^>]*aria-hidden="true"/);
+  for (const part of ['pilot-hair', 'pilot-face', 'pilot-eye pilot-eye-left', 'pilot-eye pilot-eye-right', 'pilot-suit']) {
+    assert.match(html, new RegExp(`class="${part}"`));
+  }
+  assert.match(css, /\.pilot-silhouette[^}]*pointer-events:\s*none/s);
+  assert.match(css, /\.sync-readout[^}]*z-index:\s*[4-9]/s);
+  assert.doesNotMatch(`${html}\n${css}`, /\bNERV\b|EVANGELION/i);
+});
+
 test('dynamic synchronization ring exposes progressbar semantics', async () => {
   const html = await read('boot/index.html');
 

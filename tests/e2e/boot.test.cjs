@@ -69,6 +69,11 @@ test('application reaches user confirmation without remote content and closes cl
     await assert.doesNotReject(confirm.waitFor({state: 'attached'}));
     await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
 
+    const silhouette = page.locator('.pilot-silhouette');
+    await assert.doesNotReject(silhouette.waitFor({state: 'visible'}));
+    assert.equal(await silhouette.getAttribute('aria-hidden'), 'true');
+    assert.equal(await page.locator('.project-mark[aria-label="PROJECT ZERO 00 原创系统徽记"]').count(), 1);
+
     const taskProcesses = descendants(await processTable(), app.process().pid);
     taskProcessIds = taskProcesses.map(row => row.pid);
     assert.equal(
