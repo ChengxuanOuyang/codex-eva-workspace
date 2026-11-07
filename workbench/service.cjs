@@ -1,7 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const fs = require('node:fs');
+const {constants} = require('node:fs');
+const fs = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
 
@@ -23,20 +24,35 @@ function send(res, status, payload) {
   res.end(body);
 }
 
-function serveIndex(publicRoot, res) {
+async function readIndex(publicRoot) {
   const root = path.resolve(publicRoot);
   const indexPath = path.resolve(root, 'index.html');
-  if (path.dirname(indexPath) !== root) return send(res, 500, {error: 'Workbench unavailable'});
+  if (path.dirname(indexPath) !== root) return null;
 
-  fs.readFile(indexPath, 'utf8', (error, body) => {
-    if (error) return send(res, 500, {error: 'Workbench unavailable'});
+  let handle;
+  try {
+    handle = await fs.open(indexPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stats = await handle.stat();
+    if (!stats.isFile()) return null;
+    return await handle.readFile({encoding: 'utf8'});
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function serveIndex(publicRoot, res) {
+  try {
+    const body = await readIndex(publicRoot);
+    if (body === null) return send(res, 404, {error: 'Not found'});
 
     setSecurityHeaders(res);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Length', Buffer.byteLength(body));
     res.end(body);
-  });
+  } catch {
+    return send(res, 404, {error: 'Not found'});
+  }
 }
 
 function hasSession(req, token) {
@@ -86,8 +102,8 @@ function createWorkbenchService({snapshot, publicRoot}) {
     }),
     close: () => new Promise((resolve, reject) => {
       server.close(error => {
-        if (error) reject(error);
-        else resolve();
+        if (!error || error.code === 'ERR_SERVER_NOT_RUNNING') resolve();
+        else reject(error);
       });
     }),
     server

@@ -25,11 +25,11 @@ test.after(async () => {
   if (publicRoot) await fs.rm(publicRoot, {recursive: true, force: true});
 });
 
-function request({requestPath = '/', method = 'GET', headers = {}} = {}) {
+function requestAt(targetAddress, {requestPath = '/', method = 'GET', headers = {}} = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
       host: '127.0.0.1',
-      port: address.port,
+      port: targetAddress.port,
       path: requestPath,
       method,
       headers
@@ -44,6 +44,10 @@ function request({requestPath = '/', method = 'GET', headers = {}} = {}) {
     req.on('error', reject);
     req.end();
   });
+}
+
+function request(options) {
+  return requestAt(address, options);
 }
 
 async function openWorkbench() {
@@ -131,4 +135,69 @@ test('serves only the root index from publicRoot', async () => {
     assert.equal(response.status, 404);
     assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
   }
+});
+
+test('does not follow an index symlink outside publicRoot', async () => {
+  const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-symlink-'));
+  const isolatedPublicRoot = path.join(fixtureRoot, 'public');
+  const outsideIndex = path.join(fixtureRoot, 'outside.html');
+  const isolatedService = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot: isolatedPublicRoot});
+
+  try {
+    await fs.mkdir(isolatedPublicRoot);
+    await fs.writeFile(outsideIndex, 'private content outside publicRoot');
+    await fs.symlink(outsideIndex, path.join(isolatedPublicRoot, 'index.html'));
+    const isolatedAddress = await isolatedService.listen();
+
+    const response = await requestAt(isolatedAddress);
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
+    assert.doesNotMatch(response.body, /private content|outside\.html/);
+  } finally {
+    await isolatedService.close();
+    await fs.rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test('rejects a non-regular index without disclosing its path', async () => {
+  const isolatedPublicRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-directory-'));
+  const isolatedService = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot: isolatedPublicRoot});
+
+  try {
+    await fs.mkdir(path.join(isolatedPublicRoot, 'index.html'));
+    const isolatedAddress = await isolatedService.listen();
+
+    const response = await requestAt(isolatedAddress);
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
+    assert.doesNotMatch(response.body, /index\.html|project-zero-directory/);
+  } finally {
+    await isolatedService.close();
+    await fs.rm(isolatedPublicRoot, {recursive: true, force: true});
+  }
+});
+
+test('close resolves when the service has never listened', async () => {
+  const unopened = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+
+  await unopened.close();
+  await unopened.close();
+});
+
+test('close resolves when the service is already closed', async () => {
+  const disposable = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+  await disposable.listen();
+
+  await disposable.close();
+  await disposable.close();
+});
+
+test('close rejects errors other than ERR_SERVER_NOT_RUNNING', async () => {
+  const failing = createWorkbenchService({snapshot: () => ({ready: true}), publicRoot});
+  const closeError = Object.assign(Error('close failed'), {code: 'EIO'});
+  failing.server.close = callback => callback(closeError);
+
+  await assert.rejects(failing.close(), error => error === closeError);
 });
