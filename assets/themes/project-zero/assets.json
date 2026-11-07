@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "license": "CC BY 4.0",
+  "attribution": "PROJECT ZERO contributors",
+  "assets": [
+    {
+      "scene": "A — Synchronization",
+      "master": {
+        "file": "source/scene-a-sync.png",
+        "sha256": "0a3c4d59b8830184cedd16af0773b768ae9b7ecf862129753bed53be27de5de9"
+      },
+      "runtime": {
+        "file": "../../../renderer/boot/assets/scene-a-sync.webp",
+        "sha256": "464b75c15fd37ab25fa8ac4e4770b82a50552c71ff8ff8d8875b165cf5e58e00"
+      },
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
+      "promptSummary": "Original adult pilot in a non-official white biomechanical suit with pale-cyan seams and muted-red accents, placed on the right and looking left into an ice-blue circular synchronization chamber; preserve broad left-side negative space for the synchronization ring, 99.2% readout, status, and confirmation controls; no text, logos, watermarks, or remote content."
+    },
+    {
+      "scene": "B — System Awakening / LCL",
+      "master": {
+        "file": "source/scene-b-awakening.png",
+        "sha256": "46873e5a9e03d21fea3fa901188edaab56a8612f1e716037ec75b3108366faa1"
+      },
+      "runtime": {
+        "file": "../../../renderer/boot/assets/scene-b-awakening.webp",
+        "sha256": "938ef1f5d11b812e0e8b802a03ae84f1a23c2e2e918b2dfec459093c788492de"
+      },
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
+      "promptSummary": "Close side-profile half-body view of the same original adult pilot behind a translucent warm-amber fluid or glass layer, with bubbles and restrained geometric instrumentation; preserve dark left-side negative space for the system-awakening title; no text, logos, watermarks, or remote content."
+    },
+    {
+      "scene": "C — System Online",
+      "master": {
+        "file": "source/scene-c-online.png",
+        "sha256": "b19e7566e46233c607cc512314e62249051fdb81a71809e5593cafb1ac4f03fa"
+      },
+      "runtime": {
+        "file": "../../../renderer/boot/assets/scene-c-online.webp",
+        "sha256": "e8fe96e26efbf0021b2dbb36ec11a1a4b3849e40f4662738468557ac68e253d9"
+      },
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
+      "promptSummary": "Wide cockpit half-body view of the same original adult pilot in the lower right, facing an ice-blue systems chamber with a central synchronization ring; preserve central and left-side negative space for the SYSTEM ONLINE beat; no text, logos, watermarks, or remote content."
+    }
+  ]
+}
