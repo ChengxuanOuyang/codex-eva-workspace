@@ -23,6 +23,10 @@ test.before(async () => {
   await fs.writeFile(path.join(bootRoot, 'index.html'), '<!doctype html><title>PROJECT ZERO</title>');
   await fs.writeFile(path.join(bootRoot, 'boot.css'), 'body { color: #102934; }');
   await fs.writeFile(path.join(bootRoot, 'boot.js'), 'globalThis.bootLoaded = true;');
+  await fs.mkdir(path.join(bootRoot, 'assets'));
+  await fs.writeFile(path.join(bootRoot, 'assets', 'scene-a-sync.webp'), 'scene-a');
+  await fs.writeFile(path.join(bootRoot, 'assets', 'scene-b-awakening.webp'), 'scene-b');
+  await fs.writeFile(path.join(bootRoot, 'assets', 'scene-c-online.webp'), 'scene-c');
   await fs.writeFile(path.join(sharedRoot, 'api.js'), 'globalThis.apiLoaded = true;');
   await fs.writeFile(path.join(bootRoot, 'secret.txt'), 'must not be served');
   service = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
@@ -183,6 +187,33 @@ test('serves the exact static allowlist with explicit MIME types', async () => {
     assert.equal(response.status, 200);
     assert.equal(response.headers['content-type'], contentType);
     assert.equal(response.body, body);
+  }
+});
+
+test('serves only the three exact boot artwork routes as WebP', async () => {
+  const expected = new Map([
+    ['/assets/scene-a-sync.webp', 'scene-a'],
+    ['/assets/scene-b-awakening.webp', 'scene-b'],
+    ['/assets/scene-c-online.webp', 'scene-c']
+  ]);
+
+  for (const [requestPath, body] of expected) {
+    const response = await request({requestPath});
+    assert.equal(response.status, 200, requestPath);
+    assert.equal(response.headers['content-type'], 'image/webp', requestPath);
+    assert.equal(response.body, body, requestPath);
+  }
+
+  for (const requestPath of [
+    '/assets/',
+    '/assets/scene-a-sync.png',
+    '/assets/scene-a-sync.webp.bak',
+    '/assets/scene-d-guess.webp',
+    '/assets/scene-b-awakening.webp?cache=1'
+  ]) {
+    const response = await request({requestPath});
+    assert.equal(response.status, 404, requestPath);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
   }
 });
 

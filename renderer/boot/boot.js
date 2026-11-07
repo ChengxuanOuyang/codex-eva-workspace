@@ -27,6 +27,8 @@
     let clockTimer;
     let skipTimer;
     let completeTimer;
+    let awakeningTimer;
+    let opening = true;
 
     function setText(element, value) {
       if (!destroyed && element.textContent !== value) element.textContent = value;
@@ -55,6 +57,7 @@
       if (destroyed) return;
       const progress = Math.max(0, Math.min(100, state.progress));
       document.body.dataset.phase = state.phase;
+      document.body.dataset.scene = state.phase === 'complete' ? 'online' : opening ? 'awakening' : 'sync';
       setText(elements.progress, progress.toFixed(1).padStart(4, '0'));
       elements.ring.setAttribute('stroke-dashoffset', String(circumference * (1 - progress / 100)));
       elements.progressbar.setAttribute('aria-valuenow', progress.toFixed(1));
@@ -137,6 +140,7 @@
 
     function skipPresentation() {
       if (!skipAvailable) return;
+      opening = false;
       dispatch({type: 'skip'});
     }
 
@@ -171,6 +175,7 @@
       if (clockTimer !== undefined) clock.clearInterval(clockTimer);
       if (skipTimer !== undefined) clock.clearTimeout(skipTimer);
       if (completeTimer !== undefined) clock.clearTimeout(completeTimer);
+      if (awakeningTimer !== undefined) clock.clearTimeout(awakeningTimer);
       unbindInteractions();
       eventRoot.removeEventListener('pagehide', destroy);
     }
@@ -190,6 +195,12 @@
         skipAvailable = true;
         elements.skip.hidden = false;
       }, 3000);
+      awakeningTimer = clock.setTimeout(() => {
+        awakeningTimer = undefined;
+        if (destroyed || state.phase === 'complete') return;
+        opening = false;
+        render();
+      }, 600);
       tickTimer = clock.setInterval(() => dispatch({
         type: 'tick',
         delta: reducedMotion ? 1.2 : 0.42

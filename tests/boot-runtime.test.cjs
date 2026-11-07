@@ -247,6 +247,25 @@ test('render updates aria-valuenow and identical health states do not rewrite th
   assert.equal(view.elements['#diagnostic-text'].textWrites, writes);
 });
 
+test('scene mapping keeps awakening to the opening beat, sync through confirmation, and online after completion', async () => {
+  const view = fixture({health: () => Promise.resolve({ready: true})});
+
+  assert.equal(view.document.body.dataset.scene, 'awakening');
+  view.clock.fireTimeout(600);
+  assert.equal(view.document.body.dataset.scene, 'sync');
+  await view.clock.fireTimeout(0);
+  view.clock.fireTimeout(3000);
+  view.elements['#skip-button'].dispatch('click');
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(view.document.body.dataset.scene, 'sync');
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
+  view.elements['#confirm-button'].dispatch('click');
+  assert.equal(view.document.body.dataset.scene, 'sync');
+  view.clock.fireTimeout(720);
+  assert.equal(view.controller.getState().phase, 'complete');
+  assert.equal(view.document.body.dataset.scene, 'online');
+});
+
 test('Escape skips without preventing the browser default', () => {
   const view = fixture({health: () => new Promise(() => {})});
   view.clock.fireTimeout(3000);

@@ -9,7 +9,7 @@
   <script src="/shared/api.js" defer></script>
   <script src="/boot.js" defer></script>
 </head>
-<body data-phase="syncing">
+<body data-phase="syncing" data-scene="awakening">
   <div class="screen-grain" aria-hidden="true"></div>
   <header class="topbar">
     <div class="identity">
@@ -40,6 +40,9 @@
     </aside>
 
     <section class="sync-stage" aria-labelledby="sync-heading">
+      <div class="scene-art scene-awakening" data-scene="awakening" aria-hidden="true"></div>
+      <div class="scene-art scene-sync" data-scene="sync" aria-hidden="true"></div>
+      <div class="scene-art scene-online" data-scene="online" aria-hidden="true"></div>
       <div class="stage-index" aria-hidden="true">00—SYNC / A</div>
       <div class="sync-assembly">
         <div class="orbit orbit-outer" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -51,16 +54,6 @@
           <circle class="ring-track" cx="160" cy="160" r="132"></circle>
           <circle id="ring-stroke" class="ring-progress" cx="160" cy="160" r="132"></circle>
         </svg>
-        <div class="fluid-window" aria-hidden="true">
-          <div class="pilot-silhouette" aria-hidden="true">
-            <div class="pilot-hair"></div>
-            <div class="pilot-face"></div>
-            <i class="pilot-eye pilot-eye-left"></i>
-            <i class="pilot-eye pilot-eye-right"></i>
-            <div class="pilot-suit"></div>
-          </div>
-          <div class="fluid-layer"></div><div class="fluid-glint"></div>
-        </div>
         <div class="sync-readout">
           <p class="sync-label" lang="ja">同期率</p>
           <p class="sync-number"><span id="progress-value">00.0</span><small>%</small></p>

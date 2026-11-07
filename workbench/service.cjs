@@ -73,7 +73,8 @@ async function validateRequestBody(req, res) {
 async function readRegularFile(rootDirectory, fileName) {
   const root = path.resolve(rootDirectory);
   const filePath = path.resolve(root, fileName);
-  if (path.dirname(filePath) !== root) return null;
+  const relativePath = path.relative(root, filePath);
+  if (!relativePath || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) return null;
 
   let handle;
   try {
@@ -118,9 +119,12 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
     ['/boot.js', {root: bootRoot, fileName: 'boot.js', contentType: 'text/javascript; charset=utf-8'}],
-    ['/shared/api.js', {root: sharedRoot, fileName: 'api.js', contentType: 'text/javascript; charset=utf-8'}]
+    ['/shared/api.js', {root: sharedRoot, fileName: 'api.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/assets/scene-a-sync.webp', {root: bootRoot, fileName: 'assets/scene-a-sync.webp', contentType: 'image/webp'}],
+    ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
+    ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
   ]);
-  const allowedRoutes = new Set(['/', '/boot.css', '/boot.js', '/shared/api.js', '/health', '/api/state']);
+  const allowedRoutes = new Set(['/', '/health', '/api/state', ...staticFiles.keys()]);
   const server = http.createServer(async (req, res) => {
     const port = server.address().port;
     const origin = `http://127.0.0.1:${port}`;

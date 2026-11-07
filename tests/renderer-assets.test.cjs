@@ -32,18 +32,22 @@ test('boot document uses the exact product name and only local allowlisted asset
   assert.doesNotMatch(html, /https?:\/\//i);
 });
 
-test('public boot theme exposes the original PROJECT ZERO 00 mark and Rei-coded core silhouette', async () => {
+test('public boot theme exposes the original PROJECT ZERO 00 mark and three local scene layers', async () => {
   const html = await read('boot/index.html');
   const css = await read('boot/boot.css');
 
   assert.match(html, /class="project-mark"[^>]*aria-label="PROJECT ZERO 00 原创系统徽记"/);
-  assert.match(html, /class="pilot-silhouette"[^>]*aria-hidden="true"/);
-  for (const part of ['pilot-hair', 'pilot-face', 'pilot-eye pilot-eye-left', 'pilot-eye pilot-eye-right', 'pilot-suit']) {
-    assert.match(html, new RegExp(`class="${part}"`));
+  for (const scene of ['awakening', 'sync', 'online']) {
+    assert.match(html, new RegExp(`class="scene-art scene-${scene}"[^>]*data-scene="${scene}"[^>]*aria-hidden="true"`));
   }
-  assert.match(css, /\.pilot-silhouette[^}]*pointer-events:\s*none/s);
-  assert.match(css, /\.sync-readout[^}]*z-index:\s*[4-9]/s);
-  assert.doesNotMatch(`${html}\n${css}`, /\bNERV\b|EVANGELION/i);
+  for (const asset of ['scene-b-awakening.webp', 'scene-a-sync.webp', 'scene-c-online.webp']) {
+    assert.match(css, new RegExp(`url\\(["']?/assets/${asset.replace('.', '\\.') }["']?\\)`));
+  }
+  assert.doesNotMatch(`${html}\n${css}`, /pilot-silhouette|\bNERV\b|EVANGELION/i);
+  assert.doesNotMatch(`${html}\n${css}`, /(?:data:image|https?:\/\/)/i);
+  assert.match(css, /\.scene-art[^}]*pointer-events:\s*none/s);
+  assert.match(css, /\.sync-readout[^}]*z-index:\s*[2-9]/s);
+  assert.match(css, /\.action-panel[^}]*z-index:\s*[2-9]/s);
 });
 
 test('dynamic synchronization ring exposes progressbar semantics', async () => {
@@ -69,19 +73,31 @@ test('served renderer code contains no Node API, embedded token, or remote resou
   assert.doesNotMatch(source, /https?:\/\//i);
 });
 
-test('reduced motion removes large fluid and orbit animation', async () => {
+test('reduced motion removes decorative animation and keeps scene changes to a short cross-fade', async () => {
   const css = await read('boot/boot.css');
 
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(css, /\.fluid-layer[^}]*animation: none !important/s);
   assert.match(css, /\.orbit[^}]*animation: none !important/s);
   assert.match(css, /\.ring-progress[^}]*transition: none !important/s);
+  assert.match(css, /\.scene-art[^}]*transition: opacity 120ms/s);
+});
+
+test('scene artwork cross-fades without parallax and narrow layouts keep controls scroll-reachable', async () => {
+  const css = await read('boot/boot.css');
+
+  assert.match(css, /\.scene-art[^}]*transition:\s*opacity/s);
+  assert.match(css, /body\[data-scene="awakening"\][^}]*\.scene-awakening[^}]*opacity:\s*1/s);
+  assert.match(css, /body\[data-scene="sync"\][^}]*\.scene-sync[^}]*opacity:\s*1/s);
+  assert.match(css, /body\[data-scene="online"\][^}]*\.scene-online[^}]*opacity:\s*1/s);
+  assert.match(css, /@media \(max-width: 780px\)[\s\S]*\.boot-grid[^}]*grid-template-columns:\s*1fr/s);
+  assert.match(css, /@media \(max-width: 780px\)[\s\S]*\.boot-footer[^}]*position:\s*static/s);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.scene-art[^}]*transition:\s*opacity 120ms/s);
 });
 
 test('waiting presentation disables every decorative animation and ring transition', async () => {
   const css = await read('boot/boot.css');
 
-  for (const selector of ['fluid-layer', 'fluid-glint', 'orbit', 'telemetry span', 'signal-dot']) {
+  for (const selector of ['orbit', 'telemetry span', 'signal-dot']) {
     const escaped = selector.replace('.', '\\.').replace(' ', '\\s+');
     assert.match(css, new RegExp(`body\\[data-phase="waiting"\\] \\.${escaped}[^\\{]*\\{[^}]*animation: none`, 's'));
   }
