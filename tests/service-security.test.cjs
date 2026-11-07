@@ -156,6 +156,87 @@ test('accepts only bounded valid JSON when a request body is present', async () 
   assert.deepEqual(JSON.parse(valid.body), {app: 'PROJECT-ZERO', ready: true});
 });
 
+test('contains aborted request-body streams without unhandled rejections and remains healthy', async () => {
+  const unhandledRejections = [];
+  const recordUnhandledRejection = reason => unhandledRejections.push(reason);
+  process.on('unhandledRejection', recordUnhandledRejection);
+
+  try {
+    await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1',
+        port: address.port,
+        path: '/health',
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': '64'
+        }
+      });
+      req.on('error', error => {
+        if (error.code !== 'ECONNRESET') reject(error);
+      });
+      req.write('{"partial":', () => {
+        req.destroy();
+        resolve();
+      });
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(unhandledRejections, []);
+
+    const response = await request({requestPath: '/health'});
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(response.body), {app: 'PROJECT-ZERO', ready: true});
+  } finally {
+    process.off('unhandledRejection', recordUnhandledRejection);
+  }
+});
+
+test('ends oversized chunked bodies without waiting for an endless stream', async () => {
+  let req;
+  let keepSending;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        clearInterval(keepSending);
+        clearTimeout(timeout);
+        resolve(value);
+      };
+      const timeout = setTimeout(() => finish({timedOut: true}), 500);
+      req = http.request({
+        host: '127.0.0.1',
+        port: address.port,
+        path: '/health',
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Transfer-Encoding': 'chunked'
+        }
+      }, res => {
+        res.resume();
+        res.on('end', () => finish({status: res.statusCode}));
+      });
+      req.on('error', error => {
+        if (error.code === 'ECONNRESET' || error.code === 'EPIPE') finish({closed: true});
+        else reject(error);
+      });
+      req.write(Buffer.alloc(64 * 1024 + 1, 'x'));
+      keepSending = setInterval(() => req.write(Buffer.alloc(1024, 'x')), 5);
+    });
+
+    assert.equal(result.timedOut, undefined, 'the server must not wait for the client to end its body');
+    if (result.status !== undefined) assert.equal(result.status, 413);
+    else assert.equal(result.closed, true);
+  } finally {
+    clearInterval(keepSending);
+    req?.destroy();
+  }
+});
+
 test('adds browser hardening headers to every response type', async () => {
   const responses = await Promise.all([
     request(),

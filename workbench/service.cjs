@@ -31,6 +31,20 @@ function methodNotAllowed(res, allowedMethods) {
   return send(res, 405, {error: 'Method not allowed'});
 }
 
+function rejectOversizedBody(req, res) {
+  req.pause();
+  res.setHeader('Connection', 'close');
+  res.once('finish', () => {
+    if (!req.destroyed) req.destroy();
+  });
+  send(res, 413, {error: 'Request body too large'});
+  return false;
+}
+
+function isAbortedRequest(req, error) {
+  return req.destroyed || error?.code === 'ECONNRESET' || error?.code === 'ERR_STREAM_PREMATURE_CLOSE';
+}
+
 async function validateRequestBody(req, res) {
   const declaredLength = Number(req.headers['content-length'] || 0);
   const hasBody = declaredLength > 0 || req.headers['transfer-encoding'] !== undefined;
@@ -41,25 +55,22 @@ async function validateRequestBody(req, res) {
     return false;
   }
   if (!Number.isSafeInteger(declaredLength) || declaredLength > MAX_REQUEST_BODY_BYTES) {
-    req.resume();
-    send(res, 413, {error: 'Request body too large'});
-    return false;
+    return rejectOversizedBody(req, res);
   }
 
   const chunks = [];
   let size = 0;
-  let tooLarge = false;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_REQUEST_BODY_BYTES) {
-      tooLarge = true;
-      continue;
+  try {
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > MAX_REQUEST_BODY_BYTES) {
+        return rejectOversizedBody(req, res);
+      }
+      chunks.push(chunk);
     }
-    chunks.push(chunk);
-  }
-  if (tooLarge) {
-    send(res, 413, {error: 'Request body too large'});
-    return false;
+  } catch (error) {
+    if (isAbortedRequest(req, error)) return false;
+    throw error;
   }
   try {
     JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -130,7 +141,8 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
   ]);
   const allowedRoutes = new Set(['/', '/health', '/api/state', ...staticFiles.keys()]);
-  const server = http.createServer(async (req, res) => {
+  let server;
+  async function handleRequest(req, res) {
     const port = server.address().port;
     const origin = `http://127.0.0.1:${port}`;
 
@@ -158,6 +170,20 @@ function createWorkbenchService({snapshot, bootRoot, sharedRoot}) {
     }
     if (req.url === '/api/state') return send(res, 200, snapshot());
     return send(res, 404, {error: 'Not found'});
+  }
+  server = http.createServer((req, res) => {
+    void handleRequest(req, res).catch(() => {
+      if (res.destroyed) return;
+      if (!res.headersSent && !res.writableEnded) {
+        try {
+          send(res, 400, {error: 'Invalid request'});
+          return;
+        } catch {
+          // Fall through to close an unusable response without exposing request details.
+        }
+      }
+      res.destroy();
+    });
   });
 
   return {
