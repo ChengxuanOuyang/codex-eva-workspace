@@ -76,6 +76,11 @@ async function readRegularFile(rootDirectory, fileName) {
   const relativePath = path.relative(root, filePath);
   if (!relativePath || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) return null;
 
+  const canonicalRoot = await fs.realpath(root);
+  const canonicalFile = await fs.realpath(filePath);
+  const canonicalRelativePath = path.relative(canonicalRoot, canonicalFile);
+  if (!canonicalRelativePath || canonicalRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(canonicalRelativePath)) return null;
+
   let handle;
   try {
     handle = await fs.open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);

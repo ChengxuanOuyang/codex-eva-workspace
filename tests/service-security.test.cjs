@@ -217,6 +217,43 @@ test('serves only the three exact boot artwork routes as WebP', async () => {
   }
 });
 
+test('rejects allowlisted artwork when the assets directory is an outside symlink', async () => {
+  const isolatedFixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-art-symlink-'));
+  const isolatedBootRoot = path.join(isolatedFixtureRoot, 'boot');
+  const isolatedSharedRoot = path.join(isolatedFixtureRoot, 'shared');
+  const outsideAssets = path.join(isolatedFixtureRoot, 'outside-assets');
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot
+  });
+
+  try {
+    await fs.mkdir(isolatedBootRoot);
+    await fs.mkdir(isolatedSharedRoot);
+    await fs.mkdir(outsideAssets);
+    for (const fileName of ['scene-a-sync.webp', 'scene-b-awakening.webp', 'scene-c-online.webp']) {
+      await fs.writeFile(path.join(outsideAssets, fileName), `private ${fileName}`);
+    }
+    await fs.symlink(outsideAssets, path.join(isolatedBootRoot, 'assets'));
+    const isolatedAddress = await isolatedService.listen();
+
+    for (const requestPath of [
+      '/assets/scene-a-sync.webp',
+      '/assets/scene-b-awakening.webp',
+      '/assets/scene-c-online.webp'
+    ]) {
+      const response = await requestAt(isolatedAddress, {requestPath});
+      assert.equal(response.status, 404, requestPath);
+      assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
+      assert.doesNotMatch(response.body, /private|outside-assets|scene-[abc]/);
+    }
+  } finally {
+    await isolatedService.close();
+    await fs.rm(isolatedFixtureRoot, {recursive: true, force: true});
+  }
+});
+
 test('serves no path outside the exact static allowlist', async () => {
   for (const requestPath of [
     '/index.html',
