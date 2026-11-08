@@ -34,8 +34,21 @@ function snapshotTheme(theme) {
   return Object.freeze({
     displayName: theme.displayName,
     scenes: Object.freeze({...theme.scenes}),
+    boot: Object.freeze({...theme.boot}),
     contents: new Map([...theme.contents].map(([file, bytes]) => [file, Buffer.from(bytes)]))
   });
+}
+
+function privateThemeConfig(theme) {
+  const soundtrackExtension = path.extname(theme.boot.soundtrack);
+  return Buffer.from(`${JSON.stringify({
+    displayName: theme.displayName,
+    mark: '/private/boot-mark.webp',
+    portrait: '/private/rei-portrait.webp',
+    soundtrack: `/private/startup-reference${soundtrackExtension}`,
+    audioStartMs: theme.boot.audioStartMs,
+    audioEndMs: theme.boot.audioEndMs
+  }, null, 2)}\n`);
 }
 
 function escapeHtml(text) {
@@ -161,8 +174,10 @@ async function rejectSymlinks(target, fsModule) {
   }
 }
 
-async function writePrivateFile(target, bytes, privateFiles, fsModule) {
-  const handle = await fsModule.open(target, constants.O_RDWR | constants.O_NOFOLLOW);
+async function writePrivateFile(target, bytes, privateFiles, fsModule, {create = false} = {}) {
+  const flags = constants.O_RDWR | constants.O_NOFOLLOW |
+    (create ? constants.O_CREAT | constants.O_EXCL : 0);
+  const handle = await fsModule.open(target, flags, 0o600);
   let identity;
   try {
     identity = await handle.stat();
@@ -397,6 +412,20 @@ async function packPrivateThemeInternal({
     ];
     for (const [target, bytes] of replacements) {
       await writePrivateFile(target, bytes, privateFiles, fsModule);
+    }
+
+    const privateRoot = path.join(stageRoot, 'renderer', 'boot', 'private');
+    await fsModule.mkdir(privateRoot);
+    const soundtrackExtension = path.extname(theme.boot.soundtrack);
+    const privateReplacements = [
+      [path.join(privateRoot, 'boot-mark.webp'), theme.contents.get(theme.boot.mark)],
+      [path.join(privateRoot, 'rei-portrait.webp'), theme.contents.get(theme.boot.portrait)],
+      [path.join(privateRoot, `startup-reference${soundtrackExtension}`),
+        theme.contents.get(theme.boot.soundtrack)],
+      [path.join(privateRoot, 'theme.json'), privateThemeConfig(theme)]
+    ];
+    for (const [target, bytes] of privateReplacements) {
+      await writePrivateFile(target, bytes, privateFiles, fsModule, {create: true});
     }
 
     const indexPath = path.join(stageRoot, 'renderer', 'boot', 'index.html');

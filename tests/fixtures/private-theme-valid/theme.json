@@ -1,11 +1,18 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "test-private",
   "displayName": "PROJECT ZERO // TEST PRIVATE THEME",
   "scenes": {
     "awakening": "scene-b-awakening.webp",
     "synchronization": "scene-a-sync.webp",
     "online": "scene-c-online.webp"
+  },
+  "boot": {
+    "mark": "boot-mark.webp",
+    "portrait": "rei-portrait.webp",
+    "soundtrack": "startup-reference.wav",
+    "audioStartMs": 0,
+    "audioEndMs": 20500
   },
   "assetManifest": "assets.json",
   "artNotice": "ASSET-LICENSE.md"

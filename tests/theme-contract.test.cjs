@@ -11,12 +11,17 @@ const {
 } = require('../scripts/theme-contract.cjs');
 
 const fixtureRoot = path.join(__dirname, 'fixtures', 'private-theme-valid');
+const maxImageBytes = 12 * 1024 * 1024;
+const maxSoundtrackBytes = 32 * 1024 * 1024;
 const requiredFiles = [
   'ASSET-LICENSE.md',
   'assets.json',
+  'boot-mark.webp',
+  'rei-portrait.webp',
   'scene-a-sync.webp',
   'scene-b-awakening.webp',
   'scene-c-online.webp',
+  'startup-reference.wav',
   'theme.json'
 ].sort();
 const allowedCodes = new Set([
@@ -77,12 +82,49 @@ test('accepts the exact synthetic private theme contract without depending on cw
     synchronization: 'scene-a-sync.webp',
     online: 'scene-c-online.webp'
   });
+  assert.deepEqual(result.boot, {
+    mark: 'boot-mark.webp',
+    portrait: 'rei-portrait.webp',
+    soundtrack: 'startup-reference.wav',
+    audioStartMs: 0,
+    audioEndMs: 20500
+  });
   assert.deepEqual(result.files, requiredFiles);
   assert.deepEqual([...result.contents.keys()].sort(), requiredFiles);
   for (const value of result.contents.values()) assert.equal(Buffer.isBuffer(value), true);
   assert.equal(Object.isFrozen(result), true);
   assert.equal(Object.isFrozen(result.scenes), true);
+  assert.equal(Object.isFrozen(result.boot), true);
+  assert.equal(result.contents instanceof Map, true);
+  assert.equal(Object.isFrozen(result.contents), true);
   assert.equal(Object.isFrozen(result.files), true);
+
+  const returnedBytes = result.contents.get('boot-mark.webp');
+  const firstByte = returnedBytes[0];
+  returnedBytes[0] ^= 0xff;
+  assert.equal(result.contents.get('boot-mark.webp')[0], firstByte);
+  assert.throws(() => result.contents.set('boot-mark.webp', Buffer.from('replacement')), TypeError);
+  assert.throws(() => { result.boot.mark = 'replacement.webp'; }, TypeError);
+});
+
+test('accepts an exact m4a soundtrack alternative', async t => {
+  const {themeRoot} = await isolatedTheme(t);
+  await fs.rename(
+    path.join(themeRoot, 'startup-reference.wav'),
+    path.join(themeRoot, 'startup-reference.m4a')
+  );
+  const theme = await readJson(themeRoot, 'theme.json');
+  theme.boot.soundtrack = 'startup-reference.m4a';
+  await writeJson(themeRoot, 'theme.json', theme);
+  const manifest = await readJson(themeRoot, 'assets.json');
+  manifest.assets.find(asset => asset.file === 'startup-reference.wav').file =
+    'startup-reference.m4a';
+  await writeJson(themeRoot, 'assets.json', manifest);
+
+  const result = await validateThemeDirectory(themeRoot);
+  assert.equal(result.boot.soundtrack, 'startup-reference.m4a');
+  assert.equal(result.files.includes('startup-reference.m4a'), true);
+  assert.equal(result.files.includes('startup-reference.wav'), false);
 });
 
 test('rejects missing and extra top-level files with a stable file-set error', async t => {
@@ -146,6 +188,7 @@ test('rejects extra keys at every manifest object boundary without echoing paylo
   const cases = [
     ['theme top level', 'theme.json', value => { value.untrustedPayload = 'TOP_LEVEL_SECRET'; }],
     ['scene map', 'theme.json', value => { value.scenes.untrusted = 'SCENE_SECRET'; }],
+    ['boot map', 'theme.json', value => { value.boot.untrusted = 'BOOT_SECRET'; }],
     ['asset manifest', 'assets.json', value => { value.untrustedPayload = 'ASSET_TOP_SECRET'; }],
     ['asset entry', 'assets.json', value => { value.assets[0].untrusted = 'ASSET_ENTRY_SECRET'; }]
   ];
@@ -158,7 +201,70 @@ test('rejects extra keys at every manifest object boundary without echoing paylo
       await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_SCHEMA', {
         file: file === 'assets.json' ? 'assets.json' : null,
         root: themeRoot,
-        forbidden: ['TOP_LEVEL_SECRET', 'SCENE_SECRET', 'ASSET_TOP_SECRET', 'ASSET_ENTRY_SECRET']
+        forbidden: [
+          'TOP_LEVEL_SECRET', 'SCENE_SECRET', 'BOOT_SECRET',
+          'ASSET_TOP_SECRET', 'ASSET_ENTRY_SECRET'
+        ]
+      });
+    });
+  }
+});
+
+test('requires every exact boot identity field', async t => {
+  for (const field of ['mark', 'portrait', 'soundtrack']) {
+    await t.test(field, async subtest => {
+      const {themeRoot} = await isolatedTheme(subtest);
+      const theme = await readJson(themeRoot, 'theme.json');
+      delete theme.boot[field];
+      await writeJson(themeRoot, 'theme.json', theme);
+      await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_SCHEMA', {
+        root: themeRoot
+      });
+    });
+  }
+});
+
+test('rejects boot paths and extensions outside the fixed contract', async t => {
+  const cases = [
+    ['mark extension', 'mark', 'boot-mark.png'],
+    ['portrait extension', 'portrait', 'rei-portrait.jpg'],
+    ['soundtrack extension', 'soundtrack', 'startup-reference.mp3'],
+    ['mark escape', 'mark', '../boot-mark.webp'],
+    ['portrait nesting', 'portrait', 'nested/rei-portrait.webp'],
+    ['soundtrack absolute path', 'soundtrack', '/private/startup-reference.wav']
+  ];
+  for (const [name, field, value] of cases) {
+    await t.test(name, async subtest => {
+      const {themeRoot} = await isolatedTheme(subtest);
+      const theme = await readJson(themeRoot, 'theme.json');
+      theme.boot[field] = value;
+      await writeJson(themeRoot, 'theme.json', theme);
+      await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_PATH', {
+        root: themeRoot,
+        forbidden: [value]
+      });
+    });
+  }
+});
+
+test('rejects invalid and overlong audio segments', async t => {
+  const cases = [
+    ['negative start', -1, 20_500],
+    ['equal endpoints', 20_500, 20_500],
+    ['reversed endpoints', 20_500, 20_499],
+    ['over 30 seconds', 0, 30_001],
+    ['fractional start', 0.5, 20_500],
+    ['non-numeric end', 0, '20500']
+  ];
+  for (const [name, audioStartMs, audioEndMs] of cases) {
+    await t.test(name, async subtest => {
+      const {themeRoot} = await isolatedTheme(subtest);
+      const theme = await readJson(themeRoot, 'theme.json');
+      theme.boot.audioStartMs = audioStartMs;
+      theme.boot.audioEndMs = audioEndMs;
+      await writeJson(themeRoot, 'theme.json', theme);
+      await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_SCHEMA', {
+        root: themeRoot
       });
     });
   }
@@ -222,7 +328,7 @@ test('rejects duplicate scene file selections', async t => {
   await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_PATH', {root: themeRoot});
 });
 
-test('enforces separate bounded sizes for text and WebP files', async t => {
+test('enforces separate bounded sizes for text, image, and soundtrack files', async t => {
   await t.test('text limit', async subtest => {
     const {themeRoot} = await isolatedTheme(subtest);
     await expectThemeError(
@@ -231,29 +337,43 @@ test('enforces separate bounded sizes for text and WebP files', async t => {
       {file: 'theme.json', root: themeRoot}
     );
   });
-  await t.test('WebP limit', async subtest => {
+  await t.test('image limit', async subtest => {
     const {themeRoot} = await isolatedTheme(subtest);
+    await fs.truncate(path.join(themeRoot, 'boot-mark.webp'), maxImageBytes + 1);
     await expectThemeError(
-      validateThemeDirectory(themeRoot, {maxWebpBytes: 1}),
+      validateThemeDirectory(themeRoot),
       'THEME_SIZE',
-      {file: 'scene-a-sync.webp', root: themeRoot}
+      {file: 'boot-mark.webp', root: themeRoot}
+    );
+  });
+  await t.test('soundtrack limit', async subtest => {
+    const {themeRoot} = await isolatedTheme(subtest);
+    await fs.truncate(path.join(themeRoot, 'startup-reference.wav'), maxSoundtrackBytes + 1);
+    await expectThemeError(
+      validateThemeDirectory(themeRoot),
+      'THEME_SIZE',
+      {file: 'startup-reference.wav', root: themeRoot}
     );
   });
 });
 
-test('rejects content whose SHA-256 does not match the manifest', async t => {
-  const {themeRoot} = await isolatedTheme(t);
-  await fs.writeFile(path.join(themeRoot, 'scene-a-sync.webp'), 'changed synthetic bytes');
-  await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_HASH', {
-    file: 'scene-a-sync.webp',
-    root: themeRoot
-  });
+test('rejects image and soundtrack content whose SHA-256 does not match', async t => {
+  for (const file of ['scene-a-sync.webp', 'boot-mark.webp', 'startup-reference.wav']) {
+    await t.test(file, async subtest => {
+      const {themeRoot} = await isolatedTheme(subtest);
+      await fs.writeFile(path.join(themeRoot, file), 'changed synthetic bytes');
+      await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_HASH', {
+        file,
+        root: themeRoot
+      });
+    });
+  }
 });
 
-test('requires assets.json to cover each WebP exactly once', async t => {
+test('requires assets.json to cover all six binary files exactly once', async t => {
   const {themeRoot} = await isolatedTheme(t);
   const assets = await readJson(themeRoot, 'assets.json');
-  assets.assets[2] = {...assets.assets[0]};
+  assets.assets[5] = {...assets.assets[0]};
   await writeJson(themeRoot, 'assets.json', assets);
   await expectThemeError(validateThemeDirectory(themeRoot), 'THEME_SCHEMA', {
     file: 'assets.json',

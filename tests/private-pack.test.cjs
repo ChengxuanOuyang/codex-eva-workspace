@@ -26,7 +26,11 @@ const privateStageFiles = [
   'renderer/boot/assets/scene-c-online.webp',
   'assets/themes/project-zero/assets.json',
   'assets/themes/project-zero/ASSET-LICENSE.md',
-  'renderer/boot/index.html'
+  'renderer/boot/index.html',
+  'renderer/boot/private/boot-mark.webp',
+  'renderer/boot/private/rei-portrait.webp',
+  'renderer/boot/private/startup-reference.wav',
+  'renderer/boot/private/theme.json'
 ];
 
 function loadPacker() {
@@ -86,6 +90,43 @@ async function assertMissing(target) {
   await assert.rejects(fs.access(target), error => error.code === 'ENOENT');
 }
 
+function stagedContentTarget(stageRoot, theme, file) {
+  if (Object.values(theme.scenes).includes(file)) {
+    return path.join(stageRoot, 'renderer', 'boot', 'assets', file);
+  }
+  if (file === theme.boot.mark) {
+    return path.join(stageRoot, 'renderer', 'boot', 'private', 'boot-mark.webp');
+  }
+  if (file === theme.boot.portrait) {
+    return path.join(stageRoot, 'renderer', 'boot', 'private', 'rei-portrait.webp');
+  }
+  if (file === theme.boot.soundtrack) {
+    return path.join(
+      stageRoot,
+      'renderer',
+      'boot',
+      'private',
+      `startup-reference${path.extname(file)}`
+    );
+  }
+  if (file === 'assets.json' || file === 'ASSET-LICENSE.md') {
+    return path.join(stageRoot, 'assets', 'themes', 'project-zero', file);
+  }
+  return null;
+}
+
+function expectedPrivateConfig(theme) {
+  const soundtrackExtension = path.extname(theme.boot.soundtrack);
+  return {
+    displayName: theme.displayName,
+    mark: '/private/boot-mark.webp',
+    portrait: '/private/rei-portrait.webp',
+    soundtrack: `/private/startup-reference${soundtrackExtension}`,
+    audioStartMs: theme.boot.audioStartMs,
+    audioEndMs: theme.boot.audioEndMs
+  };
+}
+
 test('validates before creating staging and leaves no staging on validation failure', async t => {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-pack-order-'));
   t.after(() => fs.rm(temporaryRoot, {recursive: true, force: true}));
@@ -142,15 +183,21 @@ test('stages only fixed project entries and privately replaces exact validated c
         topLevel: (await fs.readdir(call.projectRoot)).sort(),
         index: await fs.readFile(path.join(call.projectRoot, 'renderer', 'boot', 'index.html'), 'utf8'),
         packageJson: JSON.parse(await fs.readFile(path.join(call.projectRoot, 'package.json'))),
+        privateEntries: (await fs.readdir(
+          path.join(call.projectRoot, 'renderer', 'boot', 'private')
+        )).sort(),
+        privateConfigBytes: await fs.readFile(
+          path.join(call.projectRoot, 'renderer', 'boot', 'private', 'theme.json')
+        ),
         stagedContents: new Map()
       };
       await assert.rejects(fs.access(oldOutput));
       for (const file of expectedTheme.contents.keys()) {
         if (file === 'theme.json') continue;
-        const directory = file.endsWith('.webp')
-          ? path.join(call.projectRoot, 'renderer', 'boot', 'assets')
-          : path.join(call.projectRoot, 'assets', 'themes', 'project-zero');
-        builderCall.stagedContents.set(file, await fs.readFile(path.join(directory, file)));
+        builderCall.stagedContents.set(
+          file,
+          await fs.readFile(stagedContentTarget(call.projectRoot, expectedTheme, file))
+        );
       }
     }
   });
@@ -173,12 +220,60 @@ test('stages only fixed project entries and privately replaces exact validated c
   );
   assert.equal(builderCall.packageJson.build.directories.output, output);
   assert.equal(builderCall.packageJson.build.npmRebuild, false);
+  assert.deepEqual(builderCall.privateEntries, [
+    'boot-mark.webp',
+    'rei-portrait.webp',
+    'startup-reference.wav',
+    'theme.json'
+  ]);
+  const privateConfigText = builderCall.privateConfigBytes.toString('utf8');
+  assert.deepEqual(JSON.parse(privateConfigText), expectedPrivateConfig(expectedTheme));
+  assert.equal(privateConfigText.includes(themeRoot), false);
+  assert.equal(privateConfigText.includes(expectedTheme.root), false);
   for (const [file, bytes] of expectedTheme.contents) {
     if (file === 'theme.json') continue;
     assert.deepEqual(builderCall.stagedContents.get(file), bytes);
   }
   assert.deepEqual(await publicHashes(temporaryProject), before);
   await assertMissing(path.join(temporaryProject, '.private-build'));
+});
+
+test('stages an m4a soundtrack only at its fixed private URL', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-pack-m4a-');
+  await fs.rename(
+    path.join(themeRoot, 'startup-reference.wav'),
+    path.join(themeRoot, 'startup-reference.m4a')
+  );
+  const themePath = path.join(themeRoot, 'theme.json');
+  const theme = JSON.parse(await fs.readFile(themePath, 'utf8'));
+  theme.boot.soundtrack = 'startup-reference.m4a';
+  await fs.writeFile(themePath, `${JSON.stringify(theme, null, 2)}\n`);
+  const manifestPath = path.join(themeRoot, 'assets.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.assets.find(asset => asset.file === 'startup-reference.wav').file =
+    'startup-reference.m4a';
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  let config;
+
+  const {packPrivateTheme} = loadPacker();
+  await packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    runBuilder: async ({projectRoot: stageRoot}) => {
+      const privateRoot = path.join(stageRoot, 'renderer', 'boot', 'private');
+      config = JSON.parse(await fs.readFile(path.join(privateRoot, 'theme.json'), 'utf8'));
+      assert.deepEqual((await fs.readdir(privateRoot)).sort(), [
+        'boot-mark.webp',
+        'rei-portrait.webp',
+        'startup-reference.m4a',
+        'theme.json'
+      ]);
+      await assertMissing(path.join(privateRoot, 'startup-reference.wav'));
+    }
+  });
+
+  assert.equal(config.soundtrack, '/private/startup-reference.m4a');
 });
 
 test('isolated private packing leaves the real tracked public assets unchanged', async t => {
@@ -194,6 +289,51 @@ test('isolated private packing leaves the real tracked public assets unchanged',
   });
 
   assert.deepEqual(await publicHashes(projectRoot), before);
+});
+
+test('successful packing truncates and closes every held private inode', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-pack-success-scrub-');
+  let builderFinished = false;
+  const truncated = new Set();
+  const closed = new Set();
+  const fsModule = {
+    ...fs,
+    async open(target, ...arguments_) {
+      const handle = await fs.open(target, ...arguments_);
+      const privateFile = privateStageFiles.find(file => target.endsWith(file));
+      return {
+        stat: (...statArguments) => handle.stat(...statArguments),
+        truncate: async (...truncateArguments) => {
+          const result = await handle.truncate(...truncateArguments);
+          if (privateFile && builderFinished) truncated.add(privateFile);
+          return result;
+        },
+        writeFile: (...writeArguments) => handle.writeFile(...writeArguments),
+        sync: (...syncArguments) => handle.sync(...syncArguments),
+        async close() {
+          if (privateFile && builderFinished) {
+            assert.equal((await handle.stat()).size, 0);
+            closed.add(privateFile);
+          }
+          return handle.close();
+        }
+      };
+    }
+  };
+
+  const {packPrivateTheme} = loadPacker();
+  await packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    fsModule,
+    runBuilder: async () => {
+      builderFinished = true;
+    }
+  });
+
+  assert.deepEqual([...truncated].sort(), [...privateStageFiles].sort());
+  assert.deepEqual([...closed].sort(), [...privateStageFiles].sort());
 });
 
 test('escapes a validator-approved display name in document and visible titles', async t => {
@@ -230,14 +370,22 @@ test('snapshots validated bytes before staging even if source and returned Map a
   const temporaryProject = await isolatedProject(t);
   const validated = await validateThemeDirectory(themeRoot);
   const expected = new Map([...validated.contents].map(([file, bytes]) => [file, Buffer.from(bytes)]));
+  const expectedTheme = {
+    displayName: validated.displayName,
+    scenes: {...validated.scenes},
+    boot: {...validated.boot},
+    contents: new Map([...validated.contents])
+  };
   let mutated = false;
   const fsModule = {
     ...fs,
     async mkdir(...arguments_) {
       if (!mutated) {
         mutated = true;
-        for (const file of validated.contents.keys()) {
-          validated.contents.set(file, Buffer.from('mutated-returned-map'));
+        expectedTheme.displayName = 'MUTATED RETURNED DISPLAY NAME';
+        expectedTheme.boot.audioEndMs = 1;
+        for (const file of expectedTheme.contents.keys()) {
+          expectedTheme.contents.set(file, Buffer.from('mutated-returned-map'));
           await fs.writeFile(path.join(themeRoot, file), 'mutated-source');
         }
       }
@@ -245,28 +393,31 @@ test('snapshots validated bytes before staging even if source and returned Map a
     }
   };
   let staged;
+  let privateConfig;
 
   const {packPrivateTheme} = loadPacker();
   await packPrivateTheme({
     projectRoot: temporaryProject,
     themeRoot,
     fsModule,
-    validateTheme: async () => validated,
+    validateTheme: async () => expectedTheme,
     runBuilder: async ({projectRoot: stageRoot}) => {
       staged = new Map();
       for (const file of expected.keys()) {
         if (file === 'theme.json') continue;
-        const directory = file.endsWith('.webp')
-          ? path.join(stageRoot, 'renderer', 'boot', 'assets')
-          : path.join(stageRoot, 'assets', 'themes', 'project-zero');
-        staged.set(file, await fs.readFile(path.join(directory, file)));
+        staged.set(file, await fs.readFile(stagedContentTarget(stageRoot, validated, file)));
       }
+      privateConfig = JSON.parse(await fs.readFile(
+        path.join(stageRoot, 'renderer', 'boot', 'private', 'theme.json'),
+        'utf8'
+      ));
     }
   });
 
   for (const [file, bytes] of expected) {
     if (file !== 'theme.json') assert.deepEqual(staged.get(file), bytes);
   }
+  assert.deepEqual(privateConfig, expectedPrivateConfig(validated));
   await assertMissing(path.join(temporaryProject, '.private-build'));
 });
 
@@ -570,10 +721,10 @@ test('keeps work failure primary when private scrub operations also fail and clo
   }));
   assert.equal(error.cause, primary);
   assert.ok(error.cleanupCause instanceof Error);
-  assert.equal(scrubAttempts.truncate, 6);
-  assert.equal(scrubAttempts.sync, 12);
-  assert.equal(scrubAttempts.close, 6);
-  assert.equal(opened, 9);
+  assert.equal(scrubAttempts.truncate, privateStageFiles.length);
+  assert.equal(scrubAttempts.sync, privateStageFiles.length * 2);
+  assert.equal(scrubAttempts.close, privateStageFiles.length);
+  assert.equal(opened, privateStageFiles.length + 3);
   assert.equal(closed, opened);
 });
 
@@ -621,44 +772,52 @@ test('renamed private derivatives are truncated through held handles and every h
   }
 });
 
-test('final cleanup rejects swapped victims without deleting replacements or outside files', async t => {
-  const themeRoot = await isolatedTheme(t);
-  const temporaryProject = await isolatedProject(t, 'project-zero-pack-final-swap-');
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-pack-final-outside-'));
-  t.after(() => fs.rm(outside, {recursive: true, force: true}));
-  const outsideMarker = path.join(outside, 'marker.txt');
-  await fs.writeFile(outsideMarker, 'outside');
-  let builderFinished = false;
-  let swapped = false;
-  let movedVictim;
-  const victimSuffix = privateStageFiles[0];
-  const fsModule = {
-    ...fs,
-    async lstat(target, ...arguments_) {
-      if (builderFinished && !swapped && target.endsWith(victimSuffix)) {
-        swapped = true;
-        movedVictim = `${target}.moved`;
-        await fs.rename(target, movedVictim);
-        await fs.symlink(outsideMarker, target);
-      }
-      return fs.lstat(target, ...arguments_);
-    }
-  };
+test('final cleanup truncates every swapped victim without deleting its replacement', async t => {
+  for (const victimSuffix of privateStageFiles) {
+    await t.test(victimSuffix, async subtest => {
+      const themeRoot = await isolatedTheme(subtest);
+      const temporaryProject = await isolatedProject(
+        subtest,
+        'project-zero-pack-final-swap-'
+      );
+      const outside = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'project-zero-pack-final-outside-')
+      );
+      subtest.after(() => fs.rm(outside, {recursive: true, force: true}));
+      const outsideMarker = path.join(outside, 'marker.txt');
+      await fs.writeFile(outsideMarker, 'outside');
+      let builderFinished = false;
+      let swapped = false;
+      let movedVictim;
+      const fsModule = {
+        ...fs,
+        async lstat(target, ...arguments_) {
+          if (builderFinished && !swapped && target.endsWith(victimSuffix)) {
+            swapped = true;
+            movedVictim = `${target}.moved`;
+            await fs.rename(target, movedVictim);
+            await fs.symlink(outsideMarker, target);
+          }
+          return fs.lstat(target, ...arguments_);
+        }
+      };
 
-  const {packPrivateTheme} = loadPacker();
-  const error = await expectStablePackFailure(packPrivateTheme({
-    projectRoot: temporaryProject,
-    themeRoot,
-    fsModule,
-    runBuilder: async () => {
-      builderFinished = true;
-    }
-  }));
-  assert.ok(error.cleanupCause instanceof Error);
-  assert.equal((await fs.stat(movedVictim)).size, 0);
-  const replacement = movedVictim.slice(0, -'.moved'.length);
-  assert.equal((await fs.lstat(replacement)).isSymbolicLink(), true);
-  assert.equal(await fs.readFile(outsideMarker, 'utf8'), 'outside');
+      const {packPrivateTheme} = loadPacker();
+      const error = await expectStablePackFailure(packPrivateTheme({
+        projectRoot: temporaryProject,
+        themeRoot,
+        fsModule,
+        runBuilder: async () => {
+          builderFinished = true;
+        }
+      }));
+      assert.ok(error.cleanupCause instanceof Error);
+      assert.equal((await fs.stat(movedVictim)).size, 0);
+      const replacement = movedVictim.slice(0, -'.moved'.length);
+      assert.equal((await fs.lstat(replacement)).isSymbolicLink(), true);
+      assert.equal(await fs.readFile(outsideMarker, 'utf8'), 'outside');
+    });
+  }
 });
 
 test('inventory cleanup never recursively removes replacement directories', async t => {

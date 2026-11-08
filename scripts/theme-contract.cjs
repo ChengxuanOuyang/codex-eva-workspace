@@ -5,17 +5,77 @@ const {constants} = require('node:fs');
 const defaultFs = require('node:fs/promises');
 const path = require('node:path');
 
-const SCENE_FILES = Object.freeze([
+const IMAGE_FILES = Object.freeze([
   'scene-a-sync.webp',
   'scene-b-awakening.webp',
-  'scene-c-online.webp'
+  'scene-c-online.webp',
+  'boot-mark.webp',
+  'rei-portrait.webp'
 ]);
-const REQUIRED_FILES = Object.freeze([
-  'ASSET-LICENSE.md',
-  'assets.json',
-  ...SCENE_FILES,
-  'theme.json'
-].sort());
+const SCENE_FILES = Object.freeze(IMAGE_FILES.slice(0, 3));
+const SOUNDTRACK_EXTENSIONS = new Set(['.wav', '.m4a']);
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+const MAX_SOUNDTRACK_BYTES = 32 * 1024 * 1024;
+const MAX_AUDIO_SEGMENT_MS = 30_000;
+const CONTENT_SNAPSHOTS = new WeakMap();
+
+class FrozenContents extends Map {
+  constructor(entries) {
+    super();
+    CONTENT_SNAPSHOTS.set(
+      this,
+      new Map([...entries].map(([file, bytes]) => [file, Buffer.from(bytes)]))
+    );
+    Object.freeze(this);
+  }
+
+  get size() {
+    return CONTENT_SNAPSHOTS.get(this).size;
+  }
+
+  has(file) {
+    return CONTENT_SNAPSHOTS.get(this).has(file);
+  }
+
+  get(file) {
+    const bytes = CONTENT_SNAPSHOTS.get(this).get(file);
+    return bytes === undefined ? undefined : Buffer.from(bytes);
+  }
+
+  keys() {
+    return CONTENT_SNAPSHOTS.get(this).keys();
+  }
+
+  * values() {
+    for (const bytes of CONTENT_SNAPSHOTS.get(this).values()) yield Buffer.from(bytes);
+  }
+
+  * entries() {
+    for (const [file, bytes] of CONTENT_SNAPSHOTS.get(this)) {
+      yield [file, Buffer.from(bytes)];
+    }
+  }
+
+  forEach(callback, thisArgument) {
+    for (const [file, bytes] of this) callback.call(thisArgument, bytes, file, this);
+  }
+
+  set() {
+    throw new TypeError('THEME_CONTENTS_READ_ONLY');
+  }
+
+  delete() {
+    throw new TypeError('THEME_CONTENTS_READ_ONLY');
+  }
+
+  clear() {
+    throw new TypeError('THEME_CONTENTS_READ_ONLY');
+  }
+
+  [Symbol.iterator]() {
+    return this.entries();
+  }
+}
 
 class ThemeValidationError extends Error {
   constructor(code, file = null) {
@@ -81,7 +141,6 @@ async function currentRootMatches(themeRoot, root, identity, rootHandle, fsModul
 
 async function validateThemeDirectory(themeRoot, {
   fsModule = defaultFs,
-  maxWebpBytes = 12 * 1024 * 1024,
   maxTextBytes = 256 * 1024
 } = {}) {
   // O_NOFOLLOW makes each leaf open atomic with respect to path replacement.
@@ -120,36 +179,31 @@ async function validateThemeDirectory(themeRoot, {
   }
 
   try {
-    if (JSON.stringify(entries) !== JSON.stringify(REQUIRED_FILES)) {
-      throw new ThemeValidationError('THEME_FILE_SET');
-    }
-
+    if (!entries.includes('theme.json')) throw new ThemeValidationError('THEME_FILE_SET');
     const themeBytes = await readBoundedRegularFile(root, 'theme.json', maxTextBytes, fsModule);
-    const assetBytes = await readBoundedRegularFile(root, 'assets.json', maxTextBytes, fsModule);
-    const noticeBytes = await readBoundedRegularFile(
-      root,
-      'ASSET-LICENSE.md',
-      maxTextBytes,
-      fsModule
-    );
     let theme;
-    let assetManifest;
     try {
       theme = JSON.parse(themeBytes);
-      assetManifest = JSON.parse(assetBytes);
     } catch {
       throw new ThemeValidationError('THEME_JSON');
     }
 
     if (!exactKeys(
       theme,
-      ['schemaVersion', 'id', 'displayName', 'scenes', 'assetManifest', 'artNotice']
-    ) || theme.schemaVersion !== 1 ||
+      ['schemaVersion', 'id', 'displayName', 'scenes', 'boot', 'assetManifest', 'artNotice']
+    ) || theme.schemaVersion !== 2 ||
         !/^[a-z0-9][a-z0-9-]{0,63}$/.test(theme.id) ||
         typeof theme.displayName !== 'string' || theme.displayName.length < 1 ||
         theme.displayName.length > 96 || /[\r\n\0]/.test(theme.displayName) ||
         theme.assetManifest !== 'assets.json' || theme.artNotice !== 'ASSET-LICENSE.md' ||
-        !exactKeys(theme.scenes, ['awakening', 'synchronization', 'online'])) {
+        !exactKeys(theme.scenes, ['awakening', 'synchronization', 'online']) ||
+        !exactKeys(
+          theme.boot,
+          ['mark', 'portrait', 'soundtrack', 'audioStartMs', 'audioEndMs']
+        ) || !Number.isSafeInteger(theme.boot.audioStartMs) ||
+        !Number.isSafeInteger(theme.boot.audioEndMs) || theme.boot.audioStartMs < 0 ||
+        theme.boot.audioEndMs <= theme.boot.audioStartMs ||
+        theme.boot.audioEndMs - theme.boot.audioStartMs > MAX_AUDIO_SEGMENT_MS) {
       throw new ThemeValidationError('THEME_SCHEMA');
     }
 
@@ -160,35 +214,85 @@ async function validateThemeDirectory(themeRoot, {
       throw new ThemeValidationError('THEME_PATH');
     }
 
+    const soundtrackExtension = typeof theme.boot.soundtrack === 'string'
+      ? path.extname(theme.boot.soundtrack)
+      : '';
+    if (theme.boot.mark !== 'boot-mark.webp' || theme.boot.portrait !== 'rei-portrait.webp' ||
+        typeof theme.boot.soundtrack !== 'string' ||
+        path.basename(theme.boot.soundtrack) !== theme.boot.soundtrack ||
+        path.basename(theme.boot.soundtrack, soundtrackExtension) !== 'startup-reference' ||
+        !SOUNDTRACK_EXTENSIONS.has(soundtrackExtension)) {
+      throw new ThemeValidationError('THEME_PATH');
+    }
+
+    const binaryFiles = [...IMAGE_FILES, theme.boot.soundtrack];
+    const requiredFiles = [
+      'ASSET-LICENSE.md',
+      'assets.json',
+      ...binaryFiles,
+      'theme.json'
+    ].sort();
+    if (JSON.stringify(entries) !== JSON.stringify(requiredFiles)) {
+      throw new ThemeValidationError('THEME_FILE_SET');
+    }
+
+    const assetBytes = await readBoundedRegularFile(root, 'assets.json', maxTextBytes, fsModule);
+    const noticeBytes = await readBoundedRegularFile(
+      root,
+      'ASSET-LICENSE.md',
+      maxTextBytes,
+      fsModule
+    );
+    let assetManifest;
+    try {
+      assetManifest = JSON.parse(assetBytes);
+    } catch {
+      throw new ThemeValidationError('THEME_JSON');
+    }
+
     if (!exactKeys(assetManifest, ['schemaVersion', 'assets']) ||
         assetManifest.schemaVersion !== 1 || !Array.isArray(assetManifest.assets) ||
-        assetManifest.assets.length !== 3) {
+        assetManifest.assets.length !== binaryFiles.length) {
+      throw new ThemeValidationError('THEME_SCHEMA', 'assets.json');
+    }
+
+    for (const asset of assetManifest.assets) {
+      if (!exactKeys(asset, ['file', 'sha256']) || !binaryFiles.includes(asset.file) ||
+          !/^[a-f0-9]{64}$/.test(asset.sha256)) {
+        throw new ThemeValidationError('THEME_SCHEMA', 'assets.json');
+      }
+    }
+    if (new Set(assetManifest.assets.map(asset => asset.file)).size !== binaryFiles.length) {
       throw new ThemeValidationError('THEME_SCHEMA', 'assets.json');
     }
 
     const hashes = new Map();
-    const contents = new Map([
+    const contentEntries = [
       ['theme.json', Buffer.from(themeBytes)],
       ['assets.json', Buffer.from(assetBytes)],
       ['ASSET-LICENSE.md', Buffer.from(noticeBytes)]
-    ]);
-    for (const file of SCENE_FILES) {
-      const bytes = await readBoundedRegularFile(root, file, maxWebpBytes, fsModule);
+    ];
+    for (const file of IMAGE_FILES) {
+      const bytes = await readBoundedRegularFile(root, file, MAX_IMAGE_BYTES, fsModule);
       hashes.set(file, crypto.createHash('sha256').update(bytes).digest('hex'));
-      contents.set(file, Buffer.from(bytes));
+      contentEntries.push([file, Buffer.from(bytes)]);
     }
+    const soundtrackBytes = await readBoundedRegularFile(
+      root,
+      theme.boot.soundtrack,
+      MAX_SOUNDTRACK_BYTES,
+      fsModule
+    );
+    hashes.set(
+      theme.boot.soundtrack,
+      crypto.createHash('sha256').update(soundtrackBytes).digest('hex')
+    );
+    contentEntries.push([theme.boot.soundtrack, Buffer.from(soundtrackBytes)]);
 
     for (const asset of assetManifest.assets) {
-      if (!exactKeys(asset, ['file', 'sha256']) || !SCENE_FILES.includes(asset.file) ||
-          !/^[a-f0-9]{64}$/.test(asset.sha256)) {
-        throw new ThemeValidationError('THEME_SCHEMA', 'assets.json');
-      }
       if (hashes.get(asset.file) !== asset.sha256) {
         throw new ThemeValidationError('THEME_HASH', asset.file);
       }
-    }
-    if (new Set(assetManifest.assets.map(asset => asset.file)).size !== 3) {
-      throw new ThemeValidationError('THEME_SCHEMA', 'assets.json');
     }
 
     if (!await currentRootMatches(themeRoot, root, rootIdentity, rootHandle, fsModule)) {
@@ -199,8 +303,9 @@ async function validateThemeDirectory(themeRoot, {
       id: theme.id,
       displayName: theme.displayName,
       scenes: Object.freeze({...theme.scenes}),
-      files: Object.freeze([...REQUIRED_FILES]),
-      contents
+      boot: Object.freeze({...theme.boot}),
+      files: Object.freeze([...requiredFiles]),
+      contents: new FrozenContents(contentEntries)
     });
   } finally {
     await rootHandle.close().catch(() => {});
