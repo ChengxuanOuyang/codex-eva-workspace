@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "test-private",
+  "displayName": "PROJECT ZERO // TEST PRIVATE THEME",
+  "scenes": {
+    "awakening": "scene-b-awakening.webp",
+    "synchronization": "scene-a-sync.webp",
+    "online": "scene-c-online.webp"
+  },
+  "assetManifest": "assets.json",
+  "artNotice": "ASSET-LICENSE.md"
+}

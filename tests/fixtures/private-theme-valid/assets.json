@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "file": "scene-a-sync.webp",
+      "sha256": "d40dd1e017f115a21ffd58fc48455798aa19181e92684cc2cbe5d3d6d88e1a60"
+    },
+    {
+      "file": "scene-b-awakening.webp",
+      "sha256": "7cb815b6680bd0ef9dd3064d73fd63c58d4276acfd6b2c3c29f37c63c60c32e8"
+    },
+    {
+      "file": "scene-c-online.webp",
+      "sha256": "71af8ded61ff1a81b7beb7a469e0997acc683a66a08d37deadab680ced1c8267"
+    }
+  ]
+}
