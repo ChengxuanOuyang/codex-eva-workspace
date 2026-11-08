@@ -67,7 +67,7 @@ test('private themes and private build outputs are excluded from Git', async () 
 
 - [ ] **步骤 2：运行红灯**
 
-运行：`node --test tests/foundation.test.cjs`  
+运行：`node --test tests/foundation.test.cjs`
 预期：FAIL，缺少三个精确 ignore 规则。
 
 - [ ] **步骤 3：复制私人素材，禁止修改或删除原文件**
@@ -175,7 +175,7 @@ assert.match(html, /PROJECT ZERO <span>\/\/<\/span> PILOT CODEX WORKBENCH/);
 
 - [ ] **步骤 2：运行红灯**
 
-运行：`node --test tests/foundation.test.cjs tests/renderer-assets.test.cjs tests/fake-codex.test.cjs`  
+运行：`node --test tests/foundation.test.cjs tests/renderer-assets.test.cjs tests/fake-codex.test.cjs`
 预期：FAIL，当前 package、HTML、NOTICE 和 bridge 仍含 REI 产品名。
 
 - [ ] **步骤 3：做最小身份替换**
@@ -256,7 +256,7 @@ for (const asset of manifest.assets) {
 }
 ```
 
-运行：`node --test tests/package-scripts.test.cjs tests/renderer-assets.test.cjs`  
+运行：`node --test tests/package-scripts.test.cjs tests/renderer-assets.test.cjs`
 预期：FAIL，旧 manifest 仍描述现有角色视觉。
 
 - [ ] **步骤 2：用内置 image generation 分别生成三张全新图**
@@ -372,7 +372,7 @@ await assert.rejects(
 
 - [ ] **步骤 3：运行红灯**
 
-运行：`node --test tests/theme-contract.test.cjs`  
+运行：`node --test tests/theme-contract.test.cjs`
 预期：FAIL，模块不存在。
 
 - [ ] **步骤 4：实现最小合同**
@@ -536,7 +536,7 @@ assert.equal(await hashPublicAssets(projectRoot), publicHashesBefore);
 
 - [ ] **步骤 2：运行红灯**
 
-运行：`node --test tests/private-pack.test.cjs tests/package-scripts.test.cjs`  
+运行：`node --test tests/private-pack.test.cjs tests/package-scripts.test.cjs`
 预期：FAIL，私人 packer 和脚本不存在。
 
 - [ ] **步骤 3：把通用 builder runner 保持无 shell**
@@ -678,7 +678,7 @@ git commit -m "feat: package validated private themes in isolation"
 
 - [ ] **步骤 2：运行红灯**
 
-运行：`node --test tests/e2e/packaged-smoke.test.cjs tests/e2e/private-packaged-smoke.test.cjs`  
+运行：`node --test tests/e2e/packaged-smoke.test.cjs tests/e2e/private-packaged-smoke.test.cjs`
 预期：FAIL，公共身份尚未全部更新或私人 smoke 尚不存在。
 
 - [ ] **步骤 3：编写 README 与私人主题文档**

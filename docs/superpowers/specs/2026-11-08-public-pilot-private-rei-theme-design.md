@@ -1,6 +1,6 @@
 # PROJECT ZERO public pilot and private local theme design
 
-Date: 2026-11-08  
+Date: 2026-11-08
 Status: approved in conversation; pending written-spec review
 
 ## Goal
