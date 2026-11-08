@@ -62,12 +62,15 @@ async function isolatedProject(t, prefix = 'project-zero-pack-project-') {
 }
 
 async function expectStablePackFailure(promise) {
+  let captured;
   await assert.rejects(promise, error => {
     assert.equal(error.code, 'PRIVATE_THEME_PACK_FAILED');
     assert.equal(error.message, 'PRIVATE_THEME_PACK_FAILED');
     assert.ok(error.cause instanceof Error);
+    captured = error;
     return true;
   });
+  return captured;
 }
 
 test('validates before creating staging and leaves no staging on validation failure', async t => {
@@ -284,6 +287,10 @@ test('rejects staging identities replaced while the builder is running', async t
   const temporaryProject = await isolatedProject(t, 'project-zero-pack-root-swap-');
   const stageParent = path.join(temporaryProject, '.private-build');
   const movedParent = path.join(temporaryProject, '.private-build-moved');
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-pack-swap-outside-'));
+  t.after(() => fs.rm(outside, {recursive: true, force: true}));
+  const outsideMarker = path.join(outside, 'outside-marker.txt');
+  await fs.writeFile(outsideMarker, 'outside');
 
   const {packPrivateTheme} = loadPacker();
   await expectStablePackFailure(packPrivateTheme({
@@ -292,8 +299,82 @@ test('rejects staging identities replaced while the builder is running', async t
     runBuilder: async () => {
       await fs.rename(stageParent, movedParent);
       await fs.mkdir(stageParent);
+      await fs.writeFile(path.join(stageParent, 'replacement-marker.txt'), 'replacement');
+      await fs.symlink(outside, path.join(stageParent, 'outside-link'));
     }
   }));
+  assert.deepEqual(await fs.readdir(movedParent), []);
+  assert.equal(await fs.readFile(path.join(stageParent, 'replacement-marker.txt'), 'utf8'), 'replacement');
+  assert.equal((await fs.lstat(path.join(stageParent, 'outside-link'))).isSymbolicLink(), true);
+  assert.equal(await fs.readFile(outsideMarker, 'utf8'), 'outside');
+});
+
+test('rolls back a newly-created stage when opening its identity fails', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-pack-stage-open-');
+  let stageTarget;
+  const fsModule = {
+    ...fs,
+    async mkdtemp(...arguments_) {
+      stageTarget = await fs.mkdtemp(...arguments_);
+      return stageTarget;
+    },
+    async open(target, ...arguments_) {
+      if (target === stageTarget) {
+        throw Object.assign(Error(`open leaked ${target}`), {code: 'EACCES'});
+      }
+      return fs.open(target, ...arguments_);
+    }
+  };
+
+  const {packPrivateTheme} = loadPacker();
+  await expectStablePackFailure(packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    fsModule,
+    runBuilder: async () => assert.fail('builder must not run')
+  }));
+  assert.ok(stageTarget);
+  assert.deepEqual(await fs.readdir(path.join(temporaryProject, '.private-build')), []);
+});
+
+test('keeps the work failure primary when secure cleanup also fails and closes handles', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-pack-double-failure-');
+  const primary = Error('PRIMARY_BUILDER_FAILURE');
+  const cleanup = Object.assign(Error('SECONDARY_CLEANUP_FAILURE'), {code: 'EIO'});
+  let opened = 0;
+  let closed = 0;
+  const fsModule = {
+    ...fs,
+    async open(...arguments_) {
+      const handle = await fs.open(...arguments_);
+      opened += 1;
+      return {
+        stat: (...statArguments) => handle.stat(...statArguments),
+        async close() {
+          closed += 1;
+          return handle.close();
+        }
+      };
+    },
+    async rm(target, options) {
+      if (path.basename(target).startsWith('stage-')) throw cleanup;
+      return fs.rm(target, options);
+    }
+  };
+
+  const {packPrivateTheme} = loadPacker();
+  const error = await expectStablePackFailure(packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    fsModule,
+    runBuilder: async () => { throw primary; }
+  }));
+  assert.equal(error.cause, primary);
+  assert.equal(error.cleanupCause, cleanup);
+  assert.equal(opened, 3);
+  assert.equal(closed, opened);
 });
 
 test('maps missing entries and native staging failures to one stable pack error', async t => {

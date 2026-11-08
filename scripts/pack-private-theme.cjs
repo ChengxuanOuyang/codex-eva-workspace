@@ -25,10 +25,18 @@ const PROJECT_ENTRIES = Object.freeze([
 const PUBLIC_LABEL = 'PROJECT ZERO // PILOT CODEX WORKBENCH';
 
 class PrivateThemePackError extends Error {
-  constructor(cause) {
+  constructor(cause, cleanupCause = null) {
     super('PRIVATE_THEME_PACK_FAILED', {cause});
     this.name = 'PrivateThemePackError';
     this.code = 'PRIVATE_THEME_PACK_FAILED';
+    if (cleanupCause) this.cleanupCause = cleanupCause;
+  }
+}
+
+class PrivateThemeOperationError extends Error {
+  constructor(cause, cleanupCause) {
+    super('PRIVATE_THEME_OPERATION_FAILED', {cause});
+    this.cleanupCause = cleanupCause;
   }
 }
 
@@ -117,9 +125,37 @@ async function openStageParent(realProjectRoot, fsModule) {
   return directory;
 }
 
+async function rollbackUnopenedStage(target, stageParent, fsModule) {
+  if (!await directoryIdentityMatches(stageParent, fsModule)) {
+    throw Error('PRIVATE_STAGE_CLEANUP');
+  }
+  const firstStat = await fsModule.lstat(target).catch(() => null);
+  if (!firstStat || firstStat.isSymbolicLink() || !firstStat.isDirectory()) {
+    throw Error('PRIVATE_STAGE_CLEANUP');
+  }
+  const real = await fsModule.realpath(target).catch(() => null);
+  const secondStat = await fsModule.lstat(target).catch(() => null);
+  if (!real || path.dirname(real) !== stageParent.real ||
+      !secondStat || secondStat.isSymbolicLink() || !secondStat.isDirectory() ||
+      !sameIdentity(firstStat, secondStat)) {
+    throw Error('PRIVATE_STAGE_CLEANUP');
+  }
+  await fsModule.rm(real, {recursive: true, force: true});
+}
+
 async function createStageRoot(stageParent, fsModule) {
   const target = await fsModule.mkdtemp(path.join(stageParent.real, 'stage-'));
-  const directory = await openDirectoryIdentity(target, fsModule);
+  let directory;
+  try {
+    directory = await openDirectoryIdentity(target, fsModule);
+  } catch (error) {
+    try {
+      await rollbackUnopenedStage(target, stageParent, fsModule);
+    } catch (cleanupCause) {
+      throw new PrivateThemeOperationError(error, cleanupCause);
+    }
+    throw error;
+  }
   if (path.dirname(directory.real) !== stageParent.real ||
       path.dirname(directory.target) !== stageParent.real ||
       !path.basename(directory.real).startsWith('stage-')) {
@@ -127,6 +163,92 @@ async function createStageRoot(stageParent, fsModule) {
     throw Error('PRIVATE_STAGE_IDENTITY');
   }
   return directory;
+}
+
+async function matchingChildDirectories(parent, identity, fsModule) {
+  const matches = [];
+  for (const entry of await fsModule.readdir(parent)) {
+    const target = path.join(parent, entry);
+    const stat = await fsModule.lstat(target).catch(() => null);
+    if (stat && !stat.isSymbolicLink() && stat.isDirectory() && sameIdentity(stat, identity)) {
+      matches.push({target, stat});
+    }
+  }
+  return matches;
+}
+
+async function removeStageAtVerifiedPath(target, expectedParent, identity, fsModule) {
+  const firstStat = await fsModule.lstat(target);
+  const real = await fsModule.realpath(target);
+  const secondStat = await fsModule.lstat(target);
+  if (firstStat.isSymbolicLink() || !firstStat.isDirectory() ||
+      secondStat.isSymbolicLink() || !secondStat.isDirectory() ||
+      !sameIdentity(firstStat, identity) || !sameIdentity(secondStat, identity) ||
+      path.dirname(real) !== expectedParent) {
+    throw Error('PRIVATE_STAGE_CLEANUP');
+  }
+  await fsModule.rm(real, {recursive: true, force: true});
+}
+
+async function cleanupStageDirectory({
+  projectDirectory,
+  stageParent,
+  stageDirectory,
+  fsModule
+}) {
+  if (await directoryIdentityMatches(stageDirectory, fsModule)) {
+    await removeStageAtVerifiedPath(
+      stageDirectory.target,
+      stageParent.real,
+      stageDirectory.identity,
+      fsModule
+    );
+    return;
+  }
+  if (!await directoryIdentityMatches(projectDirectory, fsModule)) {
+    throw Error('PRIVATE_STAGE_CLEANUP');
+  }
+
+  const parentMatches = await matchingChildDirectories(
+    projectDirectory.real,
+    stageParent.identity,
+    fsModule
+  );
+  if (parentMatches.length !== 1) throw Error('PRIVATE_STAGE_CLEANUP');
+  const relocatedParent = parentMatches[0];
+  const parentReal = await fsModule.realpath(relocatedParent.target);
+  const parentCheck = await fsModule.lstat(relocatedParent.target);
+  if (path.dirname(parentReal) !== projectDirectory.real ||
+      parentCheck.isSymbolicLink() || !parentCheck.isDirectory() ||
+      !sameIdentity(parentCheck, stageParent.identity)) {
+    throw Error('PRIVATE_STAGE_CLEANUP');
+  }
+
+  const stageMatches = await matchingChildDirectories(
+    parentReal,
+    stageDirectory.identity,
+    fsModule
+  );
+  if (stageMatches.length !== 1) throw Error('PRIVATE_STAGE_CLEANUP');
+  await removeStageAtVerifiedPath(
+    stageMatches[0].target,
+    parentReal,
+    stageDirectory.identity,
+    fsModule
+  );
+}
+
+async function closeDirectories(directories) {
+  let closeFailure;
+  for (const directory of directories) {
+    if (!directory) continue;
+    try {
+      await directory.handle.close();
+    } catch (error) {
+      closeFailure ??= error;
+    }
+  }
+  if (closeFailure) throw closeFailure;
 }
 
 async function packPrivateThemeInternal({
@@ -142,6 +264,9 @@ async function packPrivateThemeInternal({
   const projectDirectory = await openDirectoryIdentity(realProjectRoot, fsModule);
   let stageParent;
   let stageDirectory;
+  let result;
+  let workFailure;
+  let cleanupFailure;
   try {
     if (projectDirectory.real !== realProjectRoot) throw Error('PRIVATE_STAGE_IDENTITY');
     stageParent = await openStageParent(realProjectRoot, fsModule);
@@ -207,22 +332,34 @@ async function packPrivateThemeInternal({
     await requireDirectoryIdentity(stageParent, fsModule);
     await requireDirectoryIdentity(stageDirectory, fsModule);
     if (builderFailure) throw builderFailure;
-    return privateOutput;
+    result = privateOutput;
+  } catch (error) {
+    workFailure = error;
   } finally {
-    let cleanupFailure;
     try {
-      if (stageDirectory && await directoryIdentityMatches(stageDirectory, fsModule)) {
-        await fsModule.rm(stageDirectory.real, {recursive: true, force: true});
+      if (stageDirectory) {
+        await cleanupStageDirectory({
+          projectDirectory,
+          stageParent,
+          stageDirectory,
+          fsModule
+        });
       }
     } catch (error) {
       cleanupFailure = error;
-    } finally {
-      await stageDirectory?.handle.close().catch(() => {});
-      await stageParent?.handle.close().catch(() => {});
-      await projectDirectory.handle.close().catch(() => {});
     }
-    if (cleanupFailure) throw cleanupFailure;
+    try {
+      await closeDirectories([stageDirectory, stageParent, projectDirectory]);
+    } catch (error) {
+      cleanupFailure ??= error;
+    }
   }
+  if (workFailure && cleanupFailure) {
+    throw new PrivateThemeOperationError(workFailure, cleanupFailure);
+  }
+  if (workFailure) throw workFailure;
+  if (cleanupFailure) throw cleanupFailure;
+  return result;
 }
 
 async function packPrivateTheme({
@@ -244,6 +381,9 @@ async function packPrivateTheme({
     });
   } catch (error) {
     if (error instanceof ThemeValidationError || error instanceof PrivateThemePackError) throw error;
+    if (error instanceof PrivateThemeOperationError) {
+      throw new PrivateThemePackError(error.cause, error.cleanupCause);
+    }
     throw new PrivateThemePackError(error);
   }
 }
