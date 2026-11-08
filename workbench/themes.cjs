@@ -7,6 +7,11 @@ const path = require('node:path');
 const MANIFEST_KEYS = ['schemaVersion', 'id', 'name', 'author', 'colors', 'background', 'portrait', 'audio'];
 const IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const AUDIO_TYPES = new Set(['.wav', '.mp3', '.m4a']);
+const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+const MIME_TYPES = new Map([
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'],
+  ['.wav', 'audio/wav'], ['.mp3', 'audio/mpeg'], ['.m4a', 'audio/mp4']
+]);
 
 function exactKeys(value, keys) {
   return value && typeof value === 'object' && !Array.isArray(value) &&
@@ -72,7 +77,10 @@ class ThemeManager {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
       try {
         const manifest = validateManifest(JSON.parse(await fs.readFile(path.join(this.root, entry.name, 'manifest.json'), 'utf8')));
-        result.push({id: manifest.id, name: manifest.name, author: manifest.author});
+        result.push({
+          id: manifest.id, name: manifest.name, author: manifest.author, colors: manifest.colors,
+          background: Boolean(manifest.background), portrait: Boolean(manifest.portrait), audio: Boolean(manifest.audio)
+        });
       } catch {}
     }
     return result;
@@ -98,7 +106,10 @@ class ThemeManager {
     }
     for (const asset of [...declared].filter(file => file !== 'manifest.json')) {
       const resolved = await fs.realpath(path.join(root, asset));
-      if (!resolved.startsWith(`${root}${path.sep}`) || !(await fs.stat(resolved)).isFile()) throw new Error('Invalid theme path');
+      const stats = await fs.stat(resolved);
+      if (!resolved.startsWith(`${root}${path.sep}`) || !stats.isFile() || stats.size > MAX_ASSET_BYTES) {
+        throw new Error('Invalid theme path');
+      }
     }
     if ((await this.list()).some(theme => theme.id === manifest.id)) throw new Error('Theme id is already installed');
     const destination = path.join(this.root, crypto.randomUUID());
@@ -120,6 +131,26 @@ class ThemeManager {
   async exportSettings(themeId) {
     if (!(await this.list()).some(theme => theme.id === themeId)) throw new Error('Unknown theme');
     return {themeId};
+  }
+
+  async readAsset(themeId, kind) {
+    if (!['background', 'portrait', 'audio'].includes(kind)) throw new Error('Invalid theme asset');
+    const entries = await fs.readdir(this.root, {withFileTypes: true});
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const directory = path.join(this.root, entry.name);
+      try {
+        const canonicalDirectory = await fs.realpath(directory);
+        const manifest = validateManifest(JSON.parse(await fs.readFile(path.join(directory, 'manifest.json'), 'utf8')));
+        if (manifest.id !== themeId || !manifest[kind]) continue;
+        const target = path.join(directory, manifest[kind]);
+        const resolved = await fs.realpath(target);
+        const stats = await fs.stat(resolved);
+        if (!resolved.startsWith(`${canonicalDirectory}${path.sep}`) || !stats.isFile() || stats.size > MAX_ASSET_BYTES) break;
+        return {bytes: await fs.readFile(resolved), mime: MIME_TYPES.get(path.extname(resolved).toLowerCase())};
+      } catch {}
+    }
+    throw new Error('Unknown theme asset');
   }
 }
 

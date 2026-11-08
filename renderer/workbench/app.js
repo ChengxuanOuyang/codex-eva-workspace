@@ -8,7 +8,9 @@
     serviceOnline: false,
     filePath: '',
     attachments: [],
-    showArchived: false
+    showArchived: false,
+    activeTool: 'terminal',
+    themeCatalog: []
   };
   let started = false;
   let eventSource;
@@ -337,6 +339,111 @@
     }
   }
 
+  function activeProjectId() { return state.selectedProjectId; }
+  function projectBusy() {
+    return state.snapshot.threads.some(thread => thread.projectId === state.selectedProjectId && thread.activeTurn);
+  }
+
+  function selectTool(name, controllers) {
+    state.activeTool = name;
+    for (const tab of elements.toolTabs) tab.setAttribute('aria-selected', String(tab.dataset.toolTab === name));
+    for (const panel of elements.toolPanels) panel.hidden = panel.dataset.toolPanel !== name;
+    if (name === 'terminal') root.ProjectZeroTerminal.activate();
+    if (name === 'git') void controllers.git.refresh();
+    if (name === 'plugins') void controllers.plugins.refresh();
+  }
+
+  async function loadThemes(selected) {
+    const installed = await request('/api/themes/list');
+    const themes = [{id: 'project-zero', name: 'PROJECT ZERO / VOIDGLASS', author: 'PROJECT ZERO contributors'}, ...installed];
+    state.themeCatalog = themes;
+    fillSelect(elements.theme, themes.map(root.ProjectZeroThemes.option), selected || 'project-zero', '当前主题');
+    root.ProjectZeroThemes.apply(themes.find(theme => theme.id === elements.theme.value));
+  }
+
+  function setupSettings() {
+    const settings = root.ProjectZeroSettings.load();
+    elements.volume.value = String(settings.volume);
+    elements.reducedMotion.checked = settings.reducedMotion;
+    elements.forcePlayback.checked = settings.forceFullPlayback;
+    elements.codexPath.value = settings.codexPath;
+    void loadThemes(settings.themeId).catch(showError);
+    elements.settingsSave.addEventListener('click', async () => {
+      const saved = root.ProjectZeroSettings.save({
+        volume: elements.volume.value,
+        reducedMotion: elements.reducedMotion.checked,
+        forceFullPlayback: elements.forcePlayback.checked,
+        themeId: elements.theme.value,
+        codexPath: elements.codexPath.value.trim()
+      });
+      document.documentElement.dataset.reducedMotion = String(saved.reducedMotion);
+      root.ProjectZeroThemes.apply(state.themeCatalog.find(theme => theme.id === saved.themeId));
+      try { await request('/api/settings', {codexPath: saved.codexPath}); }
+      catch (error) { showError(error); }
+    });
+    elements.themeImport.addEventListener('click', async () => {
+      try {
+        const imported = await request('/api/themes/import', {path: elements.themeImportPath.value.trim()});
+        await loadThemes(imported.id);
+        elements.theme.value = imported.id;
+      } catch (error) { showError(error); }
+    });
+    elements.diagnostics.addEventListener('click', async () => {
+      try {
+        const bundle = await request('/api/diagnostics');
+        const text = JSON.stringify(bundle, null, 2);
+        elements.diagnosticsPreview.textContent = text;
+        elements.diagnosticsPreview.hidden = false;
+        const link = document.createElement('a');
+        link.download = 'project-zero-diagnostics.json';
+        link.href = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 0);
+      } catch (error) { showError(error); }
+    });
+  }
+
+  function setupTools() {
+    root.ProjectZeroTerminal.mount({
+      container: elements.terminalView,
+      createButton: elements.terminalCreate,
+      closeButton: elements.terminalClose,
+      getProjectId: activeProjectId,
+      request,
+      showError
+    });
+    const controllers = {
+      git: root.ProjectZeroGit.mount({
+        container: elements.gitFiles,
+        branch: elements.gitBranch,
+        refreshButton: elements.gitRefresh,
+        getProjectId: activeProjectId,
+        isBusy: projectBusy,
+        request,
+        showError
+      }),
+      plugins: root.ProjectZeroPlugins.mount({
+        container: elements.plugins,
+        refreshButton: elements.pluginsRefresh,
+        dialog: elements.pluginDialog,
+        dialogText: elements.pluginDialogText,
+        confirmButton: elements.pluginConfirm,
+        getProjectId: activeProjectId,
+        request,
+        showError
+      })
+    };
+    for (const tab of elements.toolTabs) tab.addEventListener('click', () => selectTool(tab.dataset.toolTab, controllers));
+    elements.toolToggle.addEventListener('click', () => {
+      elements.toolDock.classList.toggle('collapsed');
+      const collapsed = elements.toolDock.classList.contains('collapsed');
+      elements.toolToggle.textContent = collapsed ? '展开工具' : '收起工具';
+      if (!collapsed) selectTool(state.activeTool, controllers);
+    });
+    setupSettings();
+    selectTool(state.activeTool, controllers);
+  }
+
   function bindElements() {
     Object.assign(elements, {
       error: document.querySelector('#workbench-error'),
@@ -364,6 +471,31 @@
       files: document.querySelector('#file-list'),
       filePreview: document.querySelector('#file-preview'),
       refreshFiles: document.querySelector('#refresh-files-button')
+      ,toolDock: document.querySelector('#tool-dock')
+      ,toolTabs: [...document.querySelectorAll('[data-tool-tab]')]
+      ,toolPanels: [...document.querySelectorAll('[data-tool-panel]')]
+      ,toolToggle: document.querySelector('#tool-dock-toggle')
+      ,terminalView: document.querySelector('#terminal-view')
+      ,terminalCreate: document.querySelector('#terminal-create')
+      ,terminalClose: document.querySelector('#terminal-close')
+      ,gitFiles: document.querySelector('#git-files')
+      ,gitBranch: document.querySelector('#git-branch')
+      ,gitRefresh: document.querySelector('#git-refresh')
+      ,plugins: document.querySelector('#plugin-list')
+      ,pluginsRefresh: document.querySelector('#plugins-refresh')
+      ,pluginDialog: document.querySelector('#plugin-confirm')
+      ,pluginDialogText: document.querySelector('#plugin-confirm-text')
+      ,pluginConfirm: document.querySelector('#plugin-confirm-action')
+      ,volume: document.querySelector('#setting-volume')
+      ,reducedMotion: document.querySelector('#setting-reduced-motion')
+      ,forcePlayback: document.querySelector('#setting-force-playback')
+      ,codexPath: document.querySelector('#setting-codex-path')
+      ,theme: document.querySelector('#setting-theme')
+      ,themeImportPath: document.querySelector('#theme-import-path')
+      ,settingsSave: document.querySelector('#settings-save')
+      ,themeImport: document.querySelector('#theme-import')
+      ,diagnostics: document.querySelector('#diagnostics-export')
+      ,diagnosticsPreview: document.querySelector('#diagnostics-preview')
     });
   }
 
@@ -383,6 +515,7 @@
     elements.model.addEventListener('change', () => renderModelOptions(null));
     elements.attachmentInput.addEventListener('change', uploadAttachments);
     elements.refreshFiles.addEventListener('click', loadFiles);
+    setupTools();
     try {
       await refreshSnapshot();
       connectEvents();

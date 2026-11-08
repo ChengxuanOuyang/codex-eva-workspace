@@ -38,7 +38,13 @@ test('theme import installs only declared local assets', async t => {
   await writePack(packRoot);
   const installed = await manager.importPack(packRoot);
   assert.equal(installed.id, 'private-blue');
-  assert.equal((await manager.list()).length, 1);
+  const themes = await manager.list();
+  assert.equal(themes.length, 1);
+  assert.equal(themes[0].background, true);
+  assert.equal(themes[0].portrait, false);
+  assert.deepEqual(await manager.readAsset('private-blue', 'background'), {
+    bytes: Buffer.from('89504e470d0a1a0a', 'hex'), mime: 'image/png'
+  });
   assert.equal(await fs.readFile(path.join(installed.path, 'background.png'), 'hex'), '89504e470d0a1a0a');
 });
 

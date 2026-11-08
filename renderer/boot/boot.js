@@ -30,7 +30,7 @@
     READY: Object.freeze({backend: '已就绪', retry: false})
   });
 
-  function createBootController({api, clock, document, now, reducedMotion, root: eventRoot}) {
+  function createBootController({api, clock, document, now, reducedMotion, forceFullPlayback = false, volume = 0.65, root: eventRoot}) {
     const circumference = 2 * Math.PI * 132;
     const startedAt = now();
     const elements = {
@@ -68,6 +68,16 @@
     let awakeningTimer;
     let opening = true;
     let readinessCode = 'INITIALIZING';
+    let previousScene;
+
+    function playCue(name) {
+      if (typeof eventRoot.Audio !== 'function' || volume <= 0) return;
+      try {
+        const audio = new eventRoot.Audio(`/audio/${name}.wav`);
+        audio.volume = Math.max(0, Math.min(1, volume));
+        void audio.play().catch(() => {});
+      } catch {}
+    }
 
     function setText(element, value) {
       if (!destroyed && element.textContent !== value) element.textContent = value;
@@ -105,7 +115,12 @@
       if (destroyed) return;
       const progress = Math.max(0, Math.min(100, state.progress));
       document.body.dataset.phase = state.phase;
-      document.body.dataset.scene = state.phase === 'complete' ? 'online' : opening ? 'awakening' : 'sync';
+      const scene = state.phase === 'complete' ? 'online' : opening ? 'awakening' : 'sync';
+      document.body.dataset.scene = scene;
+      if (scene !== previousScene) {
+        previousScene = scene;
+        playCue(scene === 'awakening' ? 'system-awake' : scene === 'sync' ? 'sync-start' : 'system-online');
+      }
       setText(elements.progress, progress.toFixed(1).padStart(4, '0'));
       elements.ring.setAttribute('stroke-dashoffset', String(circumference * (1 - progress / 100)));
       elements.progressbar.setAttribute('aria-valuenow', progress.toFixed(1));
@@ -287,6 +302,7 @@
 
     function confirm() {
       if (!dispatch({type: 'confirm'})) return;
+      playCue('pilot-confirm');
       completeTimer = clock.setTimeout(() => {
         completeTimer = undefined;
         return revalidateCompletion();
@@ -330,12 +346,14 @@
       elements.skip.addEventListener('click', skipPresentation);
       eventRoot.addEventListener('keydown', onKeydown);
       eventRoot.addEventListener('pagehide', destroy);
-      skipTimer = clock.setTimeout(() => {
-        skipTimer = undefined;
-        if (destroyed) return;
-        skipAvailable = true;
-        elements.skip.hidden = false;
-      }, 3000);
+      if (!forceFullPlayback) {
+        skipTimer = clock.setTimeout(() => {
+          skipTimer = undefined;
+          if (destroyed) return;
+          skipAvailable = true;
+          elements.skip.hidden = false;
+        }, 3000);
+      }
       awakeningTimer = clock.setTimeout(() => {
         awakeningTimer = undefined;
         if (destroyed || state.phase === 'complete') return;
@@ -360,12 +378,16 @@
   root.ProjectZeroBoot = Object.freeze({createBootController});
 
   if (root.document && root.ProjectZeroApi && !root.ProjectZeroBootController) {
+    let bootSettings = {};
+    try { bootSettings = JSON.parse(root.localStorage.getItem('project-zero.settings.v1') || '{}'); } catch {}
     root.ProjectZeroBootController = createBootController({
       api: root.ProjectZeroApi,
       clock: root,
       document: root.document,
       now: () => root.performance.now(),
-      reducedMotion: root.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      reducedMotion: bootSettings.reducedMotion === true || root.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      forceFullPlayback: bootSettings.forceFullPlayback === true,
+      volume: Number.isFinite(Number(bootSettings.volume)) ? Number(bootSettings.volume) : 0.65,
       root
     });
     root.ProjectZeroBootController.start();

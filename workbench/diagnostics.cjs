@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const MAX_LOG_BYTES = 256 * 1024;
-const SAFE_METADATA_KEYS = new Set(['appVersion', 'codexVersion', 'nodeVersion', 'platform', 'arch']);
+const SAFE_METADATA_KEYS = new Set(['appVersion', 'codexVersion', 'nodeVersion', 'platform', 'arch', 'osVersion']);
 const BLOCKED_CODES = /(?:TOKEN|SECRET|PASSWORD|AUTH|KEY|MESSAGE|CHAT|PROMPT|PRIVATE)/;
 
 function sanitizeMetadata(metadata = {}) {

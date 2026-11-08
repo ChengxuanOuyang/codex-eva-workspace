@@ -19,6 +19,7 @@ const projectEntries = [
   'app', 'assets', 'LICENSE', 'NOTICE.md', 'package.json',
   'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
 ].sort();
+const stagedEntries = [...projectEntries, 'node_modules'].sort();
 const privateStageFiles = [
   'renderer/boot/assets/scene-a-sync.webp',
   'renderer/boot/assets/scene-b-awakening.webp',
@@ -163,7 +164,7 @@ test('stages only fixed project entries and privately replaces exact validated c
   assert.deepEqual(builderCall.arguments, ['--dir']);
   assert.deepEqual(builderCall.environment, {SAFE_VALUE: 'kept'});
   assert.equal(builderCall.environment.PROJECT_ZERO_LOCAL_THEME_DIR, undefined);
-  assert.deepEqual(builderCall.topLevel, projectEntries);
+  assert.deepEqual(builderCall.topLevel, stagedEntries);
   assert.equal(builderCall.index.includes(publicLabel), false);
   assert.equal(builderCall.index.includes(expectedTheme.displayName), true);
   assert.equal(

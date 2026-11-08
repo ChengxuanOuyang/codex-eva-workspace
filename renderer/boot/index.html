@@ -7,10 +7,18 @@
   <title>PROJECT ZERO // PILOT CODEX WORKBENCH</title>
   <link rel="stylesheet" href="/boot.css">
   <link rel="stylesheet" href="/workbench.css">
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <script src="/vendor/xterm.js" defer></script>
+  <script src="/vendor/xterm-addon-fit.js" defer></script>
   <script src="/shared/api.js" defer></script>
   <script src="/conversation.js" defer></script>
   <script src="/approvals.js" defer></script>
   <script src="/files.js" defer></script>
+  <script src="/settings.js" defer></script>
+  <script src="/themes.js" defer></script>
+  <script src="/terminal.js" defer></script>
+  <script src="/git.js" defer></script>
+  <script src="/plugins.js" defer></script>
   <script src="/workbench.js" defer></script>
   <script src="/boot.js" defer></script>
 </head>
@@ -162,6 +170,40 @@
         <section><div class="column-heading"><h2>执行记录</h2></div><div id="tool-list" class="tool-list"></div></section>
         <section class="files-panel"><div class="column-heading"><h2>项目文件</h2><button id="refresh-files-button" type="button" disabled>刷新</button></div><div id="file-list" class="file-list"></div><pre id="file-preview" class="file-preview" hidden></pre></section>
       </aside>
+      <section id="tool-dock" class="tool-dock" aria-label="本地工具">
+        <div class="tool-tabs" role="tablist" aria-label="工作台工具">
+          <button role="tab" aria-selected="true" aria-controls="terminal-panel" data-tool-tab="terminal" type="button">终端</button>
+          <button role="tab" aria-selected="false" aria-controls="git-panel" data-tool-tab="git" type="button">Git</button>
+          <button role="tab" aria-selected="false" aria-controls="plugins-panel" data-tool-tab="plugins" type="button">插件</button>
+          <button role="tab" aria-selected="false" aria-controls="settings-panel" data-tool-tab="settings" type="button">主题与设置</button>
+          <button id="tool-dock-toggle" class="secondary-action tool-dock-toggle" type="button">收起工具</button>
+        </div>
+        <div id="terminal-panel" class="tool-panel" role="tabpanel" data-tool-panel="terminal">
+          <div class="tool-panel-heading"><p class="boundary-warning"><strong>边界提示：</strong>手动终端不受 Codex 只读模式限制，命令会以你的本机权限直接执行。</p><div><button id="terminal-create" type="button">新建终端</button><button id="terminal-close" class="secondary-action" type="button" disabled>关闭会话</button></div></div>
+          <div id="terminal-view" class="terminal-view" aria-label="本地终端"></div>
+        </div>
+        <div id="git-panel" class="tool-panel" role="tabpanel" data-tool-panel="git" hidden>
+          <div class="tool-panel-heading"><p>分支 <code id="git-branch">NO PROJECT</code> · 仅提供非破坏性操作；Codex 任务执行中禁用写操作。</p><button id="git-refresh" type="button">刷新 Git</button></div>
+          <div id="git-files" class="git-files"></div>
+        </div>
+        <div id="plugins-panel" class="tool-panel" role="tabpanel" data-tool-panel="plugins" hidden>
+          <div class="tool-panel-heading"><p>只显示 Codex 官方目录返回的插件。安装或卸载始终需要再次确认。</p><button id="plugins-refresh" type="button">读取官方插件</button></div>
+          <div id="plugin-list" class="plugin-list"></div>
+        </div>
+        <div id="settings-panel" class="tool-panel settings-panel" role="tabpanel" data-tool-panel="settings" hidden>
+          <div class="settings-grid">
+            <label>启动音量<input id="setting-volume" type="range" min="0" max="1" step="0.05"></label>
+            <label><input id="setting-reduced-motion" type="checkbox"> 减少动态效果</label>
+            <label><input id="setting-force-playback" type="checkbox"> 强制完整播放启动动画</label>
+            <label>Codex 自定义路径<input id="setting-codex-path" type="text" placeholder="留空使用自动发现"></label>
+            <label>当前主题<select id="setting-theme"></select></label>
+            <label>导入本地主题目录<input id="theme-import-path" type="text" placeholder="/path/to/theme-pack"></label>
+          </div>
+          <div class="settings-actions"><button id="settings-save" type="button">保存设置</button><button id="theme-import" type="button">导入主题</button><button id="diagnostics-export" class="secondary-action" type="button">导出脱敏诊断</button></div>
+          <pre id="diagnostics-preview" class="diagnostics-preview" hidden></pre>
+        </div>
+        <dialog id="plugin-confirm" aria-label="确认插件变更"><form method="dialog"><h2>确认插件变更</h2><p id="plugin-confirm-text"></p><div><button value="cancel" class="secondary-action">取消</button><button id="plugin-confirm-action" type="button">确认变更</button></div></form></dialog>
+      </section>
     </div>
     <p id="workbench-error" class="workbench-error" role="alert" hidden></p>
   </main>

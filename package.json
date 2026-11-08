@@ -22,11 +22,11 @@
     "dist:mac:x64": "electron-builder --mac dmg zip --x64"
   },
   "dependencies": {
-    "@xterm/addon-fit": "0.11.0",
-    "@xterm/xterm": "6.0.0",
     "node-pty": "1.1.0"
   },
   "devDependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "electron": "45.2.3",
     "electron-builder": "26.18.0",
     "eslint": "10.14.0",
@@ -42,6 +42,8 @@
       "renderer/**/*",
       "assets/themes/project-zero/assets.json",
       "assets/themes/project-zero/ASSET-LICENSE.md",
+      "assets/themes/project-zero/LICENSES.json",
+      "assets/audio/**/*",
       "package.json",
       "LICENSE",
       "NOTICE.md",

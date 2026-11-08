@@ -6,6 +6,30 @@ const fs = require('node:fs');
 const MAX_BUFFER = 512 * 1024;
 const MAX_INPUT = 64 * 1024;
 const MAX_SESSIONS = 8;
+const MAX_SUBSCRIBER_QUEUE = 256 * 1024;
+const EXIT_TIMEOUT_MS = 2000;
+
+function subscriberWrite(session, subscriber, payload) {
+  if (subscriber.closed) return;
+  if (subscriber.blocked) {
+    subscriber.queue += payload;
+    if (Buffer.byteLength(subscriber.queue) > MAX_SUBSCRIBER_QUEUE) {
+      subscriber.closed = true;
+      session.subscribers.delete(subscriber);
+      subscriber.response.destroy?.();
+    }
+    return;
+  }
+  if (subscriber.response.write(payload) === false) subscriber.blocked = true;
+}
+
+function flushSubscriber(session, subscriber) {
+  if (subscriber.closed) return;
+  subscriber.blocked = false;
+  const queued = subscriber.queue;
+  subscriber.queue = '';
+  if (queued) subscriberWrite(session, subscriber, queued);
+}
 
 function defaultResolveShell() {
   const candidate = process.env.SHELL;
@@ -30,9 +54,10 @@ function publicSession(session) {
 }
 
 class TerminalManager {
-  constructor({spawnPty = defaultSpawn, resolveShell = defaultResolveShell} = {}) {
+  constructor({spawnPty = defaultSpawn, resolveShell = defaultResolveShell, exitTimeoutMs = EXIT_TIMEOUT_MS} = {}) {
     this.spawnPty = spawnPty;
     this.resolveShell = resolveShell;
+    this.exitTimeoutMs = exitTimeoutMs;
     this.sessions = new Map();
   }
 
@@ -55,18 +80,21 @@ class TerminalManager {
     });
     const session = {
       id: crypto.randomUUID(), projectId: project.id, cols, rows, child,
-      buffer: '', status: 'running', sequence: 0, subscribers: new Set(), disposables: []
+      buffer: '', status: 'running', sequence: 0, subscribers: new Set(), disposables: [],
+      exitPromise: null, resolveExit: null, closePromise: null
     };
+    session.exitPromise = new Promise(resolve => { session.resolveExit = resolve; });
     session.disposables.push(child.onData(data => {
       session.buffer = `${session.buffer}${String(data)}`.slice(-MAX_BUFFER);
       session.sequence += 1;
       const payload = `id: ${session.sequence}\nevent: output\ndata: ${JSON.stringify(String(data))}\n\n`;
-      for (const response of session.subscribers) response.write(payload);
+      for (const subscriber of session.subscribers) subscriberWrite(session, subscriber, payload);
     }));
     session.disposables.push(child.onExit(() => {
       session.status = 'exited';
       session.sequence += 1;
-      for (const response of session.subscribers) response.write(`id: ${session.sequence}\nevent: exit\ndata: {}\n\n`);
+      for (const subscriber of session.subscribers) subscriberWrite(session, subscriber, `id: ${session.sequence}\nevent: exit\ndata: {}\n\n`);
+      session.resolveExit();
     }));
     this.sessions.set(session.id, session);
     return publicSession(session);
@@ -105,24 +133,54 @@ class TerminalManager {
   subscribe(id, response, lastEventId) {
     const session = this.session(id);
     if (!response || typeof response.write !== 'function') throw new Error('Invalid terminal subscriber');
-    session.subscribers.add(response);
+    const subscriber = {response, blocked: false, queue: '', closed: false, drain: null};
+    subscriber.drain = () => flushSubscriber(session, subscriber);
+    response.on?.('drain', subscriber.drain);
+    session.subscribers.add(subscriber);
     if (Number(lastEventId) !== session.sequence) {
-      response.write(`id: ${session.sequence}\nevent: snapshot\ndata: ${JSON.stringify(publicSession(session))}\n\n`);
+      subscriberWrite(session, subscriber, `id: ${session.sequence}\nevent: snapshot\ndata: ${JSON.stringify(publicSession(session))}\n\n`);
     }
-    return () => session.subscribers.delete(response);
+    return () => {
+      subscriber.closed = true;
+      response.off?.('drain', subscriber.drain);
+      session.subscribers.delete(subscriber);
+    };
   }
 
-  close(id) {
+  async close(id) {
     const session = this.session(id);
-    this.sessions.delete(id);
-    for (const disposable of session.disposables) disposable?.dispose?.();
-    session.subscribers.clear();
+    if (session.closePromise) return session.closePromise;
+    const operation = this.closeSession(session).finally(() => {
+      if (session.closePromise === operation) session.closePromise = null;
+    });
+    session.closePromise = operation;
+    return operation;
+  }
+
+  async closeSession(session) {
     if (session.status === 'running') session.child.kill();
+    const exited = await Promise.race([
+      session.exitPromise.then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), this.exitTimeoutMs))
+    ]);
+    if (!exited) {
+      session.child.kill('SIGKILL');
+      const forced = await Promise.race([
+        session.exitPromise.then(() => true),
+        new Promise(resolve => setTimeout(() => resolve(false), Math.min(500, this.exitTimeoutMs)))
+      ]);
+      if (!forced) throw new Error('Terminal process did not exit');
+    }
+    this.sessions.delete(session.id);
+    for (const disposable of session.disposables) disposable?.dispose?.();
+    for (const subscriber of session.subscribers) subscriber.response.off?.('drain', subscriber.drain);
+    session.subscribers.clear();
     session.status = 'closed';
   }
 
-  stop() {
-    for (const id of [...this.sessions.keys()]) this.close(id);
+  async stop() {
+    const results = await Promise.allSettled([...this.sessions.keys()].map(id => this.close(id)));
+    if (results.some(result => result.status === 'rejected')) throw new Error('Terminal cleanup failed');
   }
 }
 
