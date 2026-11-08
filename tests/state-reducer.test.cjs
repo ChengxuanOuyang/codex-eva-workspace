@@ -37,3 +37,15 @@ test('tool output is grouped by item and completed item replaces streamed output
   }]);
 });
 
+test('completed file changes retain bounded path and diff text for review', () => {
+  const thread = {messages: [], tools: [], status: 'inProgress'};
+  reduceEvent(thread, 'item/completed', {
+    item: {
+      id: 'change-1', type: 'fileChange', status: 'completed',
+      changes: [{path: 'src/app.js', kind: 'update', diff: '@@ -1 +1 @@\n-old\n+new'}]
+    }
+  });
+
+  assert.equal(thread.tools[0].title, 'src/app.js');
+  assert.equal(thread.tools[0].output, '@@ -1 +1 @@\n-old\n+new');
+});

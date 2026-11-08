@@ -57,6 +57,7 @@ test('application reaches user confirmation without remote content and closes cl
       env: {
         ...process.env,
         NODE_ENV: 'test',
+        PROJECT_ZERO_TEST_DATA_ROOT: path.join(traceRoot, 'data'),
         PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs'),
         PROJECT_ZERO_TEST_TRACE: tracePath,
         PROJECT_ZERO_TEST_DISCONNECT_SIGNAL: disconnectSignalPath
@@ -127,12 +128,12 @@ test('application reaches user confirmation without remote content and closes cl
     await page.waitForFunction(() => document.body.dataset.phase === 'complete');
     await page.waitForFunction(() => document.body.dataset.scene === 'online');
     await page.locator('#workbench-shell').waitFor({state: 'visible'});
-    await page.getByRole('heading', {name: '核心工作台将在阶段 2 启用'}).waitFor();
+    await page.getByRole('heading', {name: '核心工作台'}).waitFor();
     assert.equal(await page.locator('#boot-screen').isHidden(), true);
     assert.equal(await page.getByRole('button', {name: '确认并完成同步'}).count(), 0);
     assert.equal(await page.getByRole('button', {name: /跳过动态演示/}).count(), 0);
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench-scene')).opacity === '1');
-    assert.equal(await page.locator('#workbench-shell [data-feature="chat"]').count(), 0);
+    assert.equal(await page.locator('#workbench-shell [data-feature="chat"]').count(), 1);
 
     await fs.writeFile(disconnectSignalPath, 'disconnect-after-shell');
     await page.waitForFunction(() => document.body.dataset.readiness === 'disconnected', null, {timeout: 2000});
@@ -159,8 +160,8 @@ test('application reaches user confirmation without remote content and closes cl
   const calls = (await fs.readFile(tracePath, 'utf8')).trim().split('\n');
   assert.deepEqual(calls, [
     'configRequirements/read', 'account/read', 'model/list', 'disconnected',
-    'configRequirements/read', 'account/read', 'model/list', 'disconnected',
-    'configRequirements/read', 'account/read', 'model/list'
+    'configRequirements/read', 'account/read', 'model/list', 'model/list', 'disconnected',
+    'configRequirements/read', 'account/read', 'model/list', 'model/list'
   ]);
   await fs.rm(traceRoot, {recursive: true, force: true});
 

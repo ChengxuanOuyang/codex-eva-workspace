@@ -10,6 +10,7 @@ const {createWorkbenchRoutes} = require('./routes.cjs');
 const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+const MAX_ATTACHMENT_BODY_BYTES = 13 * 1024 * 1024;
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
 
 function setSecurityHeaders(res) {
@@ -47,6 +48,7 @@ function isAbortedRequest(req, error) {
 }
 
 async function validateRequestBody(req, res) {
+  const requestLimit = req.url === '/api/attachments' ? MAX_ATTACHMENT_BODY_BYTES : MAX_REQUEST_BODY_BYTES;
   const declaredLength = Number(req.headers['content-length'] || 0);
   const hasBody = declaredLength > 0 || req.headers['transfer-encoding'] !== undefined;
   if (!hasBody) {
@@ -58,7 +60,7 @@ async function validateRequestBody(req, res) {
     send(res, 415, {error: 'Unsupported media type'});
     return false;
   }
-  if (!Number.isSafeInteger(declaredLength) || declaredLength > MAX_REQUEST_BODY_BYTES) {
+  if (!Number.isSafeInteger(declaredLength) || declaredLength > requestLimit) {
     return rejectOversizedBody(req, res);
   }
 
@@ -67,7 +69,7 @@ async function validateRequestBody(req, res) {
   try {
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > MAX_REQUEST_BODY_BYTES) {
+      if (size > requestLimit) {
         return rejectOversizedBody(req, res);
       }
       chunks.push(chunk);
@@ -134,12 +136,24 @@ function hasSession(req, token) {
   return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 }
 
-function createWorkbenchService({snapshot, retryInitialization = () => Promise.resolve(), bootRoot, sharedRoot, controller}) {
+function createWorkbenchService({
+  snapshot,
+  retryInitialization = () => Promise.resolve(),
+  bootRoot,
+  sharedRoot,
+  workbenchRoot = path.join(bootRoot, '..', 'workbench'),
+  controller
+}) {
   const token = crypto.randomBytes(32).toString('hex');
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
     ['/boot.js', {root: bootRoot, fileName: 'boot.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/shared/api.js', {root: sharedRoot, fileName: 'api.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/workbench.css', {root: workbenchRoot, fileName: 'workbench.css', contentType: 'text/css; charset=utf-8'}],
+    ['/workbench.js', {root: workbenchRoot, fileName: 'app.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/conversation.js', {root: workbenchRoot, fileName: 'conversation.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/approvals.js', {root: workbenchRoot, fileName: 'approvals.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/files.js', {root: workbenchRoot, fileName: 'files.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/assets/scene-a-sync.webp', {root: bootRoot, fileName: 'assets/scene-a-sync.webp', contentType: 'image/webp'}],
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
@@ -147,6 +161,7 @@ function createWorkbenchService({snapshot, retryInitialization = () => Promise.r
   const workbenchRoutes = controller ? createWorkbenchRoutes(controller) : null;
   const routeMethods = new Map([
     ['/', ['GET']],
+    ['/workbench', ['GET']],
     ['/health', ['GET']],
     ['/api/state', ['GET']],
     ['/api/readiness/retry', ['POST']],
@@ -177,6 +192,10 @@ function createWorkbenchService({snapshot, retryInitialization = () => Promise.r
     if (req.url === '/') {
       res.setHeader('Set-Cookie', `project_zero_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
       return serveFile(bootRoot, 'index.html', 'text/html; charset=utf-8', res);
+    }
+    if (req.url === '/workbench') {
+      res.setHeader('Set-Cookie', `project_zero_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
+      return serveFile(workbenchRoot, 'index.html', 'text/html; charset=utf-8', res);
     }
     const staticFile = staticFiles.get(req.url);
     if (staticFile) {

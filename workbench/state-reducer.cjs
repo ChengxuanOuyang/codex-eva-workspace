@@ -33,6 +33,17 @@ function completedMessageText(item) {
     .join('');
 }
 
+function completedToolOutput(item, fallback) {
+  if (Array.isArray(item.changes)) {
+    return item.changes
+      .filter(change => change && typeof change.diff === 'string')
+      .map(change => change.diff)
+      .join('\n')
+      .slice(0, 512 * 1024);
+  }
+  return item.aggregatedOutput || item.output || fallback;
+}
+
 function reduceEvent(thread, method, params = {}) {
   thread.messages ||= [];
   thread.tools ||= [];
@@ -57,8 +68,8 @@ function reduceEvent(thread, method, params = {}) {
       message.status = params.item.status || 'completed';
     } else {
       const tool = toolFor(thread, params.item);
-      tool.title = params.item.command || params.item.path || params.item.name || tool.title;
-      tool.output = params.item.aggregatedOutput || params.item.output || tool.output;
+      tool.title = params.item.command || params.item.path || params.item.name || params.item.changes?.[0]?.path || tool.title;
+      tool.output = completedToolOutput(params.item, tool.output);
       tool.status = params.item.status || 'completed';
     }
   } else if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta') {
@@ -70,4 +81,3 @@ function reduceEvent(thread, method, params = {}) {
 }
 
 module.exports = {reduceEvent};
-

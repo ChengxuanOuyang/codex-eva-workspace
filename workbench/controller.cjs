@@ -29,6 +29,7 @@ class WorkbenchController extends EventEmitter {
     this.approvals = new Map();
     this.persistQueue = Promise.resolve();
     this.closed = false;
+    this.attached = false;
     this.onNotification = message => this.handleNotification(message.method, message.params);
     this.onApproval = message => this.handleApproval(message);
     this.onDisconnected = () => {
@@ -59,6 +60,7 @@ class WorkbenchController extends EventEmitter {
     this.bridge.on?.('notification', this.onNotification);
     this.bridge.on?.('approval', this.onApproval);
     this.bridge.on?.('disconnected', this.onDisconnected);
+    this.attached = true;
     return this.snapshot();
   }
 
@@ -263,9 +265,8 @@ class WorkbenchController extends EventEmitter {
     this.emit('snapshot', this.snapshot());
   }
 
-  async close() {
-    if (this.closed) return;
-    this.closed = true;
+  detach() {
+    if (!this.attached) return;
     this.bridge.off?.('notification', this.onNotification);
     this.bridge.off?.('approval', this.onApproval);
     this.bridge.off?.('disconnected', this.onDisconnected);
@@ -273,6 +274,13 @@ class WorkbenchController extends EventEmitter {
       this.bridge.respond(approval.id, this.approvalResult(approval, {accept: false}));
     }
     this.approvals.clear();
+    this.attached = false;
+  }
+
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.detach();
     await this.persistQueue;
     await this.store.close();
   }

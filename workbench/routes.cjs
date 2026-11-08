@@ -9,7 +9,10 @@ const ROUTE_METHODS = new Map([
   ['/api/threads/cancel', ['POST']],
   ['/api/threads/rename', ['POST']],
   ['/api/threads/archive', ['POST']],
-  ['/api/approvals/respond', ['POST']]
+  ['/api/approvals/respond', ['POST']],
+  ['/api/files/list', ['POST']],
+  ['/api/files/read', ['POST']],
+  ['/api/attachments', ['POST']]
 ]);
 
 function objectBody(req) {
@@ -30,10 +33,12 @@ function createWorkbenchRoutes(controller) {
   async function handle(req, res, {send, setSecurityHeaders}) {
     if (!ROUTE_METHODS.has(req.url)) return false;
     if (req.url === '/api/workbench') {
+      await controller.ready?.();
       send(res, 200, controller.snapshot());
       return true;
     }
     if (req.url === '/api/events') {
+      await controller.ready?.();
       setSecurityHeaders(res);
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -87,6 +92,13 @@ function createWorkbenchRoutes(controller) {
       if (typeof body.accept !== 'boolean') throw new Error('Invalid request');
       await controller.answerApproval({id: stringField(body, 'id'), accept: body.accept, answers: body.answers});
       result = {accepted: true};
+    } else if (req.url === '/api/files/list') {
+      result = await controller.listFiles(stringField(body, 'projectId'), typeof body.path === 'string' ? body.path : '');
+    } else if (req.url === '/api/files/read') {
+      result = await controller.readFile(stringField(body, 'projectId'), stringField(body, 'path'));
+    } else if (req.url === '/api/attachments') {
+      result = await controller.saveAttachment({dataUrl: stringField(body, 'dataUrl')});
+      status = 201;
     }
     send(res, status, result);
     return true;
@@ -96,4 +108,3 @@ function createWorkbenchRoutes(controller) {
 }
 
 module.exports = {createWorkbenchRoutes};
-

@@ -7,6 +7,7 @@ const {findCodex} = require('./codex-discovery.cjs');
 const {runtimePaths} = require('./runtime-paths.cjs');
 const {windowOptions} = require('./window-options.cjs');
 const {CodexBridge} = require('../workbench/bridge.cjs');
+const {WorkbenchRuntime} = require('../workbench/runtime.cjs');
 const {createWorkbenchService} = require('../workbench/service.cjs');
 
 const CODEX_NOT_FOUND_MESSAGE = 'No executable Codex installation was found.';
@@ -396,6 +397,8 @@ async function startWorkbench({
   serviceFactory = createWorkbenchService,
   bootRoot = path.join(__dirname, '..', 'renderer', 'boot'),
   sharedRoot = path.join(__dirname, '..', 'renderer', 'shared'),
+  workbenchRoot = path.join(__dirname, '..', 'renderer', 'workbench'),
+  dataRoot = app.getPath('userData'),
   cleanups = []
 }) {
   await app.whenReady();
@@ -416,11 +419,16 @@ async function startWorkbench({
   });
   cleanups.unshift(() => coordinator.close());
 
+  const runtime = new WorkbenchRuntime({coordinator, readiness, dataRoot});
+  cleanups.unshift(() => runtime.close());
+
   const service = serviceFactory({
     snapshot: readiness.get,
-    retryInitialization: coordinator.retry,
+    retryInitialization: () => runtime.retry(),
     bootRoot,
-    sharedRoot
+    sharedRoot,
+    workbenchRoot,
+    controller: runtime
   });
   cleanups.unshift(() => closeServiceAndConfirm(service));
   const address = await service.listen();
@@ -430,8 +438,8 @@ async function startWorkbench({
   restrictNavigation(window.webContents, origin);
   await window.loadURL(`${origin}/`);
 
-  const initialization = coordinator.retry();
-  const resources = {service, window, origin, paths, initialization, retryInitialization: coordinator.retry};
+  const initialization = runtime.retry();
+  const resources = {service, window, origin, paths, initialization, retryInitialization: () => runtime.retry(), runtime};
   Object.defineProperty(resources, 'bridge', {
     enumerable: true,
     get: () => coordinator.bridge

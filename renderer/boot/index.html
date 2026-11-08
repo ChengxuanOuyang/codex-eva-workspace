@@ -6,7 +6,12 @@
   <meta name="color-scheme" content="light">
   <title>PROJECT ZERO // PILOT CODEX WORKBENCH</title>
   <link rel="stylesheet" href="/boot.css">
+  <link rel="stylesheet" href="/workbench.css">
   <script src="/shared/api.js" defer></script>
+  <script src="/conversation.js" defer></script>
+  <script src="/approvals.js" defer></script>
+  <script src="/files.js" defer></script>
+  <script src="/workbench.js" defer></script>
   <script src="/boot.js" defer></script>
 </head>
 <body data-phase="syncing" data-scene="awakening">
@@ -110,35 +115,53 @@
       </div>
       <p class="shell-status"><span class="signal-dot"></span><span id="shell-readiness-text">正在检查本地链路</span></p>
     </header>
-    <div class="workbench-layout">
-      <nav class="workbench-nav" aria-label="工作台导航占位">
-        <p class="rail-title">NAVIGATION / PHASE 1</p>
-        <span aria-current="page">概览</span>
-        <span>会话</span>
-        <span>模型</span>
-        <span>设置</span>
-      </nav>
-      <section class="workbench-empty" aria-labelledby="workbench-heading">
-        <p class="stage-index">00—WORKBENCH / LOCAL</p>
-        <div class="phase-two-notice">
-          <p class="eyebrow" lang="ja">準備完了</p>
-          <h1 id="workbench-heading">核心工作台将在阶段 2 启用</h1>
-          <p>阶段 1 已完成本地启动、Codex 就绪检查与安全切换。此处暂不提供聊天或远程功能。</p>
+    <div id="workbench-app" class="core-workbench" data-feature="chat">
+      <aside class="project-column" aria-label="项目和任务">
+        <p class="rail-title">PROJECTS / THREADS</p>
+        <form id="project-form" class="project-form">
+          <label for="project-path">项目路径</label>
+          <div><input id="project-path" name="path" type="text" autocomplete="off" placeholder="/path/to/project"><button type="submit">添加项目</button></div>
+        </form>
+        <div class="column-heading"><h2>项目</h2><button id="new-thread-button" type="button" disabled>新建任务</button></div>
+        <div id="project-list" class="selection-list" aria-label="项目列表"></div>
+        <div class="column-heading"><h2>会话</h2><span id="thread-count">00</span></div>
+        <div id="thread-list" class="selection-list thread-list" aria-label="会话列表"></div>
+      </aside>
+
+      <section class="conversation-column" aria-labelledby="workbench-heading">
+        <div class="conversation-heading">
+          <div><p class="stage-index">00—WORKBENCH / LOCAL</p><h1 id="workbench-heading">核心工作台</h1></div>
+          <p id="turn-state" class="turn-state">待命</p>
         </div>
+        <div id="message-list" class="message-list" role="log" aria-live="polite">
+          <div class="empty-conversation"><p lang="ja">準備完了</p><strong>选择项目并新建任务</strong><span>对话、工具执行和审批都会保留在本机。</span></div>
+        </div>
+        <form id="composer" class="composer">
+          <textarea id="prompt-input" placeholder="向 PROJECT ZERO 输入任务…" maxlength="60000" disabled></textarea>
+          <div class="composer-controls">
+            <label>模型<select id="model-select" disabled></select></label>
+            <label>推理<select id="effort-select" disabled></select></label>
+            <button id="cancel-turn-button" class="secondary-action" type="button" hidden>中断</button>
+            <button id="send-button" type="submit" disabled>发送</button>
+          </div>
+        </form>
       </section>
-      <aside class="workbench-status" aria-label="工作台状态">
-        <p class="rail-title">STATUS / LOCAL</p>
-        <dl>
-          <div><dt>运行模式</dt><dd>本地</dd></div>
-          <div><dt>Codex 链路</dt><dd id="shell-link-state">INITIALIZING</dd></div>
-          <div><dt>当前阶段</dt><dd>PHASE 1</dd></div>
-        </dl>
-        <div class="shell-health" role="status" aria-live="polite">
-          <p id="shell-diagnostic-text">正在检查 Codex 链路。</p>
-          <button id="shell-retry-button" class="retry-button" type="button" hidden>重新检查 Codex</button>
-        </div>
+
+      <aside class="activity-column" aria-label="执行和文件">
+        <section class="status-card">
+          <div class="column-heading"><h2>系统状态</h2><span id="local-service-state">CONNECTING</span></div>
+          <dl><div><dt>Codex 链路</dt><dd id="shell-link-state">INITIALIZING</dd></div><div><dt>权限策略</dt><dd>逐次确认</dd></div></dl>
+          <div class="shell-health" role="status" aria-live="polite">
+            <p id="shell-diagnostic-text">正在检查 Codex 链路。</p>
+            <button id="shell-retry-button" class="retry-button" type="button" hidden>重新检查 Codex</button>
+          </div>
+        </section>
+        <section><div class="column-heading"><h2>审批</h2><span id="approval-count">00</span></div><div id="approval-list" class="approval-list"></div></section>
+        <section><div class="column-heading"><h2>执行记录</h2></div><div id="tool-list" class="tool-list"></div></section>
+        <section class="files-panel"><div class="column-heading"><h2>项目文件</h2><button id="refresh-files-button" type="button" disabled>刷新</button></div><div id="file-list" class="file-list"></div><pre id="file-preview" class="file-preview" hidden></pre></section>
       </aside>
     </div>
+    <p id="workbench-error" class="workbench-error" role="alert" hidden></p>
   </main>
 </body>
 </html>
