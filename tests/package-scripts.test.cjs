@@ -193,6 +193,7 @@ test('electron-builder runner uses argv without a shell and strips test-only env
     projectRoot: '/repo',
     environment: {
       SAFE_VALUE: 'kept',
+      PROJECT_ZERO_LOCAL_THEME_DIR: '/private/theme',
       PROJECT_ZERO_TEST_BRIDGE_MODULE: '/private/fake.cjs',
       PROJECT_ZERO_TEST_TRACE: '/private/trace.json',
       PROJECT_ZERO_TEST_DISCONNECT_SIGNAL: 'SIGUSR2'
@@ -213,18 +214,23 @@ test('electron-builder runner uses argv without a shell and strips test-only env
   assert.equal(spawnCall.options.stdio, 'inherit');
   assert.equal(spawnCall.options.shell, undefined);
   assert.deepEqual(spawnCall.options.env, {SAFE_VALUE: 'kept'});
+  assert.equal(spawnCall.options.env.PROJECT_ZERO_LOCAL_THEME_DIR, undefined);
 });
 
 test('public pack has no private theme input or validator path', async () => {
   const packSource = await fsPromises.readFile(path.join(__dirname, '..', 'scripts', 'pack.cjs'), 'utf8');
-  assert.doesNotMatch(packSource, /theme-contract|validateThemeDirectory|LOCAL_THEME_DIR/);
+  assert.doesNotMatch(packSource, /theme-contract|validateThemeDirectory/);
 
   const calls = [];
   await cleanAndPack({
     projectRoot: '/repo',
-    environment: {SAFE_VALUE: 'kept'},
+    environment: {
+      SAFE_VALUE: 'kept',
+      PROJECT_ZERO_LOCAL_THEME_DIR: '/private/theme'
+    },
     remove: async target => calls.push(['remove', target]),
     runBuilder: async options => calls.push(['builder', options])
   });
   assert.deepEqual(calls.map(call => call[0]), ['remove', 'builder']);
+  assert.equal(calls[1][1].environment.PROJECT_ZERO_LOCAL_THEME_DIR, undefined);
 });

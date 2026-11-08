@@ -1,12 +1,16 @@
 'use strict';
 
+const {constants} = require('node:fs');
 const defaultFs = require('node:fs/promises');
 const path = require('node:path');
 const {
   productionEnvironment,
   runElectronBuilder
 } = require('./pack.cjs');
-const {validateThemeDirectory} = require('./theme-contract.cjs');
+const {
+  ThemeValidationError,
+  validateThemeDirectory
+} = require('./theme-contract.cjs');
 
 const PROJECT_ENTRIES = Object.freeze([
   'app',
@@ -19,6 +23,14 @@ const PROJECT_ENTRIES = Object.freeze([
   'workbench'
 ]);
 const PUBLIC_LABEL = 'PROJECT ZERO // PILOT CODEX WORKBENCH';
+
+class PrivateThemePackError extends Error {
+  constructor(cause) {
+    super('PRIVATE_THEME_PACK_FAILED', {cause});
+    this.name = 'PrivateThemePackError';
+    this.code = 'PRIVATE_THEME_PACK_FAILED';
+  }
+}
 
 function snapshotTheme(theme) {
   return Object.freeze({
@@ -37,22 +49,111 @@ async function rejectSymlinks(target, fsModule) {
   }
 }
 
-async function packPrivateTheme({
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function openDirectoryIdentity(target, fsModule) {
+  const handle = await fsModule.open(
+    target,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
+  );
+  try {
+    const identity = await handle.stat();
+    const pathStat = await fsModule.lstat(target);
+    const real = await fsModule.realpath(target);
+    if (!identity.isDirectory() || pathStat.isSymbolicLink() || !pathStat.isDirectory() ||
+        !sameIdentity(identity, pathStat)) {
+      throw Error('PRIVATE_STAGE_IDENTITY');
+    }
+    return {handle, identity, real, target};
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function directoryIdentityMatches(directory, fsModule) {
+  try {
+    const heldStat = await directory.handle.stat();
+    const pathStat = await fsModule.lstat(directory.target);
+    return heldStat.isDirectory() && sameIdentity(heldStat, directory.identity) &&
+      !pathStat.isSymbolicLink() && pathStat.isDirectory() &&
+      sameIdentity(pathStat, directory.identity) &&
+      await fsModule.realpath(directory.target) === directory.real;
+  } catch {
+    return false;
+  }
+}
+
+async function requireDirectoryIdentity(directory, fsModule) {
+  if (!await directoryIdentityMatches(directory, fsModule)) {
+    throw Error('PRIVATE_STAGE_IDENTITY');
+  }
+}
+
+async function openStageParent(realProjectRoot, fsModule) {
+  const target = path.join(realProjectRoot, '.private-build');
+  const existing = await fsModule.lstat(target).catch(error => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (existing) {
+    if (existing.isSymbolicLink() || !existing.isDirectory()) {
+      throw Error('PRIVATE_STAGE_PARENT');
+    }
+  } else {
+    try {
+      await fsModule.mkdir(target, {recursive: false});
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  }
+  const directory = await openDirectoryIdentity(target, fsModule);
+  if (directory.real !== target) {
+    await directory.handle.close().catch(() => {});
+    throw Error('PRIVATE_STAGE_PARENT');
+  }
+  return directory;
+}
+
+async function createStageRoot(stageParent, fsModule) {
+  const target = await fsModule.mkdtemp(path.join(stageParent.real, 'stage-'));
+  const directory = await openDirectoryIdentity(target, fsModule);
+  if (path.dirname(directory.real) !== stageParent.real ||
+      path.dirname(directory.target) !== stageParent.real ||
+      !path.basename(directory.real).startsWith('stage-')) {
+    await directory.handle.close().catch(() => {});
+    throw Error('PRIVATE_STAGE_IDENTITY');
+  }
+  return directory;
+}
+
+async function packPrivateThemeInternal({
   projectRoot,
   themeRoot,
-  environment = process.env,
-  validateTheme = validateThemeDirectory,
-  runBuilder = runElectronBuilder,
-  fsModule = defaultFs
+  environment,
+  validateTheme,
+  runBuilder,
+  fsModule
 }) {
   const theme = snapshotTheme(await validateTheme(themeRoot));
-  const stageParent = path.join(projectRoot, '.private-build');
-  const privateOutput = path.join(projectRoot, 'dist-private');
-  await fsModule.mkdir(stageParent, {recursive: true});
-  const stageRoot = await fsModule.mkdtemp(path.join(stageParent, 'stage-'));
+  const realProjectRoot = await fsModule.realpath(projectRoot);
+  const projectDirectory = await openDirectoryIdentity(realProjectRoot, fsModule);
+  let stageParent;
+  let stageDirectory;
   try {
+    if (projectDirectory.real !== realProjectRoot) throw Error('PRIVATE_STAGE_IDENTITY');
+    stageParent = await openStageParent(realProjectRoot, fsModule);
+    stageDirectory = await createStageRoot(stageParent, fsModule);
+    const stageRoot = stageDirectory.real;
+    const privateOutput = path.join(realProjectRoot, 'dist-private');
+
+    await requireDirectoryIdentity(projectDirectory, fsModule);
+    await requireDirectoryIdentity(stageParent, fsModule);
+    await requireDirectoryIdentity(stageDirectory, fsModule);
     for (const entry of PROJECT_ENTRIES) {
-      await fsModule.cp(path.join(projectRoot, entry), path.join(stageRoot, entry), {
+      await fsModule.cp(path.join(realProjectRoot, entry), path.join(stageRoot, entry), {
         recursive: true,
         errorOnExist: true,
         force: false,
@@ -88,15 +189,62 @@ async function packPrivateTheme({
     };
     await fsModule.writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 
+    await requireDirectoryIdentity(projectDirectory, fsModule);
+    await requireDirectoryIdentity(stageParent, fsModule);
+    await requireDirectoryIdentity(stageDirectory, fsModule);
     await fsModule.rm(privateOutput, {recursive: true, force: true});
-    await runBuilder({
-      projectRoot: stageRoot,
-      environment: productionEnvironment(environment),
-      arguments: ['--dir']
-    });
+    let builderFailure;
+    try {
+      await runBuilder({
+        projectRoot: stageRoot,
+        environment: productionEnvironment(environment),
+        arguments: ['--dir']
+      });
+    } catch (error) {
+      builderFailure = error;
+    }
+    await requireDirectoryIdentity(projectDirectory, fsModule);
+    await requireDirectoryIdentity(stageParent, fsModule);
+    await requireDirectoryIdentity(stageDirectory, fsModule);
+    if (builderFailure) throw builderFailure;
     return privateOutput;
   } finally {
-    await fsModule.rm(stageRoot, {recursive: true, force: true});
+    let cleanupFailure;
+    try {
+      if (stageDirectory && await directoryIdentityMatches(stageDirectory, fsModule)) {
+        await fsModule.rm(stageDirectory.real, {recursive: true, force: true});
+      }
+    } catch (error) {
+      cleanupFailure = error;
+    } finally {
+      await stageDirectory?.handle.close().catch(() => {});
+      await stageParent?.handle.close().catch(() => {});
+      await projectDirectory.handle.close().catch(() => {});
+    }
+    if (cleanupFailure) throw cleanupFailure;
+  }
+}
+
+async function packPrivateTheme({
+  projectRoot,
+  themeRoot,
+  environment = process.env,
+  validateTheme = validateThemeDirectory,
+  runBuilder = runElectronBuilder,
+  fsModule = defaultFs
+}) {
+  try {
+    return await packPrivateThemeInternal({
+      projectRoot,
+      themeRoot,
+      environment,
+      validateTheme,
+      runBuilder,
+      fsModule
+    });
+  } catch (error) {
+    if (error instanceof ThemeValidationError || error instanceof PrivateThemePackError) throw error;
+    throw new PrivateThemePackError(error);
   }
 }
 
@@ -108,20 +256,38 @@ function parseThemeArgument(arguments_) {
   return path.resolve(arguments_[1]);
 }
 
-if (require.main === module) {
+async function runPrivateThemeCli({
+  arguments_,
+  projectRoot,
+  packTheme = packPrivateTheme,
+  writeError = line => console.error(line)
+}) {
   let themeRoot;
   try {
-    themeRoot = parseThemeArgument(process.argv.slice(2));
+    themeRoot = parseThemeArgument(arguments_);
   } catch {
-    console.error('[PROJECT ZERO] Private packaging failed: PRIVATE_THEME_ARGUMENTS');
-    process.exitCode = 1;
+    writeError('[PROJECT ZERO] Private packaging failed: PRIVATE_THEME_ARGUMENTS');
+    return 1;
   }
-  if (themeRoot) {
-    packPrivateTheme({projectRoot: path.join(__dirname, '..'), themeRoot}).catch(error => {
-      console.error(`[PROJECT ZERO] Private packaging failed: ${error.message}`);
-      process.exitCode = 1;
-    });
+  try {
+    await packTheme({projectRoot, themeRoot});
+    return 0;
+  } catch (error) {
+    const code = error instanceof ThemeValidationError
+      ? error.code
+      : 'PRIVATE_THEME_PACK_FAILED';
+    writeError(`[PROJECT ZERO] Private packaging failed: ${code}`);
+    return 1;
   }
 }
 
-module.exports = {packPrivateTheme};
+if (require.main === module) {
+  runPrivateThemeCli({
+    arguments_: process.argv.slice(2),
+    projectRoot: path.join(__dirname, '..')
+  }).then(exitCode => {
+    process.exitCode = exitCode;
+  });
+}
+
+module.exports = {packPrivateTheme, runPrivateThemeCli};

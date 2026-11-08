@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const TEST_ONLY_ENVIRONMENT_KEYS = Object.freeze([
+  'PROJECT_ZERO_LOCAL_THEME_DIR',
   'PROJECT_ZERO_TEST_BRIDGE_MODULE',
   'PROJECT_ZERO_TEST_TRACE',
   'PROJECT_ZERO_TEST_DISCONNECT_SIGNAL'
