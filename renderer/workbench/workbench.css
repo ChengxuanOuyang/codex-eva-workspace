@@ -63,6 +63,11 @@
 .composer-controls { margin-top: 9px; display: flex; align-items: flex-end; gap: 9px; }
 .composer-controls label { display: grid; gap: 4px; color: #526e78; font-size: 9px; letter-spacing: .08em; }
 .composer-controls select { min-width: 120px; padding: 7px 25px 7px 8px; }
+.attachment-list { min-height: 0; margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px; }
+.attachment-list:empty { display: none; }
+.attachment-chip { border-color: rgba(29, 92, 111, .32) !important; background: rgba(231, 242, 243, .9) !important; color: #284a56 !important; }
+.attachment-control { align-self: flex-end; padding: 8px 10px; border: 1px solid rgba(29, 92, 111, .32); border-radius: 3px; background: rgba(247, 252, 251, .8); color: #284a56 !important; cursor: pointer; }
+.attachment-control input { display: none; }
 .composer-controls #cancel-turn-button { margin-left: auto; }
 .composer-controls #send-button { min-width: 76px; }
 
@@ -85,6 +90,11 @@
 .file-entry:hover { background: rgba(39, 108, 126, .08) !important; }
 .file-preview { max-height: 210px; padding: 10px; border: 1px solid rgba(29, 92, 111, .2); background: rgba(255, 255, 255, .74); }
 .workbench-error { position: fixed; right: 20px; bottom: 18px; z-index: 10; max-width: 420px; margin: 0; padding: 11px 14px; border: 1px solid #bd482f; background: rgba(63, 18, 14, .94); color: #fff; font-size: 11px; }
+.thread-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; }
+.thread-row > button:first-child { min-width: 0; text-align: left; }
+.thread-action { padding-inline: 7px !important; font-size: 10px; }
+.approval-card .approval-questions { display: grid; justify-content: stretch; gap: 7px; }
+.approval-questions label { display: grid; gap: 4px; font-size: 10px; }
 
 @media (max-width: 980px) {
   .core-workbench { height: auto; min-height: calc(100vh - 76px); grid-template-columns: 210px minmax(0, 1fr); }

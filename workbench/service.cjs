@@ -9,7 +9,7 @@ const {createWorkbenchRoutes} = require('./routes.cjs');
 
 const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+const MAX_REQUEST_BODY_BYTES = 128 * 1024;
 const MAX_ATTACHMENT_BODY_BYTES = 13 * 1024 * 1024;
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
 

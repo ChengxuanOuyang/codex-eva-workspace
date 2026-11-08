@@ -13,7 +13,7 @@ function fixture() {
     respondError(id, error) { responses.push({id, error}); }
   };
   const store = {
-    read: () => ({version: 1, projects: [], threads: []}),
+    read: () => ({version: 1, projects: [], threads: [{id: 'thread-1', activeTurn: 'turn-1', messages: [], tools: []}]}),
     update: async () => {},
     close: async () => {}
   };
@@ -31,6 +31,16 @@ test('unknown server requests are declined and never stored', () => {
   assert.deepEqual(controller.snapshot().approvals, []);
 });
 
+test('known approvals for unknown or stale turns are declined immediately', () => {
+  const {controller, responses} = fixture();
+  controller.handleApproval({
+    id: 8,
+    method: 'item/commandExecution/requestApproval',
+    params: {threadId: 'thread-1', turnId: 'turn-old', itemId: 'cmd-old'}
+  });
+  assert.deepEqual(controller.snapshot().approvals, []);
+  assert.deepEqual(responses[0], {id: 8, result: {decision: 'decline'}});
+});
 test('command and file approvals are single-use and never persist beyond one response', async () => {
   const {controller, responses} = fixture();
   controller.handleApproval({
@@ -81,4 +91,3 @@ test('turn completion clears unanswered approvals and declines them', () => {
   assert.deepEqual(controller.snapshot().approvals, []);
   assert.deepEqual(responses[0], {id: 13, result: {decision: 'decline'}});
 });
-

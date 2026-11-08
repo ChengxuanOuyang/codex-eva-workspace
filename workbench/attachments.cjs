@@ -74,9 +74,20 @@ async function createAttachmentStore(root) {
       await fs.writeFile(temporaryMetadataPath, `${JSON.stringify(metadata)}\n`, {flag: 'wx', mode: 0o600});
       await fs.rename(temporaryMetadataPath, metadataPath);
       return metadata;
+    },
+    async get(id) {
+      if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+        throw new Error('Invalid attachment id');
+      }
+      const metadata = JSON.parse(await fs.readFile(path.join(attachmentRoot, `${id}.json`), 'utf8'));
+      if (metadata?.id !== id || !['image/png', 'image/jpeg'].includes(metadata.mime)) throw new Error('Invalid attachment metadata');
+      const extension = metadata.mime === 'image/png' ? 'png' : 'jpg';
+      const imagePath = path.join(attachmentRoot, `${id}.${extension}`);
+      const stats = await fs.lstat(imagePath);
+      if (!stats.isFile() || stats.isSymbolicLink()) throw new Error('Invalid attachment file');
+      return {...metadata, path: imagePath};
     }
   };
 }
 
 module.exports = {createAttachmentStore};
-

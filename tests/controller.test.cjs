@@ -100,6 +100,45 @@ test('starts a turn, rejects overlapping sends and interrupts the real active tu
   });
 });
 
+test('locks a thread before asynchronous resume so concurrent sends cannot overlap', async t => {
+  const {project, bridge, controller} = await fixture(t);
+  const added = await controller.addProject(project);
+  const thread = await controller.createThread({projectId: added.id, model: 'gpt-test', effort: 'low'});
+  controller.resumed.delete(thread.id);
+  let release;
+  const original = bridge.request.bind(bridge);
+  bridge.request = async (method, params) => {
+    if (method === 'thread/resume') await new Promise(resolve => { release = resolve; });
+    return original(method, params);
+  };
+
+  const first = controller.send({threadId: thread.id, text: '第一条', model: 'gpt-test', effort: 'low'});
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(
+    controller.send({threadId: thread.id, text: '第二条', model: 'gpt-test', effort: 'low'}),
+    /active turn/
+  );
+  release();
+  await first;
+  assert.equal(bridge.calls.filter(call => call.method === 'turn/start').length, 1);
+});
+
+test('clears stale persisted active turns during restart recovery', async t => {
+  const {root, project, bridge, controller} = await fixture(t);
+  const added = await controller.addProject(project);
+  const thread = await controller.createThread({projectId: added.id, model: 'gpt-test', effort: 'medium'});
+  await controller.send({threadId: thread.id, text: '未完成', model: 'gpt-test', effort: 'medium'});
+  await controller.close();
+
+  const restoredStore = await createStore(root);
+  const restored = new WorkbenchController({bridge, store: restoredStore});
+  await restored.initialize();
+  const recovered = restored.snapshot().threads.find(item => item.id === thread.id);
+  assert.equal(recovered.activeTurn, null);
+  assert.equal(recovered.status, 'interrupted');
+  await restored.close();
+});
+
 test('restored threads resume before the next turn and invalid options fail locally', async t => {
   const {root, project, store, bridge, controller} = await fixture(t);
   const added = await controller.addProject(project);

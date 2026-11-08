@@ -16,7 +16,27 @@
       const title = document.createElement('strong');
       title.textContent = approvalTitle(approval.method);
       const detail = document.createElement('code');
-      detail.textContent = approval.params.command || approval.params.reason || approval.params.itemId || '';
+      const permissions = approval.params.permissions ? JSON.stringify(approval.params.permissions, null, 2) : '';
+      detail.textContent = approval.params.command || approval.params.reason || permissions || approval.params.itemId || '';
+      const answers = {};
+      const questions = document.createElement('div');
+      questions.className = 'approval-questions';
+      for (const question of approval.params.questions || []) {
+        const label = document.createElement('label');
+        label.textContent = question.question || question.header || question.id;
+        const options = Array.isArray(question.options) ? question.options : [];
+        const input = options.length ? document.createElement('select') : document.createElement('input');
+        for (const option of options) {
+          const node = document.createElement('option');
+          node.value = option.label;
+          node.textContent = option.description ? `${option.label} — ${option.description}` : option.label;
+          input.append(node);
+        }
+        input.addEventListener('change', () => { answers[question.id] = input.value; });
+        answers[question.id] = input.value;
+        label.append(input);
+        questions.append(label);
+      }
       const actions = document.createElement('div');
       const decline = document.createElement('button');
       decline.type = 'button';
@@ -26,9 +46,9 @@
       const accept = document.createElement('button');
       accept.type = 'button';
       accept.textContent = '允许本次';
-      accept.addEventListener('click', () => respond(approval.id, true));
+      accept.addEventListener('click', () => respond(approval.id, true, answers));
       actions.append(decline, accept);
-      card.append(title, detail, actions);
+      card.append(title, detail, questions, actions);
       container.append(card);
     }
   }

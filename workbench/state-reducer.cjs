@@ -41,8 +41,10 @@ function completedToolOutput(item, fallback) {
       .join('\n')
       .slice(0, 512 * 1024);
   }
-  return item.aggregatedOutput || item.output || fallback;
+  return String(item.aggregatedOutput || item.output || fallback || '').slice(-512 * 1024);
 }
+
+const TOOL_TYPES = new Set(['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch']);
 
 function reduceEvent(thread, method, params = {}) {
   thread.messages ||= [];
@@ -57,16 +59,16 @@ function reduceEvent(thread, method, params = {}) {
     thread.activeTurn = null;
   } else if (method === 'item/agentMessage/delta') {
     const message = messageFor(thread, params.itemId);
-    message.text += typeof params.delta === 'string' ? params.delta : '';
+    message.text = (message.text + (typeof params.delta === 'string' ? params.delta : '')).slice(-512 * 1024);
   } else if (method === 'item/started' && params.item?.id) {
     if (params.item.type === 'agentMessage') messageFor(thread, params.item.id);
-    else toolFor(thread, params.item);
+    else if (TOOL_TYPES.has(params.item.type)) toolFor(thread, params.item);
   } else if (method === 'item/completed' && params.item?.id) {
     if (params.item.type === 'agentMessage') {
       const message = messageFor(thread, params.item.id);
       message.text = completedMessageText(params.item) || message.text;
       message.status = params.item.status || 'completed';
-    } else {
+    } else if (TOOL_TYPES.has(params.item.type)) {
       const tool = toolFor(thread, params.item);
       tool.title = params.item.command || params.item.path || params.item.name || params.item.changes?.[0]?.path || tool.title;
       tool.output = completedToolOutput(params.item, tool.output);
@@ -75,7 +77,7 @@ function reduceEvent(thread, method, params = {}) {
   } else if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta') {
     const item = {id: params.itemId, type: method.includes('commandExecution') ? 'commandExecution' : 'fileChange'};
     const tool = toolFor(thread, item);
-    tool.output += typeof params.delta === 'string' ? params.delta : '';
+    tool.output = (tool.output + (typeof params.delta === 'string' ? params.delta : '')).slice(-512 * 1024);
   }
   return thread;
 }

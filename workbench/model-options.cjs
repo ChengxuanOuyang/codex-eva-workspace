@@ -42,4 +42,3 @@ function selectModel(models, modelId, effort) {
 }
 
 module.exports = {normalizeModels, selectModel};
-

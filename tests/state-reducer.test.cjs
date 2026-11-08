@@ -49,3 +49,10 @@ test('completed file changes retain bounded path and diff text for review', () =
   assert.equal(thread.tools[0].title, 'src/app.js');
   assert.equal(thread.tools[0].output, '@@ -1 +1 @@\n-old\n+new');
 });
+
+test('user messages and reasoning items never appear as command tools', () => {
+  const thread = {messages: [], tools: [], status: 'inProgress', activeTurn: 'turn-1'};
+  reduceEvent(thread, 'item/started', {item: {id: 'u1', type: 'userMessage', text: 'hello'}});
+  reduceEvent(thread, 'item/completed', {item: {id: 'r1', type: 'reasoning', text: 'private'}});
+  assert.deepEqual(thread.tools, []);
+});

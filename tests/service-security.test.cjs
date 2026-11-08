@@ -180,7 +180,7 @@ test('rejects unsupported request media and oversized bodies before routing', as
   const oversized = await request({
     requestPath: '/health',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({payload: 'x'.repeat(70 * 1024)})
+    body: JSON.stringify({payload: 'x'.repeat(129 * 1024)})
   });
   assert.equal(oversized.status, 413);
   assert.deepEqual(JSON.parse(oversized.body), {error: 'Request body too large'});
@@ -272,7 +272,7 @@ test('ends oversized chunked bodies without waiting for an endless stream', asyn
         if (error.code === 'ECONNRESET' || error.code === 'EPIPE') finish({closed: true});
         else reject(error);
       });
-      req.write(Buffer.alloc(64 * 1024 + 1, 'x'));
+      req.write(Buffer.alloc(128 * 1024 + 1, 'x'));
       keepSending = setInterval(() => req.write(Buffer.alloc(1024, 'x')), 5);
     });
 

@@ -34,6 +34,15 @@ test('user can add a project, create a read-only task and approve a command', {t
     await page.getByRole('button', {name: '添加项目'}).click();
     await page.getByText('project', {exact: true}).waitFor();
     await page.getByRole('button', {name: '新建任务'}).click();
+    const image = Buffer.alloc(33);
+    Buffer.from('89504e470d0a1a0a', 'hex').copy(image, 0);
+    image.writeUInt32BE(13, 8);
+    image.write('IHDR', 12, 4, 'ascii');
+    image.writeUInt32BE(1, 16);
+    image.writeUInt32BE(1, 20);
+    image.write('IEND', 29, 4, 'ascii');
+    await page.getByLabel('添加图片').setInputFiles({name: 'image.png', mimeType: 'image/png', buffer: image});
+    await page.getByText('image.png', {exact: true}).waitFor();
     await page.getByPlaceholder('向 PROJECT ZERO 输入任务…').fill('检查项目');
     await page.getByRole('button', {name: '发送'}).click();
     await page.getByText('需要执行命令', {exact: true}).waitFor();
@@ -41,7 +50,8 @@ test('user can add a project, create a read-only task and approve a command', {t
     await page.getByText('检查完成', {exact: true}).waitFor();
 
     assert.equal(await page.getByText('检查项目', {exact: true}).count(), 1);
-    assert.equal(await page.getByText('README', {exact: false}).count() >= 0, true);
+    await page.getByRole('button', {name: 'readme.txt'}).click();
+    await page.getByText('PROJECT ZERO core test', {exact: true}).waitFor();
   } finally {
     await app?.close();
     await fs.rm(root, {recursive: true, force: true});

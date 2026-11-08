@@ -138,9 +138,11 @@
         </div>
         <form id="composer" class="composer">
           <textarea id="prompt-input" placeholder="向 PROJECT ZERO 输入任务…" maxlength="60000" disabled></textarea>
+          <div id="attachment-list" class="attachment-list"></div>
           <div class="composer-controls">
             <label>模型<select id="model-select" disabled></select></label>
             <label>推理<select id="effort-select" disabled></select></label>
+            <label class="attachment-control" for="attachment-input">添加图片<input id="attachment-input" type="file" accept="image/png,image/jpeg" multiple disabled></label>
             <button id="cancel-turn-button" class="secondary-action" type="button" hidden>中断</button>
             <button id="send-button" type="submit" disabled>发送</button>
           </div>

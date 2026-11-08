@@ -37,8 +37,8 @@ test('attachment saves a bounded PNG under an opaque local name', async t => {
   assert.equal(saved.height, 180);
   assert.match(path.basename(saved.path), /^[0-9a-f-]{36}\.png$/);
   assert.equal((await fs.stat(saved.path)).isFile(), true);
+  assert.deepEqual(await store.get(saved.id), saved);
 });
-
 test('attachment rejects SVG, spoofed MIME and huge dimensions', async t => {
   const store = await fixture(t);
   const svg = 'data:image/svg+xml;base64,PHN2Zz4=';
@@ -55,4 +55,3 @@ test('attachment rejects oversized encoded input before decoding', async t => {
 
   await assert.rejects(store.save({dataUrl: oversized}), /size/);
 });
-

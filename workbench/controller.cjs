@@ -18,6 +18,33 @@ function clone(value) {
   return structuredClone(value);
 }
 
+function itemText(item) {
+  if (typeof item.text === 'string') return item.text;
+  return (item.content || [])
+    .filter(part => ['input_text', 'output_text', 'text'].includes(part?.type) && typeof part.text === 'string')
+    .map(part => part.text)
+    .join('');
+}
+
+function hydrateThread(local, remote) {
+  if (!Array.isArray(remote?.turns) || remote.turns.length === 0) return false;
+  local.messages = [];
+  local.tools = [];
+  for (const turn of remote.turns) {
+    for (const item of turn.items || []) {
+      if (item.type === 'userMessage') {
+        local.messages.push({id: item.id, role: 'user', text: itemText(item), status: item.status || 'completed'});
+      } else {
+        reduceEvent(local, 'item/completed', {item});
+      }
+    }
+    local.status = turn.status || local.status;
+  }
+  local.title = remote.name || local.title;
+  local.activeTurn = null;
+  return true;
+}
+
 class WorkbenchController extends EventEmitter {
   constructor({bridge, store}) {
     super();
@@ -27,7 +54,9 @@ class WorkbenchController extends EventEmitter {
     this.models = [];
     this.resumed = new Set();
     this.approvals = new Map();
+    this.turnLocks = new Set();
     this.persistQueue = Promise.resolve();
+    this.persistTimer = null;
     this.closed = false;
     this.attached = false;
     this.onNotification = message => this.handleNotification(message.method, message.params);
@@ -45,6 +74,13 @@ class WorkbenchController extends EventEmitter {
   }
 
   async initialize() {
+    let recovered = false;
+    for (const thread of this.state.threads) {
+      if (!thread.activeTurn) continue;
+      thread.activeTurn = null;
+      thread.status = 'interrupted';
+      recovered = true;
+    }
     const pages = [];
     const cursors = new Set();
     let cursor;
@@ -61,6 +97,7 @@ class WorkbenchController extends EventEmitter {
     this.bridge.on?.('approval', this.onApproval);
     this.bridge.on?.('disconnected', this.onDisconnected);
     this.attached = true;
+    if (recovered) await this.persist();
     return this.snapshot();
   }
 
@@ -84,6 +121,16 @@ class WorkbenchController extends EventEmitter {
     this.persistQueue = operation.catch(() => {});
     this.emit('snapshot', this.snapshot());
     return operation;
+  }
+
+  schedulePersist() {
+    this.emit('snapshot', this.snapshot());
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.persist();
+    }, 100);
+    this.persistTimer.unref?.();
   }
 
   async addProject(projectPath) {
@@ -143,7 +190,7 @@ class WorkbenchController extends EventEmitter {
     if (this.resumed.has(thread.id)) return;
     const project = this.projectFor(thread.projectId);
     const model = selectModel(this.models, thread.model, thread.effort);
-    await this.bridge.request('thread/resume', {
+    const response = await this.bridge.request('thread/resume', {
       threadId: thread.id,
       cwd: project.path,
       model: model.model,
@@ -151,35 +198,35 @@ class WorkbenchController extends EventEmitter {
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user'
     });
+    if (hydrateThread(thread, response?.thread)) await this.persist();
     this.resumed.add(thread.id);
   }
 
   async send({threadId, text, model: modelId, effort, attachments = []}) {
     const thread = this.threadFor(threadId);
-    if (thread.activeTurn) throw new Error('Thread already has an active turn');
+    if (thread.activeTurn || this.turnLocks.has(threadId)) throw new Error('Thread already has an active turn');
     if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_MESSAGE_LENGTH) {
       throw new Error('Invalid user message');
     }
-    const model = selectModel(this.models, modelId, effort);
-    if (attachments.length && !model.inputModalities.includes('image')) throw new Error('Model does not support image input');
-    await this.resume(thread);
-
-    const input = [{type: 'text', text}];
-    for (const attachment of attachments) input.push({type: 'localImage', path: attachment.path});
-    const response = await this.bridge.request('turn/start', {
-      threadId,
-      input,
-      model: model.model,
-      effort
-    });
-    if (!response?.turn?.id) throw new Error('Codex returned an invalid turn');
-    thread.model = model.id;
-    thread.effort = effort;
-    thread.messages.push({id: crypto.randomUUID(), role: 'user', text, status: 'completed'});
-    thread.activeTurn = response.turn.id;
-    thread.status = response.turn.status || 'inProgress';
-    await this.persist();
-    return clone(thread);
+    this.turnLocks.add(threadId);
+    try {
+      const model = selectModel(this.models, modelId, effort);
+      if (attachments.length && !model.inputModalities.includes('image')) throw new Error('Model does not support image input');
+      await this.resume(thread);
+      const input = [{type: 'text', text}];
+      for (const attachment of attachments) input.push({type: 'localImage', path: attachment.path});
+      const response = await this.bridge.request('turn/start', {threadId, input, model: model.model, effort});
+      if (!response?.turn?.id) throw new Error('Codex returned an invalid turn');
+      thread.model = model.id;
+      thread.effort = effort;
+      thread.messages.push({id: crypto.randomUUID(), role: 'user', text, status: 'completed'});
+      thread.activeTurn = response.turn.id;
+      thread.status = response.turn.status || 'inProgress';
+      await this.persist();
+      return clone(thread);
+    } finally {
+      this.turnLocks.delete(threadId);
+    }
   }
 
   async cancel(threadId) {
@@ -211,7 +258,8 @@ class WorkbenchController extends EventEmitter {
     const thread = this.state.threads.find(entry => entry.id === threadId);
     if (!thread) return false;
     reduceEvent(thread, method, params);
-    this.persist();
+    if (method === 'turn/completed') void this.persist();
+    else this.schedulePersist();
     return true;
   }
 
@@ -221,6 +269,13 @@ class WorkbenchController extends EventEmitter {
         code: -32601,
         message: 'Unsupported request; no permission granted'
       });
+      return false;
+    }
+    const params = message.params || {};
+    const thread = this.state.threads.find(entry => entry.id === params.threadId);
+    if (!thread || !params.itemId || !params.turnId || thread.activeTurn !== params.turnId) {
+      const approval = {method: message.method, params};
+      this.bridge.respond(message.id, this.approvalResult(approval, {accept: false}));
       return false;
     }
     const id = String(message.id);
@@ -271,17 +326,26 @@ class WorkbenchController extends EventEmitter {
     this.bridge.off?.('approval', this.onApproval);
     this.bridge.off?.('disconnected', this.onDisconnected);
     for (const approval of this.approvals.values()) {
-      this.bridge.respond(approval.id, this.approvalResult(approval, {accept: false}));
+      try { this.bridge.respond(approval.id, this.approvalResult(approval, {accept: false})); } catch {}
     }
     this.approvals.clear();
     this.attached = false;
+  }
+
+  async drain() {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+      await this.persist();
+    }
+    await this.persistQueue;
   }
 
   async close() {
     if (this.closed) return;
     this.closed = true;
     this.detach();
-    await this.persistQueue;
+    await this.drain();
     await this.store.close();
   }
 }

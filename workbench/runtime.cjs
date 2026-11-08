@@ -43,6 +43,7 @@ class WorkbenchRuntime extends EventEmitter {
       await this.initializeStorage();
       if (this.controller) {
         this.controller.off('snapshot', this.forwardSnapshot);
+        await this.controller.drain();
         this.controller.detach();
       }
       const controller = new WorkbenchController({bridge, store: this.store});
@@ -89,7 +90,15 @@ class WorkbenchRuntime extends EventEmitter {
 
   addProject(value) { return this.invoke('addProject', value); }
   createThread(value) { return this.invoke('createThread', value); }
-  send(value) { return this.invoke('send', value); }
+  async send(value) {
+    await this.ready();
+    const attachments = [];
+    for (const attachment of value.attachments || []) {
+      const saved = await this.attachments.get(attachment.id);
+      attachments.push({path: saved.path});
+    }
+    return this.invoke('send', {...value, attachments});
+  }
   cancel(value) { return this.invoke('cancel', value); }
   renameThread(...value) { return this.invoke('renameThread', ...value); }
   archiveThread(...value) { return this.invoke('archiveThread', ...value); }
@@ -107,7 +116,8 @@ class WorkbenchRuntime extends EventEmitter {
 
   async saveAttachment(input) {
     await this.ready();
-    return this.attachments.save(input);
+    const saved = await this.attachments.save(input);
+    return {id: saved.id, mime: saved.mime, size: saved.size, width: saved.width, height: saved.height};
   }
 
   async close() {
@@ -115,7 +125,7 @@ class WorkbenchRuntime extends EventEmitter {
     if (this.controller) {
       this.controller.off('snapshot', this.forwardSnapshot);
       this.controller.detach();
-      await this.controller.persistQueue;
+      await this.controller.drain();
     }
     await this.store?.close();
   }

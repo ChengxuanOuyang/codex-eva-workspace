@@ -6,7 +6,11 @@ PILOT-00 / VOIDGLASS 视觉，不代表 OpenAI、EVA 或任何其他权利方，
 ![PILOT-00 真实启动界面预览](docs/images/pilot-00-preview.png)
 
 上图由当前仓库实际启动界面截取；公开构建会显示同步动画、Codex 本地就绪状态和确认门禁，
-随后进入仍在开发中的工作台壳。
+随后进入可用的三栏核心工作台。
+
+当前核心工作区支持：添加本地项目、创建和恢复 Codex 会话、选择模型与推理强度、流式显示
+回复、逐次处理命令/文件/权限审批、上传本地图片、浏览安全过滤后的项目文件，以及查看命令输出
+和文件 Diff。终端、Git 面板、插件管理和自动更新仍属于后续阶段。
 
 ## 前置条件
 
@@ -24,6 +28,10 @@ npm ci
 npm run verify
 npm start
 ```
+
+进入工作台后，在左栏输入项目的绝对路径并点击“添加项目”，再点击“新建任务”。中栏用于发送
+任务、选择模型/推理强度和添加图片；右栏显示审批、执行记录、Diff 与项目文件。线程默认使用
+`read-only` 沙箱，任何扩展权限都必须由用户在右栏明确确认。
 
 `npm run verify` 运行 ESLint 和不启动 Electron 的 Node 测试。完整源码与打包应用检查可运行：
 
@@ -52,6 +60,7 @@ Apple Silicon 输出在 `dist/mac-arm64/`，Intel 输出在 `dist/mac/`。当前
 - `npm run pack` 的公开路径不读取私人主题，测试 bridge 环境变量也会在生产打包时移除。
 
 更完整的测试与产物边界见 [docs/testing-and-packaging.md](docs/testing-and-packaging.md)。
+从安装到会话、审批、文件和故障恢复的完整操作说明见 [docs/workflow.md](docs/workflow.md)。
 
 ## 许可与素材说明
 

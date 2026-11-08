@@ -6,7 +6,8 @@
     selectedProjectId: null,
     selectedThreadId: null,
     serviceOnline: false,
-    filePath: ''
+    filePath: '',
+    attachments: []
   };
   let started = false;
   let eventSource;
@@ -86,6 +87,8 @@
     elements.threadCount.textContent = String(threads.length).padStart(2, '0');
     elements.threads.replaceChildren();
     for (const thread of threads) {
+      const row = document.createElement('div');
+      row.className = 'thread-row';
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = thread.title || '新任务';
@@ -94,7 +97,46 @@
         state.selectedThreadId = thread.id;
         render();
       });
-      elements.threads.append(button);
+      const rename = document.createElement('button');
+      rename.type = 'button';
+      rename.className = 'thread-action';
+      rename.textContent = '改名';
+      rename.setAttribute('aria-label', `重命名 ${thread.title || '新任务'}`);
+      rename.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.value = thread.title || '新任务';
+        input.setAttribute('aria-label', '任务名称');
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = '保存名称';
+        save.addEventListener('click', async () => {
+          const title = input.value.trim();
+          if (!title) return;
+          try {
+            await request('/api/threads/rename', {threadId: thread.id, title});
+            thread.title = title;
+            render();
+            await refreshSnapshot();
+          } catch (error) { showError(error); }
+        });
+        row.replaceChildren(input, save);
+        input.focus();
+      });
+      const archive = document.createElement('button');
+      archive.type = 'button';
+      archive.className = 'thread-action';
+      archive.textContent = '归档';
+      archive.setAttribute('aria-label', `归档 ${thread.title || '新任务'}`);
+      archive.addEventListener('click', async () => {
+        try {
+          await request('/api/threads/archive', {threadId: thread.id, archived: true});
+          thread.archived = true;
+          render();
+          await refreshSnapshot();
+        } catch (error) { showError(error); }
+      });
+      row.append(button, rename, archive);
+      elements.threads.append(row);
     }
   }
 
@@ -127,6 +169,20 @@
     elements.cancel.disabled = !state.serviceOnline;
     elements.model.disabled = !state.serviceOnline || active || !state.snapshot.models.length;
     elements.effort.disabled = elements.model.disabled;
+    elements.attachmentInput.disabled = elements.prompt.disabled || !selectedModel()?.inputModalities.includes('image');
+    elements.attachmentList.replaceChildren();
+    for (const attachment of state.attachments) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'attachment-chip';
+      chip.textContent = attachment.name;
+      chip.title = '点击移除';
+      chip.addEventListener('click', () => {
+        state.attachments = state.attachments.filter(item => item.id !== attachment.id);
+        render();
+      });
+      elements.attachmentList.append(chip);
+    }
     elements.refreshFiles.disabled = !state.serviceOnline || !state.selectedProjectId;
   }
 
@@ -201,8 +257,10 @@
         threadId: state.selectedThreadId,
         text,
         model: elements.model.value,
-        effort: elements.effort.value
+        effort: elements.effort.value,
+        attachments: state.attachments.map(attachment => ({id: attachment.id}))
       });
+      state.attachments = [];
       await refreshSnapshot();
     } catch (error) {
       elements.prompt.value = text;
@@ -218,12 +276,35 @@
     }
   }
 
-  async function respondApproval(id, accept) {
+  async function respondApproval(id, accept, answers = {}) {
     try {
-      await request('/api/approvals/respond', {id, accept});
+      await request('/api/approvals/respond', {id, accept, answers});
     } catch (error) {
       showError(error);
     }
+  }
+
+  function dataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(reader.result), {once: true});
+      reader.addEventListener('error', () => reject(new Error('无法读取图片')), {once: true});
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function uploadAttachments() {
+    const files = [...elements.attachmentInput.files];
+    elements.attachmentInput.value = '';
+    for (const file of files) {
+      try {
+        const saved = await request('/api/attachments', {dataUrl: await dataUrl(file)});
+        state.attachments.push({...saved, name: file.name});
+      } catch (error) {
+        showError(error);
+      }
+    }
+    render();
   }
 
   async function loadFiles() {
@@ -265,6 +346,8 @@
       prompt: document.querySelector('#prompt-input'),
       model: document.querySelector('#model-select'),
       effort: document.querySelector('#effort-select'),
+      attachmentInput: document.querySelector('#attachment-input'),
+      attachmentList: document.querySelector('#attachment-list'),
       send: document.querySelector('#send-button'),
       cancel: document.querySelector('#cancel-turn-button'),
       turnState: document.querySelector('#turn-state'),
@@ -286,7 +369,8 @@
     elements.newThread.addEventListener('click', createThread);
     elements.composer.addEventListener('submit', sendMessage);
     elements.cancel.addEventListener('click', cancelTurn);
-    elements.model.addEventListener('change', () => renderModelOptions(selectedThread()));
+    elements.model.addEventListener('change', () => renderModelOptions(null));
+    elements.attachmentInput.addEventListener('change', uploadAttachments);
     elements.refreshFiles.addEventListener('click', loadFiles);
     try {
       await refreshSnapshot();

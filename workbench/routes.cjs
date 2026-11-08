@@ -25,6 +25,17 @@ function stringField(body, name) {
   return body[name];
 }
 
+function attachmentIds(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 8) throw new Error('Invalid request');
+  return value.map(attachment => {
+    if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment) ||
+        typeof attachment.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(attachment.id) ||
+        Object.keys(attachment).some(key => key !== 'id')) throw new Error('Invalid request');
+    return {id: attachment.id};
+  });
+}
+
 function writeEvent(res, snapshot) {
   res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
 }
@@ -76,7 +87,7 @@ function createWorkbenchRoutes(controller) {
         text: stringField(body, 'text'),
         model: stringField(body, 'model'),
         effort: stringField(body, 'effort'),
-        attachments: Array.isArray(body.attachments) ? body.attachments : []
+        attachments: attachmentIds(body.attachments)
       });
       status = 202;
     } else if (req.url === '/api/threads/cancel') {
