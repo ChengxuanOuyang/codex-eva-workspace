@@ -100,7 +100,18 @@ class WorkbenchController extends EventEmitter {
     this.bridge.on?.('approval', this.onApproval);
     this.bridge.on?.('disconnected', this.onDisconnected);
     this.attached = true;
-    for (const thread of this.state.threads.filter(entry => entry.activeTurn)) await this.resume(thread);
+    let recoveryFailed = false;
+    for (const thread of this.state.threads.filter(entry => entry.activeTurn)) {
+      try {
+        await this.resume(thread);
+      } catch {
+        thread.activeTurn = null;
+        thread.status = 'disconnected';
+        this.resumed.delete(thread.id);
+        recoveryFailed = true;
+      }
+    }
+    if (recoveryFailed) await this.persist();
     return this.snapshot();
   }
 

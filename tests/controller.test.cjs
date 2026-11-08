@@ -169,6 +169,26 @@ test('resume preserves a remotely active turn and allows it to be interrupted', 
   await restored.close();
 });
 
+test('one stale thread resume failure does not block workbench startup', async t => {
+  const {root, project, bridge, controller} = await fixture(t);
+  const added = await controller.addProject(project);
+  const thread = await controller.createThread({projectId: added.id, model: 'gpt-test', effort: 'medium'});
+  await controller.send({threadId: thread.id, text: '旧任务', model: 'gpt-test', effort: 'medium'});
+  await controller.close();
+  const original = bridge.request.bind(bridge);
+  bridge.request = async (method, params) => {
+    if (method === 'thread/resume') throw new Error('gone');
+    return original(method, params);
+  };
+  const restored = new WorkbenchController({bridge, store: await createStore(root)});
+  await restored.initialize();
+  const recovered = restored.threadFor(thread.id);
+  assert.equal(recovered.activeTurn, null);
+  assert.equal(recovered.status, 'disconnected');
+  assert.equal(restored.snapshot().models.length, 1);
+  await restored.close();
+});
+
 test('restored threads resume before the next turn and invalid options fail locally', async t => {
   const {root, project, store, bridge, controller} = await fixture(t);
   const added = await controller.addProject(project);
