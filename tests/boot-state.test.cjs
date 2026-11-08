@@ -19,12 +19,17 @@ test('progress cannot pass 99.2 before backend readiness and confirmation', () =
   assert.deepEqual(state, {phase: 'completing', progress: 99.2, ready: true, confirmed: true});
 });
 
-test('skip changes presentation only and never fabricates readiness or confirmation', () => {
+test('skip atomically finishes presentation without fabricating readiness or confirmation', () => {
   const initial = {phase: 'syncing', progress: 20, ready: false, confirmed: false};
   const skipped = nextBootState(initial, {type: 'skip'});
 
-  assert.deepEqual(skipped, {phase: 'waiting', progress: 20, ready: false, confirmed: false});
+  assert.deepEqual(skipped, {phase: 'waiting', progress: 99.2, ready: false, confirmed: false});
   assert.equal(nextBootState(skipped, {type: 'confirm'}), skipped);
+
+  const ready = {phase: 'syncing', progress: 47, ready: true, confirmed: false};
+  assert.deepEqual(nextBootState(ready, {type: 'skip'}), {
+    phase: 'waiting', progress: 99.2, ready: true, confirmed: false
+  });
 });
 
 test('unknown events preserve the original state by reference and value', () => {

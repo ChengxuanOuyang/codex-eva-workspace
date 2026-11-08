@@ -26,7 +26,7 @@ function nextBootState(state, event) {
       return {...state, phase: 'completing', confirmed: true};
     case 'skip':
       if (state.phase === 'waiting' || state.phase === 'completing' || state.phase === 'complete') return state;
-      return {...state, phase: 'waiting'};
+      return {...state, phase: 'waiting', progress: MAX_UNCONFIRMED_PROGRESS};
     case 'complete':
       if (state.phase === 'complete') return state;
       if (state.phase !== 'completing' || !state.confirmed) return state;

@@ -44,7 +44,9 @@
       progressbar: document.querySelector('#ring-progress'),
       retry: document.querySelector('#retry-button'),
       ring: document.querySelector('#ring-stroke'),
-      skip: document.querySelector('#skip-button')
+      skip: document.querySelector('#skip-button'),
+      bootScreen: document.querySelector('#boot-screen'),
+      workbench: document.querySelector('#workbench-shell')
     };
     let state = {phase: 'syncing', progress: 0, ready: false, confirmed: false};
     let started = false;
@@ -75,6 +77,15 @@
     function freezePresentation() {
       if (clockTimer !== undefined) clock.clearInterval(clockTimer);
       clockTimer = undefined;
+    }
+
+    function stopPresentation() {
+      stopTicker();
+      freezePresentation();
+      if (skipTimer !== undefined) clock.clearTimeout(skipTimer);
+      skipTimer = undefined;
+      if (awakeningTimer !== undefined) clock.clearTimeout(awakeningTimer);
+      awakeningTimer = undefined;
     }
 
     function stopHealth() {
@@ -234,9 +245,11 @@
           return;
         }
         dispatch({type: 'complete'});
-        stopTicker();
         stopHealth();
-        freezePresentation();
+        stopPresentation();
+        elements.bootScreen.hidden = true;
+        elements.workbench.hidden = false;
+        destroy();
       } catch {
         if (destroyed || generation !== healthGeneration || controller.signal.aborted) return;
         applyReadiness({ready: false, code: 'DISCONNECTED'});
@@ -252,6 +265,7 @@
       if (!skipAvailable) return;
       opening = false;
       dispatch({type: 'skip'});
+      stopPresentation();
     }
 
     function confirm() {
@@ -277,14 +291,12 @@
     function destroy() {
       if (destroyed) return;
       destroyed = true;
-      stopTicker();
+      stopPresentation();
       stopHealth();
       retryController?.abort();
       retryController = undefined;
-      if (clockTimer !== undefined) clock.clearInterval(clockTimer);
-      if (skipTimer !== undefined) clock.clearTimeout(skipTimer);
       if (completeTimer !== undefined) clock.clearTimeout(completeTimer);
-      if (awakeningTimer !== undefined) clock.clearTimeout(awakeningTimer);
+      completeTimer = undefined;
       unbindInteractions();
       eventRoot.removeEventListener('pagehide', destroy);
     }

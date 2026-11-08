@@ -11,6 +11,7 @@
 </head>
 <body data-phase="syncing" data-scene="awakening">
   <div class="screen-grain" aria-hidden="true"></div>
+  <div id="boot-screen">
   <header class="topbar">
     <div class="identity">
       <div class="project-mark" role="img" aria-label="PROJECT ZERO 00 原创系统徽记">
@@ -93,5 +94,47 @@
   <footer class="boot-footer">
     <span>ORIGINAL INTERFACE SYSTEM / PROJECT ZERO</span><span id="clock-readout">T+000.0</span><span>按确认键前不会进入工作台</span>
   </footer>
+  </div>
+
+  <main id="workbench-shell" class="workbench-shell" hidden>
+    <div class="workbench-scene" aria-hidden="true"></div>
+    <header class="workbench-header">
+      <div class="identity">
+        <div class="project-mark" role="img" aria-label="PROJECT ZERO 00 原创系统徽记">
+          <strong>PZ</strong><small>00</small>
+        </div>
+        <div>
+          <p class="eyebrow">LOCAL WORKBENCH / SYSTEM ONLINE</p>
+          <p class="workbench-title">PROJECT ZERO <span>//</span> REI CODEX WORKBENCH</p>
+        </div>
+      </div>
+      <p class="shell-status"><span class="signal-dot"></span>本地链路已就绪</p>
+    </header>
+    <div class="workbench-layout">
+      <nav class="workbench-nav" aria-label="工作台导航占位">
+        <p class="rail-title">NAVIGATION / PHASE 1</p>
+        <span aria-current="page">概览</span>
+        <span>会话</span>
+        <span>模型</span>
+        <span>设置</span>
+      </nav>
+      <section class="workbench-empty" aria-labelledby="workbench-heading">
+        <p class="stage-index">00—WORKBENCH / LOCAL</p>
+        <div class="phase-two-notice">
+          <p class="eyebrow" lang="ja">準備完了</p>
+          <h1 id="workbench-heading">核心工作台将在阶段 2 启用</h1>
+          <p>阶段 1 已完成本地启动、Codex 就绪检查与安全切换。此处暂不提供聊天或远程功能。</p>
+        </div>
+      </section>
+      <aside class="workbench-status" aria-label="工作台状态">
+        <p class="rail-title">STATUS / LOCAL</p>
+        <dl>
+          <div><dt>运行模式</dt><dd>本地</dd></div>
+          <div><dt>Codex 链路</dt><dd>READY</dd></div>
+          <div><dt>当前阶段</dt><dd>PHASE 1</dd></div>
+        </dl>
+      </aside>
+    </div>
+  </main>
 </body>
 </html>

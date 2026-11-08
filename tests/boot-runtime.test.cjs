@@ -82,9 +82,10 @@ function fixture(api, {reducedMotion = false} = {}) {
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
-    '#ring-stroke', '#skip-button'
+    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
+  elements['#boot-screen'].hidden = false;
   const document = {
     body: new FakeElement(),
     querySelector: selector => elements[selector]
@@ -109,7 +110,7 @@ function fixture(api, {reducedMotion = false} = {}) {
   return {clock, controller, document, elements, rootListeners};
 }
 
-test('skip freezes the display clock while logical progress remains confirmable', async () => {
+test('skip atomically reaches confirmation while stopping presentation timers and preserving health polling', async () => {
   const health = deferred();
   const view = fixture({health: () => health.promise});
 
@@ -119,17 +120,35 @@ test('skip freezes the display clock while logical progress remains confirmable'
   view.elements['#skip-button'].dispatch('click');
 
   assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.clock.countIntervals(80), 1);
-  assert.equal(view.clock.countIntervals(100), 0);
-  const clockText = view.elements['#clock-readout'].textContent;
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.clock.fireInterval(100);
   assert.equal(view.controller.getState().progress, 99.2);
-  assert.equal(view.elements['#clock-readout'].textContent, clockText);
+  assert.equal(view.clock.countIntervals(80), 0);
+  assert.equal(view.clock.countIntervals(100), 0);
+  assert.equal(view.clock.countTimeouts(600), 0);
   assert.equal(view.elements['#confirm-button'].disabled, true);
-  health.resolve({ready: false});
+  health.resolve({ready: false, code: 'INITIALIZING'});
   await healthRun;
   assert.equal(view.clock.countTimeouts(500), 1);
+
+  view.controller.destroy();
+});
+
+test('a skipped presentation becomes confirmable immediately when real readiness arrives', async () => {
+  let calls = 0;
+  const view = fixture({
+    health: () => Promise.resolve(++calls === 1
+      ? {ready: false, code: 'INITIALIZING'}
+      : {ready: true, code: 'READY'})
+  });
+
+  await view.clock.fireTimeout(0);
+  view.clock.fireTimeout(3000);
+  view.elements['#skip-button'].dispatch('click');
+  assert.equal(view.elements['#confirm-button'].disabled, true);
+
+  await view.clock.fireTimeout(500);
+  assert.equal(view.controller.getState().progress, 99.2);
+  assert.equal(view.controller.getState().ready, true);
+  assert.equal(view.elements['#confirm-button'].disabled, false);
 });
 
 test('failed recovery resumes logical progress while decorative presentation stays frozen', async () => {
@@ -354,10 +373,14 @@ test('completion invalidates an overlapping stale poll and trusts only its final
 
   assert.equal(view.document.body.dataset.phase, 'complete');
   assert.equal(view.elements['#sync-heading'].textContent, 'SYSTEM ONLINE');
+  assert.equal(view.elements['#boot-screen'].hidden, true);
+  assert.equal(view.elements['#workbench-shell'].hidden, false);
   assert.equal(view.elements['#confirm-button'].listeners.has('click'), false);
   assert.equal(view.elements['#skip-button'].listeners.has('click'), false);
   assert.equal(view.rootListeners.has('keydown'), false);
-  assert.equal(view.rootListeners.has('pagehide'), true);
+  assert.equal(view.rootListeners.has('pagehide'), false);
+  assert.equal(view.clock.intervals.size, 0);
+  assert.equal(view.clock.timeouts.size, 0);
 });
 
 test('destroy aborts an in-flight request and blocks later DOM writes', async () => {
@@ -422,9 +445,10 @@ test('automatic startup is a window singleton across repeated script execution',
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
-    '#ring-stroke', '#skip-button'
+    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
+  elements['#boot-screen'].hidden = false;
   const document = {body: new FakeElement(), querySelector: selector => elements[selector]};
   const clock = new FakeClock();
   const listeners = new Map();

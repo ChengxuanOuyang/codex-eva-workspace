@@ -70,6 +70,8 @@ test('application reaches user confirmation without remote content and closes cl
     await page.waitForFunction(() => document.body.dataset.scene === 'sync');
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.scene-sync')).opacity === '1');
 
+    await page.getByRole('button', {name: /跳过动态演示/}).click();
+    await page.getByText('99.2', {exact: true}).waitFor({timeout: 1000});
     await page.getByRole('heading', {name: '等待用户确认'}).waitFor();
     await assert.doesNotReject(confirm.waitFor({state: 'visible'}));
     await assert.doesNotReject(page.getByText('99.2', {exact: true}).waitFor());
@@ -78,7 +80,7 @@ test('application reaches user confirmation without remote content and closes cl
 
     assert.equal(await page.locator('.pilot-silhouette').count(), 0);
     assert.equal(await page.locator('.scene-art[aria-hidden="true"]').count(), 3);
-    assert.equal(await page.locator('.project-mark[aria-label="PROJECT ZERO 00 原创系统徽记"]').count(), 1);
+    assert.equal(await page.getByRole('img', {name: 'PROJECT ZERO 00 原创系统徽记'}).count(), 1);
 
     const taskProcesses = descendants(await processTable(), app.process().pid);
     taskProcessIds = taskProcesses.map(row => row.pid);
@@ -122,10 +124,15 @@ test('application reaches user confirmation without remote content and closes cl
     await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
 
     await confirm.click();
-    await page.getByRole('heading', {name: 'SYSTEM ONLINE'}).waitFor();
-    await page.getByText('100.0', {exact: true}).waitFor();
+    await page.waitForFunction(() => document.body.dataset.phase === 'complete');
     await page.waitForFunction(() => document.body.dataset.scene === 'online');
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.scene-online')).opacity === '1');
+    await page.locator('#workbench-shell').waitFor({state: 'visible'});
+    await page.getByRole('heading', {name: '核心工作台将在阶段 2 启用'}).waitFor();
+    assert.equal(await page.locator('#boot-screen').isHidden(), true);
+    assert.equal(await page.getByRole('button', {name: '确认并完成同步'}).count(), 0);
+    assert.equal(await page.getByRole('button', {name: /跳过动态演示/}).count(), 0);
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench-scene')).opacity === '1');
+    assert.equal(await page.locator('#workbench-shell [data-feature="chat"]').count(), 0);
   } finally {
     await app?.close();
   }
