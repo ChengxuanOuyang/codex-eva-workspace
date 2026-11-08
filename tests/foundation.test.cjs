@@ -17,3 +17,10 @@ test('private and credential-bearing paths are ignored', () => {
     assert.match(ignore, new RegExp(entry.replace(/[./]/g, '\\$&')));
   }
 });
+
+test('private themes and private build outputs are excluded from Git', async () => {
+  const ignore = await fs.promises.readFile('.gitignore', 'utf8');
+  assert.match(ignore, /^\/private-themes\/$/m);
+  assert.match(ignore, /^\/\.private-build\/$/m);
+  assert.match(ignore, /^\/dist-private\/$/m);
+});

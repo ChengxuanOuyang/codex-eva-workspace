@@ -2,10 +2,12 @@
 .superpowers/
 node_modules/
 dist/
+/dist-private/
+/.private-build/
 .env
 .env.*
 auth.json
-private-themes/
+/private-themes/
 workbench/data/
 *.log
 .DS_Store
