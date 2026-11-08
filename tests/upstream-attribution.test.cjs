@@ -13,4 +13,8 @@ test('the Windows reference is pinned and media is excluded from its MIT-code no
   }
   assert.match(notice, /NERV.*not.*MIT|NERV.*不.*MIT/i);
   assert.match(notice, /voice.*not copied|语音.*不复制/i);
+  assert.match(notice, /private.*local.*only/i);
+  assert.match(notice, /does not authorize[\s\S]*redistribution/i);
+  assert.match(notice, /does not authorize[\s\S]*public use/i);
+  assert.match(notice, /MIT code notice[\s\S]*does not[\s\S]*cover[\s\S]*MIT/i);
 });

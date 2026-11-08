@@ -20,4 +20,6 @@ these reference modules:
 The upstream `nerv-mark.svg` and NERV branding are not MIT code being reused.
 They are excluded. Upstream `voice.wav` is not copied. Character images, fonts,
 and every other upstream media asset are also excluded unless separately declared
-in this project's own private asset inventory.
+in this project's own private asset inventory. Any such privately declared media
+is for private, local use only. The upstream MIT code notice does not authorize
+redistribution or public use of that media and does not cover it under MIT.
