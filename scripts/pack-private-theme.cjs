@@ -10,6 +10,7 @@ const PROJECT_ENTRIES = Object.freeze([
   'app', 'assets', 'LICENSE', 'NOTICE.md', 'package.json',
   'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
 ]);
+const RUNTIME_DEPENDENCIES = Object.freeze(['node-addon-api', 'node-pty']);
 const PUBLIC_LABEL = 'PROJECT ZERO // PILOT CODEX WORKBENCH';
 const PUBLIC_VISIBLE_LABEL = 'PROJECT ZERO <span>//</span> PILOT CODEX WORKBENCH';
 
@@ -368,6 +369,20 @@ async function packPrivateThemeInternal({
         verbatimSymlinks: true
       });
       await rejectSymlinks(path.join(stageRoot, entry), fsModule);
+    }
+    const stageModules = path.join(stageRoot, 'node_modules');
+    await fsModule.mkdir(stageModules);
+    for (const dependency of RUNTIME_DEPENDENCIES) {
+      const packagePath = require.resolve(`${dependency}/package.json`, {paths: [realProjectRoot, __dirname]});
+      const source = path.dirname(packagePath);
+      const destination = path.join(stageModules, dependency);
+      await fsModule.cp(source, destination, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        verbatimSymlinks: true
+      });
+      await rejectSymlinks(destination, fsModule);
     }
 
     const replacements = [

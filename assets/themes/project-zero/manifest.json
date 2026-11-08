@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "project-zero-voidglass",
+  "name": "PILOT-00 / VOIDGLASS",
+  "author": "PROJECT ZERO contributors",
+  "colors": {
+    "accent": "#e9682a",
+    "surface": "#edf6f7",
+    "ink": "#102934"
+  },
+  "background": "source/scene-c-online.png",
+  "portrait": null,
+  "audio": null
+}

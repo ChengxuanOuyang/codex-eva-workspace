@@ -182,7 +182,8 @@ body[data-phase="complete"] .sync-assembly::before { border-color: rgba(61, 143,
 body[data-phase="complete"] .ring-progress { stroke: #3d8f7b; }
 
 .workbench-shell { position: relative; min-height: 100vh; isolation: isolate; overflow: hidden; }
-.workbench-scene { position: absolute; inset: 0; z-index: -2; opacity: 0; background: url("/assets/scene-c-online.webp") center / cover no-repeat; transition: opacity 380ms ease-out; }
+.workbench-scene { position: absolute; inset: 0; z-index: -2; opacity: 0; background: var(--theme-workbench-background, url("/assets/scene-c-online.webp")) center / cover no-repeat; transition: opacity 380ms ease-out; }
+.workbench-scene::before { position: absolute; inset: 5% 2% 5% 55%; content: ""; background: var(--theme-workbench-portrait, none) right center / contain no-repeat; }
 .workbench-scene::after { position: absolute; inset: 0; content: ""; background: linear-gradient(90deg, rgba(246, 251, 250, 0.94), rgba(246, 251, 250, 0.66) 56%, rgba(16, 41, 52, 0.18)); }
 body[data-scene="online"] #workbench-shell:not([hidden]) .workbench-scene { opacity: 1; }
 .workbench-header { min-height: 92px; padding: 18px 34px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: rgba(246, 251, 250, 0.82); backdrop-filter: blur(18px); }

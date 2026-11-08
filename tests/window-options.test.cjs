@@ -752,6 +752,21 @@ test('persistent cleanup failure exits instead of leaving a headless resident pr
   assert.doesNotMatch(diagnostics.join(' '), /private|path/);
 });
 
+test('a cleanup that never settles is bounded and forces process exit', async () => {
+  const app = new EventEmitter();
+  const exits = [];
+  app.quit = () => {};
+  app.exit = code => exits.push(code);
+  installCleanupHandler(app, [() => new Promise(() => {})], {
+    cleanupTimeoutMs: 2,
+    retryDelayMs: 0
+  });
+
+  app.emit('before-quit', {preventDefault() {}});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(exits, [1]);
+});
+
 test('service cleanup forces connections closed and confirms the listener stopped', async () => {
   const calls = [];
   const server = {

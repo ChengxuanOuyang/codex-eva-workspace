@@ -5,7 +5,9 @@
   "description": "Unofficial local-first PROJECT ZERO Codex workbench for macOS",
   "main": "app/main.cjs",
   "license": "MIT",
-  "engines": {"node": ">=24"},
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
@@ -13,13 +15,18 @@
     "test": "node --test tests/*.test.cjs",
     "test:e2e": "npm run pack && node --test --test-concurrency=1 tests/e2e/*.test.cjs",
     "verify": "npm run lint && npm test",
+    "licenses:check": "node scripts/check-asset-licenses.cjs",
     "pack": "node scripts/pack.cjs",
     "pack:private": "node scripts/pack-private-theme.cjs",
     "dist:mac:arm64": "electron-builder --mac dmg zip --arm64",
     "dist:mac:x64": "electron-builder --mac dmg zip --x64"
   },
-  "dependencies": {},
+  "dependencies": {
+    "node-pty": "1.1.0"
+  },
   "devDependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "electron": "45.2.3",
     "electron-builder": "26.18.0",
     "eslint": "10.14.0",
@@ -29,7 +36,23 @@
     "appId": "io.github.chengxuanouyang.project-zero-pilot-workbench",
     "productName": "PROJECT ZERO — PILOT CODEX WORKBENCH",
     "asar": true,
-    "files": ["app/**/*", "workbench/**/*", "renderer/**/*", "assets/themes/project-zero/assets.json", "assets/themes/project-zero/ASSET-LICENSE.md", "package.json", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
-    "mac": {"category": "public.app-category.developer-tools", "hardenedRuntime": false, "identity": null}
+    "files": [
+      "app/**/*",
+      "workbench/**/*",
+      "renderer/**/*",
+      "assets/themes/project-zero/assets.json",
+      "assets/themes/project-zero/ASSET-LICENSE.md",
+      "assets/themes/project-zero/LICENSES.json",
+      "assets/audio/**/*",
+      "package.json",
+      "LICENSE",
+      "NOTICE.md",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": false,
+      "identity": null
+    }
   }
 }

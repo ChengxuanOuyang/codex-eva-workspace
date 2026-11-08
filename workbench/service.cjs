@@ -48,7 +48,7 @@ function isAbortedRequest(req, error) {
 }
 
 async function validateRequestBody(req, res) {
-  const requestLimit = req.url === '/api/attachments' ? MAX_ATTACHMENT_BODY_BYTES : MAX_REQUEST_BODY_BYTES;
+  const requestLimit = req.routePath === '/api/attachments' ? MAX_ATTACHMENT_BODY_BYTES : MAX_REQUEST_BODY_BYTES;
   const declaredLength = Number(req.headers['content-length'] || 0);
   const hasBody = declaredLength > 0 || req.headers['transfer-encoding'] !== undefined;
   if (!hasBody) {
@@ -154,9 +154,21 @@ function createWorkbenchService({
     ['/conversation.js', {root: workbenchRoot, fileName: 'conversation.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/approvals.js', {root: workbenchRoot, fileName: 'approvals.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/files.js', {root: workbenchRoot, fileName: 'files.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/terminal.js', {root: workbenchRoot, fileName: 'terminal.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/git.js', {root: workbenchRoot, fileName: 'git.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/plugins.js', {root: workbenchRoot, fileName: 'plugins.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/settings.js', {root: workbenchRoot, fileName: 'settings.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/themes.js', {root: workbenchRoot, fileName: 'themes.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/vendor/xterm.css', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm.css', contentType: 'text/css; charset=utf-8'}],
+    ['/vendor/xterm.js', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/vendor/xterm-addon-fit.js', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm-addon-fit.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/assets/scene-a-sync.webp', {root: bootRoot, fileName: 'assets/scene-a-sync.webp', contentType: 'image/webp'}],
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
+    ,['/audio/system-awake.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'system-awake.wav', contentType: 'audio/wav'}]
+    ,['/audio/sync-start.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'sync-start.wav', contentType: 'audio/wav'}]
+    ,['/audio/pilot-confirm.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'pilot-confirm.wav', contentType: 'audio/wav'}]
+    ,['/audio/system-online.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'system-online.wav', contentType: 'audio/wav'}]
   ]);
   const workbenchRoutes = controller ? createWorkbenchRoutes(controller) : null;
   const routeMethods = new Map([
@@ -172,15 +184,18 @@ function createWorkbenchService({
   async function handleRequest(req, res) {
     const port = server.address().port;
     const origin = `http://127.0.0.1:${port}`;
+    let requestUrl;
+    try { requestUrl = new URL(req.url, origin); } catch { return send(res, 400, {error: 'Invalid request'}); }
+    req.routePath = requestUrl.pathname;
 
     if (req.headers.host !== `127.0.0.1:${port}`) {
       return send(res, 403, {error: 'Invalid host'});
     }
-    const allowedMethods = routeMethods.get(req.url);
+    const allowedMethods = routeMethods.get(req.routePath);
     if (allowedMethods && !allowedMethods.includes(req.method)) {
       return methodNotAllowed(res, allowedMethods);
     }
-    if (req.url.startsWith('/api/') && !hasSession(req, token)) {
+    if (req.routePath.startsWith('/api/') && !hasSession(req, token)) {
       return send(res, 403, {error: 'Open the workbench first'});
     }
     if (STATE_CHANGING_METHODS.has(req.method) && req.headers.origin !== origin) {
@@ -201,8 +216,8 @@ function createWorkbenchService({
     if (staticFile) {
       return serveFile(staticFile.root, staticFile.fileName, staticFile.contentType, res);
     }
-    if (req.url === '/api/state') return send(res, 200, snapshot());
-    if (req.url === '/api/readiness/retry') {
+    if (req.routePath === '/api/state') return send(res, 200, snapshot());
+    if (req.routePath === '/api/readiness/retry') {
       void Promise.resolve(retryInitialization()).catch(() => {});
       return send(res, 202, {accepted: true});
     }

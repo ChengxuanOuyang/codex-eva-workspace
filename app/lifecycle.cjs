@@ -408,6 +408,17 @@ async function startWorkbench({
   await mkdir(paths.logs, {recursive: true});
   await mkdir(paths.themes, {recursive: true});
 
+  if (!userPath) {
+    try {
+      const settings = JSON.parse(await fsPromises.readFile(path.join(dataRoot, 'settings.json'), 'utf8'));
+      if (settings?.schemaVersion === 1 && typeof settings.codexPath === 'string' && path.isAbsolute(settings.codexPath)) {
+        userPath = settings.codexPath;
+      }
+    } catch {
+      // Missing or invalid optional settings fall back to normal Codex discovery.
+    }
+  }
+
   const readiness = createReadinessStore();
   const coordinator = createReadinessCoordinator({
     readiness,
@@ -450,7 +461,8 @@ async function startWorkbench({
 function installCleanupHandler(app, cleanups, {
   onCleanupError = message => console.error(`[PROJECT ZERO] ${message}`),
   retryDelayMs = 50,
-  maxCleanupAttempts = 2
+  maxCleanupAttempts = 2,
+  cleanupTimeoutMs = 10_000
 } = {}) {
   let cleanupStarted = false;
   let readyToQuit = false;
@@ -459,7 +471,7 @@ function installCleanupHandler(app, cleanups, {
   const runCleanup = () => {
     cleanupStarted = true;
     cleanupAttempts += 1;
-    Promise.allSettled(cleanups.map(cleanup => Promise.resolve().then(cleanup)))
+    Promise.allSettled(cleanups.map(cleanup => boundedCleanup(Promise.resolve().then(cleanup), cleanupTimeoutMs)))
       .then(results => {
         if (results.some(result => result.status === 'rejected')) {
           if (cleanupAttempts < maxCleanupAttempts) {

@@ -1,0 +1,8 @@
+{
+  "assets": [
+    {"file": "pilot-confirm.wav", "license": "CC0-1.0", "sha256": "c7671e0ef2f4462d796c8ae5b840bc08a4f95bf6be51217bedb66b48a15e9ccd"},
+    {"file": "sync-start.wav", "license": "CC0-1.0", "sha256": "ae97e9bc6153aa1cce51872add3d5e16c370f09e63fcfb3c25399b86c4114b1b"},
+    {"file": "system-awake.wav", "license": "CC0-1.0", "sha256": "25541c05666e3b396f64c48d72131c766a01f7718bebacbf4fdae6ad1d1ff186"},
+    {"file": "system-online.wav", "license": "CC0-1.0", "sha256": "9bc1145235ce71bdeaa46b00d8efe188b52c3984b7f024a0cfec628e3079a835"}
+  ]
+}

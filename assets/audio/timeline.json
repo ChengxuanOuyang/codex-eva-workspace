@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "cues": [
+    {"id": "system-awake", "at": 0, "file": "system-awake.wav"},
+    {"id": "sync-start", "at": 1.15, "file": "sync-start.wav"},
+    {"id": "pilot-confirm", "at": 2.35, "file": "pilot-confirm.wav"},
+    {"id": "system-online", "at": 3.2, "file": "system-online.wav"}
+  ]
+}
