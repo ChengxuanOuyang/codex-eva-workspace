@@ -26,7 +26,8 @@
         if (state.progress !== MAX_UNCONFIRMED_PROGRESS || !state.ready) return state;
         return {...state, phase: 'completing', confirmed: true};
       case 'skip':
-        if (state.phase === 'waiting' || state.phase === 'completing' || state.phase === 'complete') return state;
+        if (state.phase === 'completing' || state.phase === 'complete') return state;
+        if (state.phase === 'waiting' && state.progress === MAX_UNCONFIRMED_PROGRESS) return state;
         return {...state, phase: 'waiting', progress: MAX_UNCONFIRMED_PROGRESS};
       case 'complete':
         if (state.phase === 'complete') return state;

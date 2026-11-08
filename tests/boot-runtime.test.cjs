@@ -151,6 +151,34 @@ test('a skipped presentation becomes confirmable immediately when real readiness
   assert.equal(view.elements['#confirm-button'].disabled, false);
 });
 
+test('skip after failed readiness recovery still reaches confirmation and preserves health polling', async () => {
+  let calls = 0;
+  const view = fixture({
+    health: () => ++calls === 1
+      ? Promise.reject(Error('offline'))
+      : Promise.resolve({ready: true, code: 'READY'})
+  });
+
+  await view.clock.fireTimeout(0);
+  assert.equal(view.controller.getState().phase, 'failed');
+  await view.clock.fireTimeout(500);
+  assert.deepEqual(view.controller.getState(), {
+    phase: 'waiting', progress: 0, ready: true, confirmed: false
+  });
+
+  view.clock.fireTimeout(3000);
+  view.elements['#skip-button'].dispatch('click');
+
+  assert.deepEqual(view.controller.getState(), {
+    phase: 'waiting', progress: 99.2, ready: true, confirmed: false
+  });
+  assert.equal(view.clock.countIntervals(80), 0);
+  assert.equal(view.clock.countIntervals(100), 0);
+  assert.equal(view.clock.countTimeouts(600), 0);
+  assert.equal(view.clock.countTimeouts(500), 1);
+  assert.equal(view.elements['#confirm-button'].disabled, false);
+});
+
 test('failed recovery resumes logical progress while decorative presentation stays frozen', async () => {
   let calls = 0;
   const view = fixture({

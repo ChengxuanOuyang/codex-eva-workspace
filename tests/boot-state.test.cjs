@@ -30,6 +30,13 @@ test('skip atomically finishes presentation without fabricating readiness or con
   assert.deepEqual(nextBootState(ready, {type: 'skip'}), {
     phase: 'waiting', progress: 99.2, ready: true, confirmed: false
   });
+
+  const failed = nextBootState(initial, {type: 'failed'});
+  const recovered = nextBootState(failed, {type: 'ready'});
+  assert.deepEqual(recovered, {phase: 'waiting', progress: 20, ready: true, confirmed: false});
+  assert.deepEqual(nextBootState(recovered, {type: 'skip'}), {
+    phase: 'waiting', progress: 99.2, ready: true, confirmed: false
+  });
 });
 
 test('unknown events preserve the original state by reference and value', () => {

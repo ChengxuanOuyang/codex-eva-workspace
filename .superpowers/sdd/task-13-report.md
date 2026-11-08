@@ -49,3 +49,21 @@ These failures were behavioral assertions against the previous implementation, n
 - The pre-existing untracked remediation plan was neither modified nor staged.
 
 No known blocker remains.
+
+## Reviewer follow-up: recovered waiting state
+
+### Finding and RED evidence
+
+The first implementation treated every `waiting` state as an idempotent Skip. A real failure followed by recovery creates `waiting` while presentation progress may still be below `99.2`; clicking Skip then stopped the presentation timers but left progress below the confirmation threshold.
+
+Regression tests were added before the fix. `node --test tests/boot-state.test.cjs tests/boot-runtime.test.cjs` produced 22 passes and two expected failures:
+
+- the reducer sequence `syncing/20 -> failed -> ready -> skip` remained at `waiting/20`;
+- the runtime sequence `syncing/0 -> health failure -> READY -> skip` remained at `waiting/0`, leaving confirmation disabled.
+
+### Fix and GREEN evidence
+
+Skip is now idempotent only for `completing`, `complete`, or an already capped `waiting/99.2` state. A recovered `waiting` state below the cap is moved atomically to `99.2` while its real `ready` and `confirmed` values are preserved. Both reducer copies were updated.
+
+- `node --test tests/boot-state.test.cjs tests/boot-runtime.test.cjs`: 24/24 passed.
+- The runtime regression confirms the progress and display timers stop, the 500 ms health poll remains scheduled, and an already recovered READY state enables confirmation immediately.
