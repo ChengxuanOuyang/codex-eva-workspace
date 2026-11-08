@@ -7,6 +7,16 @@ const vm = require('node:vm');
 const {createAudioClock} = require('../renderer/boot/audio-clock.js');
 const {loadSequenceAudio} = require('../renderer/boot/sequence-audio.js');
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return {promise, resolve, reject};
+}
+
 function fakeRaf() {
   let callback;
   let nextId = 0;
@@ -118,6 +128,24 @@ test('audio currentTime is the authoritative presentation clock', async () => {
   assert.equal(clock.mode(), 'media');
 });
 
+test('repeated start shares one in-flight audio play', async () => {
+  const gate = deferred();
+  const audio = fakeAudio();
+  audio.play = function play() {
+    this.playCalls += 1;
+    return gate.promise;
+  };
+  const clock = createAudioClock({audio, onTick() {}, raf: fakeRaf()});
+
+  const first = clock.start();
+  const second = clock.start();
+
+  assert.equal(first, second);
+  assert.equal(audio.playCalls, 1);
+  gate.resolve();
+  await first;
+});
+
 test('the raf compatibility injection still uses media currentTime', async () => {
   const audio = fakeAudio({currentTime: 2});
   const raf = fakeRaf();
@@ -195,6 +223,72 @@ test('pause at 15500 ms and resume exclude the authorization wait', async () => 
 
   assert.equal(ticks.at(-2), 15500);
   assert.equal(ticks.at(-1), 16500);
+});
+
+test('media pause at 15500 ms and resume exclude the authorization wait', async () => {
+  const audio = fakeAudio();
+  const ticks = [];
+  const raf = fakeRaf();
+  const clock = createAudioClock({audio, onTick: value => ticks.push(value), raf});
+
+  await clock.start();
+  audio.currentTime = 15.5;
+  raf.fire();
+  clock.pause();
+  audio.currentTime = 45.5;
+  await clock.resume();
+  assert.equal(audio.currentTime, 15.5);
+  audio.currentTime = 16.5;
+  raf.fire();
+
+  assert.equal(ticks.at(-2), 15500);
+  assert.equal(ticks.at(-1), 16500);
+});
+
+test('pause invalidates a pending clock start so it cannot later play', async () => {
+  const gate = deferred();
+  const audio = fakeAudio();
+  audio.playing = false;
+  audio.play = function play() {
+    this.playCalls += 1;
+    return gate.promise.then(() => { this.playing = true; });
+  };
+  audio.pause = function pause() {
+    this.pauseCalls += 1;
+    this.playing = false;
+  };
+  const clock = createAudioClock({audio, onTick() {}, raf: fakeRaf()});
+
+  const starting = clock.start();
+  clock.pause();
+  gate.resolve();
+  await starting;
+
+  assert.equal(audio.playing, false);
+  assert.equal(audio.playCalls, 1);
+});
+
+test('destroy invalidates a pending clock start so it cannot later play', async () => {
+  const gate = deferred();
+  const audio = fakeAudio();
+  audio.playing = false;
+  audio.play = function play() {
+    this.playCalls += 1;
+    return gate.promise.then(() => { this.playing = true; });
+  };
+  audio.pause = function pause() {
+    this.pauseCalls += 1;
+    this.playing = false;
+  };
+  const clock = createAudioClock({audio, onTick() {}, raf: fakeRaf()});
+
+  const starting = clock.start();
+  await clock.destroy();
+  gate.resolve();
+  await starting;
+
+  assert.equal(audio.playing, false);
+  assert.equal(audio.closeCalls, 1);
 });
 
 test('seek synchronizes media and monotonic positions', async () => {
@@ -340,6 +434,87 @@ test('the sequence decoder fetches and decodes one complete local track', async 
   assert.deepEqual(starts, [[0, 2], [0, 7]]);
   assert.equal(stops.length, 2);
   assert.equal(contextClosed, true);
+});
+
+async function pendingSequenceTrack() {
+  const resumeGate = deferred();
+  const sources = [];
+  let context;
+
+  class AudioContext {
+    constructor() {
+      context = this;
+      this.currentTime = 0;
+      this.state = 'suspended';
+      this.destination = {};
+    }
+
+    async decodeAudioData() {
+      return {duration: 30};
+    }
+
+    createGain() {
+      return {gain: {value: 1}, connect() {}};
+    }
+
+    createBufferSource() {
+      const source = {connect() {}, start() {}, stop() {}, onended: null};
+      sources.push(source);
+      return source;
+    }
+
+    async resume() {
+      await resumeGate.promise;
+      this.state = 'running';
+    }
+
+    async close() {
+      this.state = 'closed';
+    }
+  }
+
+  const track = await loadSequenceAudio('/private/startup-reference.m4a', {
+    fetch: async () => ({ok: true, arrayBuffer: async () => new ArrayBuffer(1)}),
+    AudioContext
+  });
+  return {track, context, resumeGate, sources};
+}
+
+test('repeated track play shares one in-flight resume and creates one source', async () => {
+  const {track, resumeGate, sources} = await pendingSequenceTrack();
+
+  const first = track.play();
+  const second = track.play();
+  assert.equal(first, second);
+  assert.equal(sources.length, 0);
+  resumeGate.resolve();
+  await Promise.all([first, second]);
+
+  assert.equal(sources.length, 1);
+  await track.close();
+});
+
+test('close invalidates pending track play before a source can be created', async () => {
+  const {track, resumeGate, sources} = await pendingSequenceTrack();
+
+  const playing = track.play();
+  await track.close();
+  resumeGate.resolve();
+  await playing;
+
+  assert.equal(sources.length, 0);
+});
+
+test('pause invalidates pending track play before a source can be created', async () => {
+  const {track, resumeGate, sources} = await pendingSequenceTrack();
+
+  const playing = track.play();
+  track.pause();
+  resumeGate.resolve();
+  await playing;
+
+  assert.equal(sources.length, 0);
+  await track.close();
 });
 
 test('a decode failure closes its AudioContext', async () => {

@@ -41,6 +41,9 @@
     let position = 0;
     let playing = false;
     let closed = false;
+    let generation = 0;
+    let playPromise;
+    let closePromise;
 
     function stopSource() {
       if (!source) return;
@@ -82,26 +85,46 @@
       if (wasPlaying && position < buffer.duration) beginSource();
     }
 
-    async function play() {
-      if (closed) throw new Error('Sequence audio is closed');
-      if (playing) return;
-      if (position >= buffer.duration) position = 0;
-      if (context.state === 'suspended' && typeof context.resume === 'function') await context.resume();
-      beginSource();
+    function play() {
+      if (closed) return Promise.reject(new Error('Sequence audio is closed'));
+      if (playing) return Promise.resolve();
+      if (playPromise) return playPromise;
+
+      const playGeneration = generation;
+      const pending = (async () => {
+        if (position >= buffer.duration) position = 0;
+        if (context.state === 'suspended' && typeof context.resume === 'function') await context.resume();
+        if (closed || generation !== playGeneration || playing) return;
+        beginSource();
+      })();
+      playPromise = pending;
+      const clearPending = () => {
+        if (playPromise === pending) playPromise = undefined;
+      };
+      void pending.then(clearPending, clearPending);
+      return pending;
     }
 
     function pause() {
-      if (closed || !playing) return;
+      if (closed) return;
+      generation += 1;
+      if (!playing) return;
       position = currentTime();
       playing = false;
       stopSource();
     }
 
-    async function close() {
-      if (closed) return;
-      pause();
+    function close() {
+      if (closePromise) return closePromise;
+      generation += 1;
+      if (playing) {
+        position = currentTime();
+        playing = false;
+        stopSource();
+      }
       closed = true;
-      await context.close();
+      closePromise = Promise.resolve().then(() => context.close());
+      return closePromise;
     }
 
     const track = {play, pause, seek, close};

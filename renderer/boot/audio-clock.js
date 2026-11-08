@@ -55,6 +55,8 @@
     let fadeResolve;
     let fadeInitialVolume;
     let destroyPromise;
+    let playbackPromise;
+    let lifecycleGeneration = 0;
 
     function bounded(milliseconds) {
       const finite = Number.isFinite(milliseconds) ? milliseconds : 0;
@@ -102,50 +104,67 @@
       }
     }
 
-    async function start() {
-      if (destroyed) return;
+    function beginMediaPlayback() {
+      const playbackGeneration = ++lifecycleGeneration;
+      paused = false;
+      const pending = (async () => {
+        let rejected = false;
+        try {
+          await audio.play();
+        } catch {
+          rejected = true;
+        }
+        if (destroyed || paused || playbackGeneration !== lifecycleGeneration) {
+          try { audio.pause(); } catch {}
+          return;
+        }
+        if (rejected) switchToSilent(frozenElapsed);
+        else activeMode = 'media';
+        scheduleFrame();
+      })();
+      playbackPromise = pending;
+      const clearPending = () => {
+        if (playbackPromise === pending) playbackPromise = undefined;
+      };
+      void pending.then(clearPending, clearPending);
+      return pending;
+    }
+
+    function start() {
+      if (destroyed) return Promise.resolve();
+      if (playbackPromise) return playbackPromise;
       if (started) return resume();
       started = true;
       ended = false;
       frozenElapsed = 0;
       audio.currentTime = safeStart;
-      try {
-        await audio.play();
-        if (destroyed) return;
-        activeMode = 'media';
-      } catch {
-        if (destroyed) return;
-        switchToSilent(0);
-      }
-      paused = false;
-      scheduleFrame();
+      return beginMediaPlayback();
     }
 
     function pause() {
-      if (destroyed || paused) return;
-      frozenElapsed = elapsed();
+      if (destroyed) return;
+      const wasPaused = paused;
+      if (!paused) frozenElapsed = elapsed();
       paused = true;
+      lifecycleGeneration += 1;
       cancelScheduledFrame();
-      audio.pause();
+      if (!wasPaused || playbackPromise) audio.pause();
     }
 
-    async function resume() {
-      if (destroyed || !started || !paused) return;
+    function resume() {
+      if (destroyed || !started || !paused) return Promise.resolve();
+      if (playbackPromise) return playbackPromise;
       ended = false;
       if (activeMode === 'media') {
         audio.currentTime = safeStart + frozenElapsed / 1000;
-        try {
-          await audio.play();
-          if (destroyed) return;
-        } catch {
-          if (destroyed) return;
-          switchToSilent(frozenElapsed);
-        }
+        return beginMediaPlayback();
       } else {
         silentStartedAt = now() - frozenElapsed;
       }
       paused = false;
+      lifecycleGeneration += 1;
       scheduleFrame();
+      return Promise.resolve();
     }
 
     function seek(milliseconds) {
@@ -208,9 +227,12 @@
     function destroy() {
       if (destroyPromise) return destroyPromise;
       destroyed = true;
+      paused = true;
+      lifecycleGeneration += 1;
       cancelScheduledFrame();
       cancelFade();
-      destroyPromise = Promise.resolve(typeof audio.close === 'function' ? audio.close() : undefined);
+      try { audio.pause(); } catch {}
+      destroyPromise = Promise.resolve().then(() => typeof audio.close === 'function' ? audio.close() : undefined);
       return destroyPromise;
     }
 
