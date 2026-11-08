@@ -7,6 +7,7 @@ const {normalizeModels, selectModel} = require('./model-options.cjs');
 const {reduceEvent} = require('./state-reducer.cjs');
 
 const MAX_MESSAGE_LENGTH = 60_000;
+const MAX_ITEM_TEXT = 512 * 1024;
 const APPROVAL_METHODS = new Set([
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
@@ -19,11 +20,12 @@ function clone(value) {
 }
 
 function itemText(item) {
-  if (typeof item.text === 'string') return item.text;
+  if (typeof item.text === 'string') return item.text.slice(-MAX_ITEM_TEXT);
   return (item.content || [])
     .filter(part => ['input_text', 'output_text', 'text'].includes(part?.type) && typeof part.text === 'string')
     .map(part => part.text)
-    .join('');
+    .join('')
+    .slice(-MAX_ITEM_TEXT);
 }
 
 function hydrateThread(local, remote) {
@@ -98,6 +100,7 @@ class WorkbenchController extends EventEmitter {
     this.bridge.on?.('approval', this.onApproval);
     this.bridge.on?.('disconnected', this.onDisconnected);
     this.attached = true;
+    for (const thread of this.state.threads.filter(entry => entry.activeTurn)) await this.resume(thread);
     return this.snapshot();
   }
 

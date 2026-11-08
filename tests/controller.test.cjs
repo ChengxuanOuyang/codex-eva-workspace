@@ -134,9 +134,9 @@ test('clears stale persisted active turns after remote resume confirms no active
   const restored = new WorkbenchController({bridge, store: restoredStore});
   await restored.initialize();
   const recovered = restored.threadFor(thread.id);
-  await restored.resume(recovered);
   assert.equal(recovered.activeTurn, null);
   assert.equal(recovered.status, 'interrupted');
+  assert.ok(bridge.calls.some(call => call.method === 'thread/resume' && call.params.threadId === thread.id));
   await restored.close();
 });
 
