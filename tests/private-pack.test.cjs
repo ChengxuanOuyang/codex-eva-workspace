@@ -165,7 +165,12 @@ test('stages only fixed project entries and privately replaces exact validated c
   assert.deepEqual(builderCall.topLevel, projectEntries);
   assert.equal(builderCall.index.includes(publicLabel), false);
   assert.equal(builderCall.index.includes(expectedTheme.displayName), true);
+  assert.equal(
+    builderCall.index.includes('PROJECT ZERO <span>//</span> TEST PRIVATE THEME'),
+    true
+  );
   assert.equal(builderCall.packageJson.build.directories.output, output);
+  assert.equal(builderCall.packageJson.build.npmRebuild, false);
   for (const [file, bytes] of expectedTheme.contents) {
     if (file === 'theme.json') continue;
     assert.deepEqual(builderCall.stagedContents.get(file), bytes);

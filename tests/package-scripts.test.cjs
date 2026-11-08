@@ -176,6 +176,14 @@ test('pack cleans the output and packaged smoke selects the exact current archit
     unpackedApplicationDirectory('/repo', {platform: 'darwin', architecture: 'x64'}),
     '/repo/dist/mac'
   );
+  assert.equal(
+    unpackedApplicationDirectory('/repo', {
+      platform: 'darwin',
+      architecture: 'arm64',
+      outputDirectory: 'dist-private'
+    }),
+    '/repo/dist-private/mac-arm64'
+  );
 
   const smokeSource = fs.readFileSync(
     path.join(__dirname, 'e2e', 'packaged-smoke.test.cjs'),
@@ -233,4 +241,52 @@ test('public pack has no private theme input or validator path', async () => {
   });
   assert.deepEqual(calls.map(call => call[0]), ['remove', 'builder']);
   assert.equal(calls[1][1].environment.PROJECT_ZERO_LOCAL_THEME_DIR, undefined);
+});
+
+test('public README documents the supported local preview without private character assets', async () => {
+  const projectRoot = path.join(__dirname, '..');
+  const readme = await fsPromises.readFile(path.join(projectRoot, 'README.md'), 'utf8');
+
+  assert.match(readme, /非官方/);
+  assert.match(readme, /docs\/images\/pilot-00-preview\.png/);
+  assert.match(readme, /macOS/);
+  assert.match(readme, /Node\.js 24/);
+  assert.match(readme, /Codex/);
+  for (const command of ['npm ci', 'npm run verify', 'npm run pack']) {
+    assert.match(readme, new RegExp(command.replaceAll(' ', '\\s+')));
+  }
+  assert.match(readme, /未签名/);
+  assert.match(readme, /未公证/);
+  assert.match(readme, /Gatekeeper/);
+  assert.doesNotMatch(readme, /spctl\s+--master-disable|xattr\s+-[a-z]*r[a-z]*\s+-d/i);
+  assert.match(readme, /127\.0\.0\.1|loopback/i);
+  assert.match(readme, /不加载远程素材|无远程素材/);
+  assert.match(readme, /MIT/);
+  assert.match(readme, /CC BY 4\.0/);
+  assert.match(readme, /GitHub[^\n]*不包含[^\n]*私人角色素材/);
+  await fsPromises.access(path.join(projectRoot, 'docs', 'images', 'pilot-00-preview.png'));
+});
+
+test('private theme guide states the exact package contract and honest cleanup boundaries', async () => {
+  const guide = await fsPromises.readFile(
+    path.join(__dirname, '..', 'docs', 'private-themes.md'),
+    'utf8'
+  );
+
+  for (const file of [
+    'theme.json', 'assets.json', 'ASSET-LICENSE.md',
+    'scene-a-sync.webp', 'scene-b-awakening.webp', 'scene-c-online.webp'
+  ]) assert.match(guide, new RegExp(file.replace('.', '\\.')));
+  for (const field of [
+    'schemaVersion', 'id', 'displayName', 'scenes', 'assetManifest', 'artNotice', 'sha256'
+  ]) assert.match(guide, new RegExp(`\\b${field}\\b`));
+  assert.match(guide, /shasum\s+-a\s+256/);
+  assert.match(guide, /npm run pack:private -- --theme/);
+  assert.match(guide, /dist-private/);
+  assert.match(guide, /不要[^\n]*(?:提交|上传)/);
+  assert.match(guide, /Gatekeeper/);
+  assert.match(guide, /同一[^\n]*Codex[^\n]*账号[^\n]*不会[^\n]*自动同步/);
+  assert.match(guide, /不使用[^\n]*recursive delete|无递归删除/i);
+  assert.match(guide, /same-UID|同一 UID/i);
+  assert.match(guide, /APFS[^\n]*(?:不保证|并非)[^\n]*(?:取证|安全擦除)/i);
 });

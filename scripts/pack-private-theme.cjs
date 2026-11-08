@@ -11,6 +11,7 @@ const PROJECT_ENTRIES = Object.freeze([
   'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
 ]);
 const PUBLIC_LABEL = 'PROJECT ZERO // PILOT CODEX WORKBENCH';
+const PUBLIC_VISIBLE_LABEL = 'PROJECT ZERO <span>//</span> PILOT CODEX WORKBENCH';
 
 class PrivateThemePackError extends Error {
   constructor(cause, cleanupCause = null) {
@@ -34,6 +35,16 @@ function snapshotTheme(theme) {
     scenes: Object.freeze({...theme.scenes}),
     contents: new Map([...theme.contents].map(([file, bytes]) => [file, Buffer.from(bytes)]))
   });
+}
+
+function visibleThemeLabel(displayName) {
+  return displayName
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replace(' // ', ' <span>//</span> ');
 }
 
 function sameIdentity(left, right) {
@@ -375,7 +386,9 @@ async function packPrivateThemeInternal({
     if (!index.includes(PUBLIC_LABEL)) throw Error('PRIVATE_THEME_PUBLIC_LABEL_MISSING');
     await writePrivateFile(
       indexPath,
-      Buffer.from(index.replaceAll(PUBLIC_LABEL, theme.displayName)),
+      Buffer.from(index
+        .replaceAll(PUBLIC_LABEL, theme.displayName)
+        .replaceAll(PUBLIC_VISIBLE_LABEL, visibleThemeLabel(theme.displayName))),
       privateFiles,
       fsModule
     );
@@ -384,7 +397,8 @@ async function packPrivateThemeInternal({
     const packageJson = JSON.parse(await fsModule.readFile(packagePath, 'utf8'));
     packageJson.build = {
       ...packageJson.build,
-      directories: {...packageJson.build.directories, output}
+      directories: {...packageJson.build.directories, output},
+      npmRebuild: false
     };
     await fsModule.writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 

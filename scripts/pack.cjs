@@ -19,11 +19,15 @@ function productionEnvironment(environment) {
 
 function unpackedApplicationDirectory(projectRoot, {
   platform = process.platform,
-  architecture = process.arch
+  architecture = process.arch,
+  outputDirectory = 'dist'
 } = {}) {
   if (platform !== 'darwin') throw Error('PROJECT ZERO directory packaging currently supports macOS only');
-  if (architecture === 'arm64') return path.join(projectRoot, 'dist', 'mac-arm64');
-  if (architecture === 'x64') return path.join(projectRoot, 'dist', 'mac');
+  const outputRoot = path.isAbsolute(outputDirectory)
+    ? outputDirectory
+    : path.join(projectRoot, outputDirectory);
+  if (architecture === 'arm64') return path.join(outputRoot, 'mac-arm64');
+  if (architecture === 'x64') return path.join(outputRoot, 'mac');
   throw Error(`Unsupported macOS architecture: ${architecture}`);
 }
 
