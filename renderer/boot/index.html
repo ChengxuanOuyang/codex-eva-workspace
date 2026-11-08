@@ -108,7 +108,7 @@
           <p class="workbench-title">PROJECT ZERO <span>//</span> REI CODEX WORKBENCH</p>
         </div>
       </div>
-      <p class="shell-status"><span class="signal-dot"></span>本地链路已就绪</p>
+      <p class="shell-status"><span class="signal-dot"></span><span id="shell-readiness-text">正在检查本地链路</span></p>
     </header>
     <div class="workbench-layout">
       <nav class="workbench-nav" aria-label="工作台导航占位">
@@ -130,9 +130,13 @@
         <p class="rail-title">STATUS / LOCAL</p>
         <dl>
           <div><dt>运行模式</dt><dd>本地</dd></div>
-          <div><dt>Codex 链路</dt><dd>READY</dd></div>
+          <div><dt>Codex 链路</dt><dd id="shell-link-state">INITIALIZING</dd></div>
           <div><dt>当前阶段</dt><dd>PHASE 1</dd></div>
         </dl>
+        <div class="shell-health" role="status" aria-live="polite">
+          <p id="shell-diagnostic-text">正在检查 Codex 链路。</p>
+          <button id="shell-retry-button" class="retry-button" type="button" hidden>重新检查 Codex</button>
+        </div>
       </aside>
     </div>
   </main>

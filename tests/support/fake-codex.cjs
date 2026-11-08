@@ -55,6 +55,7 @@ class InMemoryCodexBridge extends EventEmitter {
     if (!this.connected) throw Error('Codex is disconnected');
     this.calls.push(method);
     this.record(method);
+    if (method === 'configRequirements/read') return {requirements: {}};
     if (method === 'account/read') {
       return {
         account: {type: 'chatgpt', email: null, planType: 'plus'},

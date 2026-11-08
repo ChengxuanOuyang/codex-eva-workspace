@@ -202,6 +202,8 @@ body[data-scene="online"] #workbench-shell:not([hidden]) .workbench-scene { opac
 .workbench-status dl { margin: 0; border-top: 1px solid var(--line); }
 .workbench-status dl div { padding: 14px 0; display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); font-size: 10px; }
 .workbench-status dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 650; }
+.shell-health { margin-top: 22px; padding: 16px; border: 1px solid var(--line); background: rgba(246, 251, 250, 0.72); }
+.shell-health p { min-height: 3.4em; margin: 0 0 12px; color: var(--muted); font-size: 10px; line-height: 1.7; }
 
 @keyframes signal-pulse { 50% { opacity: 0.4; } }
 @keyframes orbit-spin { to { transform: rotate(360deg); } }

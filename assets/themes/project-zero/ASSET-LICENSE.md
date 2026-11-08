@@ -2,11 +2,16 @@
 
 Copyright © 2026 PROJECT ZERO contributors.
 
-The original artwork in this directory and its runtime derivatives are licensed
-under the [Creative Commons Attribution 4.0 International License](https://creativecommons.org/licenses/by/4.0/).
-You may share and adapt these assets for any purpose, including commercially,
-provided that you give appropriate credit to **PROJECT ZERO contributors**,
-provide a link to the license, and indicate whether changes were made.
+The contributors offer their original expression in this directory and its
+runtime derivatives under the [Creative Commons Attribution 4.0 International
+License](https://creativecommons.org/licenses/by/4.0/). CC BY applies only to the contributors' original expression to the extent they own it. Give appropriate
+credit to **PROJECT ZERO contributors**, link the license, and indicate whether
+changes were made.
+
+CC BY 4.0 does not license or clear third-party character or trademark rights,
+and it is not a commercial-use guarantee. Anyone redistributing these fan-project
+assets remains responsible for evaluating any additional permissions required in
+their jurisdiction and use case.
 
 ## Production record and boundaries
 
@@ -26,7 +31,10 @@ from Evangelion rights holders, OpenAI, or any other third party. This record
 documents the project's intended provenance and licensing; it is not an
 independent legal determination of rights or clearance.
 
-The lossless PNG masters live in `source/`. The WebP files in
-`renderer/boot/assets/` are high-quality local runtime derivatives. Individual
+The lossless PNG masters live in `source/`. Each PNG was adapted locally into the high-quality WebP runtime derivative in `renderer/boot/assets/`. Individual
 filenames, checksums, production method, and prompt summaries are recorded in
 [`assets.json`](assets.json).
+
+The repository's source code is licensed separately under MIT. This art notice
+does not change the code license, and the MIT license does not change these art
+terms or clear third-party rights.

@@ -133,12 +133,35 @@ test('application reaches user confirmation without remote content and closes cl
     assert.equal(await page.getByRole('button', {name: /跳过动态演示/}).count(), 0);
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench-scene')).opacity === '1');
     assert.equal(await page.locator('#workbench-shell [data-feature="chat"]').count(), 0);
+
+    await fs.writeFile(disconnectSignalPath, 'disconnect-after-shell');
+    await page.waitForFunction(() => document.body.dataset.readiness === 'disconnected', null, {timeout: 2000});
+    await page.getByText('DISCONNECTED', {exact: true}).waitFor();
+    await page.getByText('Codex 连接已断开。请重试建立本地连接。', {exact: true}).waitFor();
+    const shellRetry = page.locator('#shell-retry-button');
+    await shellRetry.waitFor({state: 'visible'});
+    assert.equal(await page.locator('#boot-screen').isHidden(), true);
+    assert.equal(await page.locator('#workbench-shell').isVisible(), true);
+    assert.equal(await page.locator('body').getAttribute('data-phase'), 'complete');
+
+    await fs.rm(disconnectSignalPath, {force: true});
+    await shellRetry.click();
+    await page.waitForFunction(() => document.body.dataset.readiness === 'ready');
+    await page.getByText('READY', {exact: true}).waitFor();
+    assert.equal(await shellRetry.isHidden(), true);
+    assert.equal(await page.locator('#boot-screen').isHidden(), true);
+    assert.equal(await page.locator('#workbench-shell').isVisible(), true);
+    assert.equal(await page.locator('body').getAttribute('data-phase'), 'complete');
   } finally {
     await app?.close();
   }
 
   const calls = (await fs.readFile(tracePath, 'utf8')).trim().split('\n');
-  assert.deepEqual(calls, ['account/read', 'model/list', 'disconnected', 'account/read', 'model/list']);
+  assert.deepEqual(calls, [
+    'configRequirements/read', 'account/read', 'model/list', 'disconnected',
+    'configRequirements/read', 'account/read', 'model/list', 'disconnected',
+    'configRequirements/read', 'account/read', 'model/list'
+  ]);
   await fs.rm(traceRoot, {recursive: true, force: true});
 
   assert.ok(origin, 'the workbench origin was captured before shutdown');

@@ -82,7 +82,8 @@ function fixture(api, {reducedMotion = false} = {}) {
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
-    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell'
+    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell',
+    '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
   elements['#boot-screen'].hidden = false;
@@ -406,9 +407,57 @@ test('completion invalidates an overlapping stale poll and trusts only its final
   assert.equal(view.elements['#confirm-button'].listeners.has('click'), false);
   assert.equal(view.elements['#skip-button'].listeners.has('click'), false);
   assert.equal(view.rootListeners.has('keydown'), false);
-  assert.equal(view.rootListeners.has('pagehide'), false);
+  assert.equal(view.rootListeners.has('pagehide'), true);
   assert.equal(view.clock.intervals.size, 0);
-  assert.equal(view.clock.timeouts.size, 0);
+  assert.equal(view.clock.countTimeouts(500), 1);
+});
+
+test('the mounted shell owns live health and recovers without replaying boot or duplicating retry', async () => {
+  const retry = deferred();
+  let healthCalls = 0;
+  let retryCalls = 0;
+  const view = fixture({
+    health: () => {
+      healthCalls += 1;
+      if (healthCalls <= 2) return Promise.resolve({ready: true, code: 'READY'});
+      if (healthCalls === 3) return Promise.resolve({ready: false, code: 'DISCONNECTED'});
+      return Promise.resolve({ready: true, code: 'READY'});
+    },
+    retryReadiness: () => {
+      retryCalls += 1;
+      return retry.promise;
+    }
+  });
+
+  await view.clock.fireTimeout(0);
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
+  view.elements['#confirm-button'].dispatch('click');
+  await view.clock.fireTimeout(720);
+  assert.equal(view.controller.getState().phase, 'complete');
+  assert.equal(view.elements['#workbench-shell'].hidden, false);
+
+  await view.clock.fireTimeout(500);
+  assert.equal(view.controller.getState().phase, 'complete');
+  assert.equal(view.document.body.dataset.scene, 'online');
+  assert.equal(view.document.body.dataset.readiness, 'disconnected');
+  assert.equal(view.elements['#shell-link-state'].textContent, 'DISCONNECTED');
+  assert.match(view.elements['#shell-diagnostic-text'].textContent, /连接已断开/);
+  assert.equal(view.elements['#shell-retry-button'].hidden, false);
+
+  const firstRetry = view.elements['#shell-retry-button'].dispatch('click');
+  const overlappingRetry = view.elements['#shell-retry-button'].dispatch('click');
+  assert.equal(retryCalls, 1);
+  assert.equal(view.elements['#shell-retry-button'].disabled, true);
+  retry.resolve({accepted: true});
+  await Promise.all([firstRetry, overlappingRetry]);
+  await view.clock.fireTimeout(0);
+
+  assert.equal(view.controller.getState().phase, 'complete');
+  assert.equal(view.elements['#boot-screen'].hidden, true);
+  assert.equal(view.elements['#workbench-shell'].hidden, false);
+  assert.equal(view.document.body.dataset.readiness, 'ready');
+  assert.equal(view.elements['#shell-link-state'].textContent, 'READY');
+  assert.equal(view.elements['#shell-retry-button'].hidden, true);
 });
 
 test('destroy aborts an in-flight request and blocks later DOM writes', async () => {
@@ -473,7 +522,8 @@ test('automatic startup is a window singleton across repeated script execution',
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
-    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell'
+    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell',
+    '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
   elements['#boot-screen'].hidden = false;

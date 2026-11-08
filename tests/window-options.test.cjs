@@ -79,6 +79,7 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
 
     async request(method) {
       calls.push(`bridge:request:${method}`);
+      if (method === 'configRequirements/read') return {requirements: {}};
       if (method === 'account/read') {
         return {
           account: {type: 'chatgpt', email: 'private@example.com', planType: 'plus'},
@@ -250,6 +251,7 @@ function readinessBridge(account, models) {
   return class ReadinessBridge {
     async start() {}
     async request(method) {
+      if (method === 'configRequirements/read') return {requirements: {}};
       return method === 'account/read' ? account : models;
     }
     async stop() {}
@@ -275,6 +277,7 @@ function pagedReadinessBridge(account, pages, requests) {
     async start() {}
     async request(method, params) {
       requests.push({method, params});
+      if (method === 'configRequirements/read') return {requirements: {}};
       if (method === 'account/read') return account;
       return pages.get(params.cursor) || pages.get(null);
     }
@@ -378,11 +381,140 @@ test('workbench aggregates launchable models across every official catalog page'
   await resources.initialization;
 
   assert.deepEqual(requests, [
+    {method: 'configRequirements/read', params: {}},
     {method: 'account/read', params: {}},
     {method: 'model/list', params: {}},
     {method: 'model/list', params: {cursor: 'second-page'}}
   ]);
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('account update snapshots revoke READY and serialize a complete official revalidation', async () => {
+  const fixture = startFixture();
+  const requests = [];
+  const secondPage = deferred();
+  class AccountUpdateBridge extends EventEmitter {
+    constructor() {
+      super();
+      this.connected = false;
+      this.modelReads = 0;
+    }
+    async start() { this.connected = true; }
+    async request(method, params) {
+      requests.push({method, params});
+      if (method === 'configRequirements/read') return {requirements: {}};
+      if (method === 'account/read') {
+        return {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
+      }
+      this.modelReads += 1;
+      if (this.modelReads === 1) return {data: [validModel()], nextCursor: null};
+      if (this.modelReads === 2) {
+        return {data: [validModel({hidden: true})], nextCursor: 'second-page'};
+      }
+      if (this.modelReads === 3) return secondPage.promise;
+      return {data: [validModel()], nextCursor: null};
+    }
+    async stop() { this.connected = false; }
+  }
+  fixture.dependencies.CodexBridgeClass = AccountUpdateBridge;
+
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: true, code: 'READY'});
+  requests.length = 0;
+
+  resources.bridge.emit('notification', {
+    method: 'account/updated',
+    params: {privatePayload: '/Users/private/account'}
+  });
+  resources.bridge.emit('notification', {method: 'account/updated', params: {burst: 2}});
+
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'INITIALIZING'});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'INITIALIZING'});
+  secondPage.resolve({data: [validModel()], nextCursor: null});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(requests, [
+    {method: 'configRequirements/read', params: {}},
+    {method: 'account/read', params: {}},
+    {method: 'model/list', params: {}},
+    {method: 'model/list', params: {cursor: 'second-page'}}
+  ]);
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: true, code: 'READY'});
+  assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /private|Users|burst/);
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('a disconnected bridge cannot let a stale account revalidation restore READY', async () => {
+  const fixture = startFixture();
+  const accountGate = deferred();
+  let accountReads = 0;
+  class StaleAccountBridge extends EventEmitter {
+    constructor() {
+      super();
+      this.connected = false;
+    }
+    async start() { this.connected = true; }
+    async request(method) {
+      if (method === 'configRequirements/read') return {requirements: {}};
+      if (method === 'account/read') {
+        accountReads += 1;
+        if (accountReads > 1) return accountGate.promise;
+        return {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
+      }
+      return {data: [validModel()], nextCursor: null};
+    }
+    async stop() { this.connected = false; }
+  }
+  fixture.dependencies.CodexBridgeClass = StaleAccountBridge;
+
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
+  resources.bridge.emit('notification', {method: 'account/updated'});
+  await new Promise(resolve => setImmediate(resolve));
+  resources.bridge.connected = false;
+  resources.bridge.emit('disconnected', {private: '/Users/private'});
+  accountGate.resolve({account: {type: 'apiKey'}, requiresOpenaiAuth: false});
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
+  assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /private|Users/);
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+});
+
+test('account notification listeners ignore malformed signals and detach on replacement and close', async () => {
+  const fixture = startFixture();
+  const bridges = [];
+  class ListenerBridge extends EventEmitter {
+    constructor() {
+      super();
+      this.connected = false;
+      bridges.push(this);
+    }
+    async start() { this.connected = true; }
+    async request(method) {
+      if (method === 'configRequirements/read') return {requirements: {}};
+      if (method === 'account/read') return {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
+      return {data: [validModel()], nextCursor: null};
+    }
+    async stop() { this.connected = false; }
+  }
+  fixture.dependencies.CodexBridgeClass = ListenerBridge;
+
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
+  assert.equal(bridges[0].listenerCount('notification'), 1);
+
+  bridges[0].emit('notification', null);
+  bridges[0].emit('notification', {method: 'account/update', params: {private: true}});
+  assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: true, code: 'READY'});
+
+  await fixture.getServiceOptions().retryInitialization();
+  assert.equal(bridges[0].listenerCount('notification'), 0);
+  assert.equal(bridges[1].listenerCount('notification'), 1);
+
+  await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
+  assert.equal(bridges[1].listenerCount('notification'), 0);
 });
 
 test('workbench redacts a malformed later model catalog page as disconnected', async () => {
@@ -400,6 +532,7 @@ test('workbench redacts a malformed later model catalog page as disconnected', a
   const resources = await startWorkbench(fixture.dependencies);
   await resources.initialization;
   assert.deepEqual(requests, [
+    {method: 'configRequirements/read', params: {}},
     {method: 'account/read', params: {}},
     {method: 'model/list', params: {}},
     {method: 'model/list', params: {cursor: 'second-page'}}
@@ -423,6 +556,7 @@ test('workbench redacts repeated model catalog cursors without cycling', async (
   const resources = await startWorkbench(fixture.dependencies);
   await resources.initialization;
   assert.deepEqual(requests, [
+    {method: 'configRequirements/read', params: {}},
     {method: 'account/read', params: {}},
     {method: 'model/list', params: {}},
     {method: 'model/list', params: {cursor: 'repeated-page'}}
@@ -491,6 +625,7 @@ test('retry shares one initialization attempt and cleanup owns every retry bridg
       if (bridges.length === 1) await firstStart.promise;
     }
     async request(method) {
+      if (method === 'configRequirements/read') return {requirements: {}};
       if (method === 'account/read') {
         return {account: {type: 'apiKey'}, requiresOpenaiAuth: false};
       }

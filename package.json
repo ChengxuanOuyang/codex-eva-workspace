@@ -28,7 +28,7 @@
     "appId": "io.github.chengxuanouyang.codex-eva-workspace",
     "productName": "PROJECT ZERO — REI CODEX WORKBENCH",
     "asar": true,
-    "files": ["app/**/*", "workbench/**/*", "renderer/**/*", "package.json", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
+    "files": ["app/**/*", "workbench/**/*", "renderer/**/*", "assets/themes/project-zero/assets.json", "assets/themes/project-zero/ASSET-LICENSE.md", "package.json", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
     "mac": {"category": "public.app-category.developer-tools", "hardenedRuntime": false, "identity": null}
   }
 }

@@ -99,6 +99,10 @@ function launchableModel(model) {
 }
 
 async function verifyCodexReadiness(bridge) {
+  const requirements = await bridge.request('configRequirements/read', {});
+  if (!requirements || typeof requirements !== 'object' || Array.isArray(requirements)) {
+    throw readinessError();
+  }
   const account = await bridge.request('account/read', {});
   if (!validAccountResponse(account)) throw readinessError();
 
@@ -241,25 +245,68 @@ function createReadinessCoordinator({
 }) {
   const ownedBridges = new Set();
   const disconnectHandlers = new Map();
+  const notificationHandlers = new Map();
+  const validationRecords = new Map();
   let activeBridge = null;
   let attempt = 0;
   let closed = false;
   let inFlight = null;
 
-  function detachDisconnectHandler(bridge) {
-    const handler = disconnectHandlers.get(bridge);
-    if (!handler) return;
-    bridge.off?.('disconnected', handler);
-    bridge.removeListener?.('disconnected', handler);
-    disconnectHandlers.delete(bridge);
+  function detachBridgeHandlers(bridge) {
+    const disconnectHandler = disconnectHandlers.get(bridge);
+    if (disconnectHandler) {
+      bridge.off?.('disconnected', disconnectHandler);
+      bridge.removeListener?.('disconnected', disconnectHandler);
+      disconnectHandlers.delete(bridge);
+    }
+    const notificationHandler = notificationHandlers.get(bridge);
+    if (notificationHandler) {
+      bridge.off?.('notification', notificationHandler);
+      bridge.removeListener?.('notification', notificationHandler);
+      notificationHandlers.delete(bridge);
+    }
   }
 
   async function stopOwnedBridge(bridge) {
     if (!bridge) return;
-    detachDisconnectHandler(bridge);
+    detachBridgeHandlers(bridge);
     await stopBridgeAndConfirm(bridge);
     ownedBridges.delete(bridge);
     if (activeBridge === bridge) activeBridge = null;
+  }
+
+  function validateBridge(bridge, attemptId) {
+    const existing = validationRecords.get(bridge);
+    if (existing) {
+      existing.queued = true;
+      return existing.promise;
+    }
+
+    const record = {queued: false, promise: null};
+    const operation = Promise.resolve().then(async () => {
+      do {
+        record.queued = false;
+        const code = await verifyCodexReadiness(bridge);
+        if (closed || attemptId !== attempt || activeBridge !== bridge || bridge.connected === false) {
+          return readiness.get();
+        }
+        if (!record.queued) {
+          readiness.set(code);
+          return readiness.get();
+        }
+      } while (record.queued);
+      return readiness.get();
+    }).catch(() => {
+      if (!closed && attemptId === attempt && activeBridge === bridge && bridge.connected !== false) {
+        readiness.set('DISCONNECTED');
+      }
+      return readiness.get();
+    }).finally(() => {
+      if (validationRecords.get(bridge) === record) validationRecords.delete(bridge);
+    });
+    record.promise = operation;
+    validationRecords.set(bridge, record);
+    return operation;
   }
 
   async function initialize(attemptId) {
@@ -284,19 +331,24 @@ function createReadinessCoordinator({
       disconnected = true;
       readiness.set('DISCONNECTED');
     };
+    const revalidateAccountSnapshot = message => {
+      if (!message || typeof message !== 'object' || message.method !== 'account/updated') return;
+      if (closed || activeBridge !== bridge || attemptId !== attempt || bridge.connected === false) return;
+      readiness.set('INITIALIZING');
+      void validateBridge(bridge, attemptId);
+    };
     if (typeof bridge.on === 'function') {
       disconnectHandlers.set(bridge, revokeReadiness);
       bridge.on('disconnected', revokeReadiness);
+      notificationHandlers.set(bridge, revalidateAccountSnapshot);
+      bridge.on('notification', revalidateAccountSnapshot);
     }
 
     await bridge.start();
     if (closed || attemptId !== attempt || disconnected || bridge.connected === false) {
       return readiness.get();
     }
-    const code = await verifyCodexReadiness(bridge);
-    if (!closed && attemptId === attempt && !disconnected && bridge.connected !== false) {
-      readiness.set(code);
-    }
+    await validateBridge(bridge, attemptId);
     return readiness.get();
   }
 

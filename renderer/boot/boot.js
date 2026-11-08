@@ -46,7 +46,11 @@
       ring: document.querySelector('#ring-stroke'),
       skip: document.querySelector('#skip-button'),
       bootScreen: document.querySelector('#boot-screen'),
-      workbench: document.querySelector('#workbench-shell')
+      workbench: document.querySelector('#workbench-shell'),
+      shellReadiness: document.querySelector('#shell-readiness-text'),
+      shellLinkState: document.querySelector('#shell-link-state'),
+      shellDiagnostic: document.querySelector('#shell-diagnostic-text'),
+      shellRetry: document.querySelector('#shell-retry-button')
     };
     let state = {phase: 'syncing', progress: 0, ready: false, confirmed: false};
     let started = false;
@@ -63,6 +67,7 @@
     let completeTimer;
     let awakeningTimer;
     let opening = true;
+    let readinessCode = 'INITIALIZING';
 
     function setText(element, value) {
       if (!destroyed && element.textContent !== value) element.textContent = value;
@@ -142,7 +147,7 @@
       render();
       if (state.phase === 'waiting') freezePresentation();
       if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
-      if (state.phase === 'complete') unbindInteractions();
+      if (state.phase === 'complete') unbindBootInteractions();
       return true;
     }
 
@@ -157,8 +162,16 @@
 
     function applyReadiness(health, {retrying = false} = {}) {
       const code = normalizeReadiness(health);
+      readinessCode = code;
       document.body.dataset.readiness = code.toLowerCase();
-      if (code === 'READY') {
+      if (state.phase === 'complete') {
+        const details = READINESS_DETAILS[code];
+        setText(elements.shellReadiness, code === 'READY' ? '本地链路已就绪' : details.backend);
+        setText(elements.shellLinkState, code);
+        setText(elements.shellDiagnostic, code === 'READY'
+          ? 'Codex 链路正在接受持续本地健康检查。'
+          : details.diagnostic);
+      } else if (code === 'READY') {
         dispatch({type: 'ready'});
         setText(elements.backend, READINESS_DETAILS.READY.backend);
         setText(elements.diagnostic, state.progress === api.MAX_UNCONFIRMED_PROGRESS
@@ -171,12 +184,14 @@
         setText(elements.diagnostic, details.diagnostic);
       }
       const canRetry = READINESS_DETAILS[code].retry;
-      elements.retry.hidden = !(canRetry || retrying);
+      elements.retry.hidden = state.phase === 'complete' || !(canRetry || retrying);
       elements.retry.disabled = retrying || !canRetry;
+      elements.shellRetry.hidden = state.phase !== 'complete' || !(canRetry || retrying);
+      elements.shellRetry.disabled = retrying || !canRetry;
     }
 
     function scheduleHealth(delay) {
-      if (destroyed || state.phase === 'complete') return;
+      if (destroyed) return;
       healthTimer = clock.setTimeout(pollHealth, delay);
     }
 
@@ -189,17 +204,17 @@
 
     async function pollHealth() {
       healthTimer = undefined;
-      if (destroyed || state.phase === 'complete') return;
+      if (destroyed) return;
       const generation = ++healthGeneration;
       const controller = new root.AbortController();
       healthController = controller;
 
       try {
         const health = await api.health({signal: controller.signal});
-        if (destroyed || generation !== healthGeneration || state.phase === 'complete') return;
+        if (destroyed || generation !== healthGeneration) return;
         applyReadiness(health);
       } catch {
-        if (destroyed || generation !== healthGeneration || controller.signal.aborted || state.phase === 'complete') return;
+        if (destroyed || generation !== healthGeneration || controller.signal.aborted) return;
         applyReadiness({ready: false, code: 'DISCONNECTED'});
       } finally {
         if (generation === healthGeneration) {
@@ -210,7 +225,8 @@
     }
 
     async function retryInitialization() {
-      if (destroyed || retryInFlight || elements.retry.hidden) return;
+      const activeRetry = state.phase === 'complete' ? elements.shellRetry : elements.retry;
+      if (destroyed || retryInFlight || activeRetry.hidden || !READINESS_DETAILS[readinessCode].retry) return;
       retryInFlight = true;
       stopHealth();
       applyReadiness({ready: false, code: 'INITIALIZING'}, {retrying: true});
@@ -249,7 +265,8 @@
         stopPresentation();
         elements.bootScreen.hidden = true;
         elements.workbench.hidden = false;
-        destroy();
+        applyReadiness(health);
+        scheduleHealth(500);
       } catch {
         if (destroyed || generation !== healthGeneration || controller.signal.aborted) return;
         applyReadiness({ready: false, code: 'DISCONNECTED'});
@@ -281,7 +298,7 @@
       skipPresentation();
     }
 
-    function unbindInteractions() {
+    function unbindBootInteractions() {
       elements.confirm.removeEventListener('click', confirm);
       elements.retry.removeEventListener('click', retryInitialization);
       elements.skip.removeEventListener('click', skipPresentation);
@@ -297,7 +314,8 @@
       retryController = undefined;
       if (completeTimer !== undefined) clock.clearTimeout(completeTimer);
       completeTimer = undefined;
-      unbindInteractions();
+      unbindBootInteractions();
+      elements.shellRetry.removeEventListener('click', retryInitialization);
       eventRoot.removeEventListener('pagehide', destroy);
     }
 
@@ -308,6 +326,7 @@
       elements.ring.setAttribute('stroke-dasharray', String(circumference));
       elements.confirm.addEventListener('click', confirm);
       elements.retry.addEventListener('click', retryInitialization);
+      elements.shellRetry.addEventListener('click', retryInitialization);
       elements.skip.addEventListener('click', skipPresentation);
       eventRoot.addEventListener('keydown', onKeydown);
       eventRoot.addEventListener('pagehide', destroy);

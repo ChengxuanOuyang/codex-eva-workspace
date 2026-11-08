@@ -18,6 +18,7 @@
         "height": 941
       },
       "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
+      "adaptation": "Lossless PNG master adapted locally to a high-quality WebP runtime derivative.",
       "promptSummary": "Original adult pilot in a non-official white biomechanical suit with pale-cyan seams and muted-red accents, placed on the right and looking left into an ice-blue circular synchronization chamber; preserve broad left-side negative space for the synchronization ring, 99.2% readout, status, and confirmation controls; no text, logos, watermarks, or remote content."
     },
     {
@@ -35,6 +36,7 @@
         "height": 941
       },
       "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
+      "adaptation": "Lossless PNG master adapted locally to a high-quality WebP runtime derivative.",
       "promptSummary": "Close side-profile half-body view of the same original adult pilot behind a translucent warm-amber fluid or glass layer, with bubbles and restrained geometric instrumentation; preserve dark left-side negative space for the system-awakening title; no text, logos, watermarks, or remote content."
     },
     {
@@ -52,6 +54,7 @@
         "height": 941
       },
       "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
+      "adaptation": "Lossless PNG master adapted locally to a high-quality WebP runtime derivative.",
       "promptSummary": "Wide cockpit half-body view of the same original adult pilot in the lower right, facing an ice-blue systems chamber with a central synchronization ring; preserve central and left-side negative space for the SYSTEM ONLINE beat; no text, logos, watermarks, or remote content."
     }
   ]
