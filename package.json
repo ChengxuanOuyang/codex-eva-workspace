@@ -14,6 +14,7 @@
     "test:e2e": "npm run pack && node --test tests/e2e/*.test.cjs",
     "verify": "npm run lint && npm test",
     "pack": "node scripts/pack.cjs",
+    "pack:private": "node scripts/pack-private-theme.cjs",
     "dist:mac:arm64": "electron-builder --mac dmg zip --arm64",
     "dist:mac:x64": "electron-builder --mac dmg zip --x64"
   },

@@ -26,12 +26,17 @@ function unpackedApplicationDirectory(projectRoot, {
   throw Error(`Unsupported macOS architecture: ${architecture}`);
 }
 
-function runElectronBuilder({projectRoot, environment, arguments: builderArguments}) {
+function runElectronBuilder({
+  projectRoot,
+  environment,
+  arguments: builderArguments,
+  spawnProcess = spawn
+}) {
   const cli = require.resolve('electron-builder/out/cli/cli.js');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, ...builderArguments], {
+    const child = spawnProcess(process.execPath, [cli, ...builderArguments], {
       cwd: projectRoot,
-      env: environment,
+      env: productionEnvironment(environment),
       stdio: 'inherit'
     });
     child.once('error', reject);
@@ -63,4 +68,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = {cleanAndPack, productionEnvironment, unpackedApplicationDirectory};
+module.exports = {
+  cleanAndPack,
+  productionEnvironment,
+  runElectronBuilder,
+  unpackedApplicationDirectory
+};

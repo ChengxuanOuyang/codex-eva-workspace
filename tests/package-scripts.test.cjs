@@ -52,7 +52,11 @@ test('packaged runtime artwork includes checksummed provenance and bounded art t
   assert.match(notice, /not.*commercial-use guarantee/i);
   assert.match(notice, /PNG.*WebP/i);
 });
-const {cleanAndPack, unpackedApplicationDirectory} = require('../scripts/pack.cjs');
+const {
+  cleanAndPack,
+  runElectronBuilder,
+  unpackedApplicationDirectory
+} = require('../scripts/pack.cjs');
 
 test('unit verification cannot discover or launch Electron end-to-end tests', () => {
   assert.equal(pkg.scripts.test, 'node --test tests/*.test.cjs');
@@ -144,6 +148,7 @@ printf 'fake-webp' > "$output"
 
 test('pack cleans the output and packaged smoke selects the exact current architecture', async () => {
   assert.equal(pkg.scripts.pack, 'node scripts/pack.cjs');
+  assert.equal(pkg.scripts['pack:private'], 'node scripts/pack-private-theme.cjs');
 
   const calls = [];
   await cleanAndPack({
@@ -179,4 +184,47 @@ test('pack cleans the output and packaged smoke selects the exact current archit
 
   assert.match(smokeSource, /unpackedApplicationDirectory/);
   assert.doesNotMatch(smokeSource, /readdir\(|\.sort\(/);
+});
+
+test('electron-builder runner uses argv without a shell and strips test-only environment', async () => {
+  let spawnCall;
+  const fakeChild = new (require('node:events').EventEmitter)();
+  const completion = runElectronBuilder({
+    projectRoot: '/repo',
+    environment: {
+      SAFE_VALUE: 'kept',
+      PROJECT_ZERO_TEST_BRIDGE_MODULE: '/private/fake.cjs',
+      PROJECT_ZERO_TEST_TRACE: '/private/trace.json',
+      PROJECT_ZERO_TEST_DISCONNECT_SIGNAL: 'SIGUSR2'
+    },
+    arguments: ['--dir'],
+    spawnProcess(command, arguments_, options) {
+      spawnCall = {command, arguments_, options};
+      process.nextTick(() => fakeChild.emit('exit', 0, null));
+      return fakeChild;
+    }
+  });
+  await completion;
+
+  assert.equal(spawnCall.command, process.execPath);
+  assert.match(spawnCall.arguments_[0], /electron-builder\/out\/cli\/cli\.js$/);
+  assert.deepEqual(spawnCall.arguments_.slice(1), ['--dir']);
+  assert.equal(spawnCall.options.cwd, '/repo');
+  assert.equal(spawnCall.options.stdio, 'inherit');
+  assert.equal(spawnCall.options.shell, undefined);
+  assert.deepEqual(spawnCall.options.env, {SAFE_VALUE: 'kept'});
+});
+
+test('public pack has no private theme input or validator path', async () => {
+  const packSource = await fsPromises.readFile(path.join(__dirname, '..', 'scripts', 'pack.cjs'), 'utf8');
+  assert.doesNotMatch(packSource, /theme-contract|validateThemeDirectory|LOCAL_THEME_DIR/);
+
+  const calls = [];
+  await cleanAndPack({
+    projectRoot: '/repo',
+    environment: {SAFE_VALUE: 'kept'},
+    remove: async target => calls.push(['remove', target]),
+    runBuilder: async options => calls.push(['builder', options])
+  });
+  assert.deepEqual(calls.map(call => call[0]), ['remove', 'builder']);
 });
