@@ -43,8 +43,8 @@ class WorkbenchRuntime extends EventEmitter {
       await this.initializeStorage();
       if (this.controller) {
         this.controller.off('snapshot', this.forwardSnapshot);
-        await this.controller.drain();
         this.controller.detach();
+        await this.controller.drain();
       }
       const controller = new WorkbenchController({bridge, store: this.store});
       await controller.initialize();

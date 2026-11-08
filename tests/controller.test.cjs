@@ -123,7 +123,7 @@ test('locks a thread before asynchronous resume so concurrent sends cannot overl
   assert.equal(bridge.calls.filter(call => call.method === 'turn/start').length, 1);
 });
 
-test('clears stale persisted active turns during restart recovery', async t => {
+test('clears stale persisted active turns after remote resume confirms no active turn', async t => {
   const {root, project, bridge, controller} = await fixture(t);
   const added = await controller.addProject(project);
   const thread = await controller.createThread({projectId: added.id, model: 'gpt-test', effort: 'medium'});
@@ -133,9 +133,39 @@ test('clears stale persisted active turns during restart recovery', async t => {
   const restoredStore = await createStore(root);
   const restored = new WorkbenchController({bridge, store: restoredStore});
   await restored.initialize();
-  const recovered = restored.snapshot().threads.find(item => item.id === thread.id);
+  const recovered = restored.threadFor(thread.id);
+  await restored.resume(recovered);
   assert.equal(recovered.activeTurn, null);
   assert.equal(recovered.status, 'interrupted');
+  await restored.close();
+});
+
+test('resume preserves a remotely active turn and allows it to be interrupted', async t => {
+  const {root, project, bridge, controller} = await fixture(t);
+  const added = await controller.addProject(project);
+  const thread = await controller.createThread({projectId: added.id, model: 'gpt-test', effort: 'medium'});
+  await controller.close();
+  bridge.request = async (method, params) => {
+    bridge.calls.push({method, params});
+    if (method === 'model/list') return {data: [{
+      id: 'gpt-test', model: 'gpt-test', displayName: 'GPT Test', hidden: false, isDefault: true,
+      defaultReasoningEffort: 'medium', inputModalities: ['text', 'image'],
+      supportedReasoningEfforts: [{reasoningEffort: 'medium'}]
+    }], nextCursor: null};
+    if (method === 'thread/resume') return {thread: {
+      id: params.threadId, name: '运行中', turns: [{id: 'remote-turn', status: 'inProgress', items: []}]
+    }};
+    return {};
+  };
+  const restored = new WorkbenchController({bridge, store: await createStore(root)});
+  await restored.initialize();
+  await assert.rejects(
+    restored.send({threadId: thread.id, text: '不能重叠', model: 'gpt-test', effort: 'medium'}),
+    /active turn/
+  );
+  assert.equal(restored.snapshot().threads[0].activeTurn, 'remote-turn');
+  await restored.cancel(thread.id);
+  assert.ok(bridge.calls.some(call => call.method === 'turn/interrupt' && call.params.turnId === 'remote-turn'));
   await restored.close();
 });
 

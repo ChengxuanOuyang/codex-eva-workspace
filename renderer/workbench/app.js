@@ -7,7 +7,8 @@
     selectedThreadId: null,
     serviceOnline: false,
     filePath: '',
-    attachments: []
+    attachments: [],
+    showArchived: false
   };
   let started = false;
   let eventSource;
@@ -83,7 +84,8 @@
   }
 
   function renderThreads() {
-    const threads = state.snapshot.threads.filter(thread => thread.projectId === state.selectedProjectId && !thread.archived);
+    const threads = state.snapshot.threads.filter(thread =>
+      thread.projectId === state.selectedProjectId && (state.showArchived ? thread.archived : !thread.archived));
     elements.threadCount.textContent = String(threads.length).padStart(2, '0');
     elements.threads.replaceChildren();
     for (const thread of threads) {
@@ -125,12 +127,12 @@
       const archive = document.createElement('button');
       archive.type = 'button';
       archive.className = 'thread-action';
-      archive.textContent = '归档';
-      archive.setAttribute('aria-label', `归档 ${thread.title || '新任务'}`);
+      archive.textContent = thread.archived ? '恢复' : '归档';
+      archive.setAttribute('aria-label', `${thread.archived ? '恢复' : '归档'} ${thread.title || '新任务'}`);
       archive.addEventListener('click', async () => {
         try {
-          await request('/api/threads/archive', {threadId: thread.id, archived: true});
-          thread.archived = true;
+          await request('/api/threads/archive', {threadId: thread.id, archived: !thread.archived});
+          thread.archived = !thread.archived;
           render();
           await refreshSnapshot();
         } catch (error) { showError(error); }
@@ -150,7 +152,8 @@
 
   function render() {
     if (!state.selectedProjectId && state.snapshot.projects.length) state.selectedProjectId = state.snapshot.projects[0].id;
-    const projectThreads = state.snapshot.threads.filter(thread => thread.projectId === state.selectedProjectId && !thread.archived);
+    const projectThreads = state.snapshot.threads.filter(thread =>
+      thread.projectId === state.selectedProjectId && (state.showArchived ? thread.archived : !thread.archived));
     if (!projectThreads.some(thread => thread.id === state.selectedThreadId)) state.selectedThreadId = projectThreads[0]?.id || null;
     const thread = selectedThread();
     renderProjects();
@@ -162,12 +165,13 @@
     elements.approvalCount.textContent = String(state.snapshot.approvals?.length || 0).padStart(2, '0');
     const active = Boolean(thread?.activeTurn);
     elements.turnState.textContent = active ? '执行中' : thread?.status === 'failed' ? '失败' : '待命';
-    elements.newThread.disabled = !state.serviceOnline || !state.selectedProjectId || !state.snapshot.models.length;
-    elements.prompt.disabled = !state.serviceOnline || !thread || active;
+    const writable = state.serviceOnline && state.snapshot.connected !== false;
+    elements.newThread.disabled = !writable || !state.selectedProjectId || !state.snapshot.models.length;
+    elements.prompt.disabled = !writable || !thread || active;
     elements.send.disabled = elements.prompt.disabled;
     elements.cancel.hidden = !active;
-    elements.cancel.disabled = !state.serviceOnline;
-    elements.model.disabled = !state.serviceOnline || active || !state.snapshot.models.length;
+    elements.cancel.disabled = !writable;
+    elements.model.disabled = !writable || active || !state.snapshot.models.length;
     elements.effort.disabled = elements.model.disabled;
     elements.attachmentInput.disabled = elements.prompt.disabled || !selectedModel()?.inputModalities.includes('image');
     elements.attachmentList.replaceChildren();
@@ -183,7 +187,8 @@
       });
       elements.attachmentList.append(chip);
     }
-    elements.refreshFiles.disabled = !state.serviceOnline || !state.selectedProjectId;
+    elements.refreshFiles.disabled = !writable || !state.selectedProjectId;
+    elements.archivedToggle.textContent = state.showArchived ? '显示活动' : '显示归档';
   }
 
   async function refreshSnapshot() {
@@ -340,6 +345,7 @@
       projects: document.querySelector('#project-list'),
       newThread: document.querySelector('#new-thread-button'),
       threads: document.querySelector('#thread-list'),
+      archivedToggle: document.querySelector('#archived-toggle'),
       threadCount: document.querySelector('#thread-count'),
       messages: document.querySelector('#message-list'),
       composer: document.querySelector('#composer'),
@@ -367,6 +373,11 @@
     bindElements();
     elements.projectForm.addEventListener('submit', addProject);
     elements.newThread.addEventListener('click', createThread);
+    elements.archivedToggle.addEventListener('click', () => {
+      state.showArchived = !state.showArchived;
+      state.selectedThreadId = null;
+      render();
+    });
     elements.composer.addEventListener('submit', sendMessage);
     elements.cancel.addEventListener('click', cancelTurn);
     elements.model.addEventListener('change', () => renderModelOptions(null));

@@ -27,7 +27,14 @@ function itemText(item) {
 }
 
 function hydrateThread(local, remote) {
-  if (!Array.isArray(remote?.turns) || remote.turns.length === 0) return false;
+  if (!Array.isArray(remote?.turns)) return false;
+  const hadActiveTurn = Boolean(local.activeTurn);
+  if (remote.turns.length === 0) {
+    local.activeTurn = null;
+    if (hadActiveTurn) local.status = 'interrupted';
+    local.title = remote.name || local.title;
+    return hadActiveTurn;
+  }
   local.messages = [];
   local.tools = [];
   for (const turn of remote.turns) {
@@ -41,7 +48,8 @@ function hydrateThread(local, remote) {
     local.status = turn.status || local.status;
   }
   local.title = remote.name || local.title;
-  local.activeTurn = null;
+  const lastTurn = remote.turns.at(-1);
+  local.activeTurn = lastTurn.status === 'inProgress' ? lastTurn.id : null;
   return true;
 }
 
@@ -74,13 +82,6 @@ class WorkbenchController extends EventEmitter {
   }
 
   async initialize() {
-    let recovered = false;
-    for (const thread of this.state.threads) {
-      if (!thread.activeTurn) continue;
-      thread.activeTurn = null;
-      thread.status = 'interrupted';
-      recovered = true;
-    }
     const pages = [];
     const cursors = new Set();
     let cursor;
@@ -97,13 +98,13 @@ class WorkbenchController extends EventEmitter {
     this.bridge.on?.('approval', this.onApproval);
     this.bridge.on?.('disconnected', this.onDisconnected);
     this.attached = true;
-    if (recovered) await this.persist();
     return this.snapshot();
   }
 
   snapshot() {
     return {
       ...clone(this.state),
+      connected: this.bridge.connected !== false,
       models: clone(this.models),
       approvals: [...this.approvals.values()].map(approval => clone({
         id: String(approval.id), method: approval.method, params: approval.params
@@ -204,7 +205,7 @@ class WorkbenchController extends EventEmitter {
 
   async send({threadId, text, model: modelId, effort, attachments = []}) {
     const thread = this.threadFor(threadId);
-    if (thread.activeTurn || this.turnLocks.has(threadId)) throw new Error('Thread already has an active turn');
+    if (this.turnLocks.has(threadId)) throw new Error('Thread already has an active turn');
     if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_MESSAGE_LENGTH) {
       throw new Error('Invalid user message');
     }
@@ -213,6 +214,7 @@ class WorkbenchController extends EventEmitter {
       const model = selectModel(this.models, modelId, effort);
       if (attachments.length && !model.inputModalities.includes('image')) throw new Error('Model does not support image input');
       await this.resume(thread);
+      if (thread.activeTurn) throw new Error('Thread already has an active turn');
       const input = [{type: 'text', text}];
       for (const attachment of attachments) input.push({type: 'localImage', path: attachment.path});
       const response = await this.bridge.request('turn/start', {threadId, input, model: model.model, effort});
@@ -299,7 +301,10 @@ class WorkbenchController extends EventEmitter {
         scope: 'turn'
       };
     }
-    return {answers: accept && answers && typeof answers === 'object' ? clone(answers) : {}};
+    const values = accept && answers && typeof answers === 'object' ? answers : {};
+    return {answers: Object.fromEntries(Object.entries(values).map(([id, value]) => [id, {
+      answers: Array.isArray(value) ? value.map(String) : [String(value)]
+    }]))};
   }
 
   async answerApproval({id, accept, answers}) {

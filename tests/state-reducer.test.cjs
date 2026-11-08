@@ -56,3 +56,9 @@ test('user messages and reasoning items never appear as command tools', () => {
   reduceEvent(thread, 'item/completed', {item: {id: 'r1', type: 'reasoning', text: 'private'}});
   assert.deepEqual(thread.tools, []);
 });
+
+test('completed assistant messages are bounded like streamed deltas', () => {
+  const thread = {messages: [], tools: []};
+  reduceEvent(thread, 'item/completed', {item: {id: 'large', type: 'agentMessage', text: 'x'.repeat(600 * 1024)}});
+  assert.equal(thread.messages[0].text.length, 512 * 1024);
+});

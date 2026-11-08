@@ -1,5 +1,7 @@
 'use strict';
 
+const MAX_ITEM_TEXT = 512 * 1024;
+
 function messageFor(thread, id) {
   let message = thread.messages.find(entry => entry.id === id);
   if (!message) {
@@ -25,12 +27,13 @@ function toolFor(thread, item) {
 }
 
 function completedMessageText(item) {
-  if (typeof item.text === 'string') return item.text;
+  if (typeof item.text === 'string') return item.text.slice(-MAX_ITEM_TEXT);
   if (!Array.isArray(item.content)) return '';
   return item.content
     .filter(content => content?.type === 'output_text' && typeof content.text === 'string')
     .map(content => content.text)
-    .join('');
+    .join('')
+    .slice(-MAX_ITEM_TEXT);
 }
 
 function completedToolOutput(item, fallback) {
@@ -39,9 +42,9 @@ function completedToolOutput(item, fallback) {
       .filter(change => change && typeof change.diff === 'string')
       .map(change => change.diff)
       .join('\n')
-      .slice(0, 512 * 1024);
+      .slice(-MAX_ITEM_TEXT);
   }
-  return String(item.aggregatedOutput || item.output || fallback || '').slice(-512 * 1024);
+  return String(item.aggregatedOutput || item.output || fallback || '').slice(-MAX_ITEM_TEXT);
 }
 
 const TOOL_TYPES = new Set(['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch']);
@@ -59,7 +62,7 @@ function reduceEvent(thread, method, params = {}) {
     thread.activeTurn = null;
   } else if (method === 'item/agentMessage/delta') {
     const message = messageFor(thread, params.itemId);
-    message.text = (message.text + (typeof params.delta === 'string' ? params.delta : '')).slice(-512 * 1024);
+    message.text = (message.text + (typeof params.delta === 'string' ? params.delta : '')).slice(-MAX_ITEM_TEXT);
   } else if (method === 'item/started' && params.item?.id) {
     if (params.item.type === 'agentMessage') messageFor(thread, params.item.id);
     else if (TOOL_TYPES.has(params.item.type)) toolFor(thread, params.item);
@@ -77,7 +80,7 @@ function reduceEvent(thread, method, params = {}) {
   } else if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta') {
     const item = {id: params.itemId, type: method.includes('commandExecution') ? 'commandExecution' : 'fileChange'};
     const tool = toolFor(thread, item);
-    tool.output = (tool.output + (typeof params.delta === 'string' ? params.delta : '')).slice(-512 * 1024);
+    tool.output = (tool.output + (typeof params.delta === 'string' ? params.delta : '')).slice(-MAX_ITEM_TEXT);
   }
   return thread;
 }

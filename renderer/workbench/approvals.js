@@ -17,7 +17,8 @@
       title.textContent = approvalTitle(approval.method);
       const detail = document.createElement('code');
       const permissions = approval.params.permissions ? JSON.stringify(approval.params.permissions, null, 2) : '';
-      detail.textContent = approval.params.command || approval.params.reason || permissions || approval.params.itemId || '';
+      detail.textContent = [approval.params.command, approval.params.reason, permissions, approval.params.itemId]
+        .filter(Boolean).join('\n');
       const answers = {};
       const questions = document.createElement('div');
       questions.className = 'approval-questions';

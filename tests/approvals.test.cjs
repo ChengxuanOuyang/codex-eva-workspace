@@ -76,6 +76,16 @@ test('permission acceptance grants only the requested permissions for the curren
   });
 });
 
+test('user input answers use the official nested answer arrays', async () => {
+  const {controller, responses} = fixture();
+  controller.handleApproval({
+    id: 12, method: 'item/tool/requestUserInput',
+    params: {threadId: 'thread-1', turnId: 'turn-1', itemId: 'input-1', questions: [{id: 'mode'}]}
+  });
+  await controller.answerApproval({id: '12', accept: true, answers: {mode: '安全模式'}});
+  assert.deepEqual(responses[0], {id: 12, result: {answers: {mode: {answers: ['安全模式']}}}});
+});
+
 test('turn completion clears unanswered approvals and declines them', () => {
   const {controller, responses} = fixture();
   controller.handleApproval({
