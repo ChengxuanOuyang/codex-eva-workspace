@@ -3,24 +3,12 @@
 const {constants} = require('node:fs');
 const defaultFs = require('node:fs/promises');
 const path = require('node:path');
-const {
-  productionEnvironment,
-  runElectronBuilder
-} = require('./pack.cjs');
-const {
-  ThemeValidationError,
-  validateThemeDirectory
-} = require('./theme-contract.cjs');
+const {productionEnvironment, runElectronBuilder} = require('./pack.cjs');
+const {ThemeValidationError, validateThemeDirectory} = require('./theme-contract.cjs');
 
 const PROJECT_ENTRIES = Object.freeze([
-  'app',
-  'assets',
-  'LICENSE',
-  'NOTICE.md',
-  'package.json',
-  'renderer',
-  'THIRD_PARTY_NOTICES.md',
-  'workbench'
+  'app', 'assets', 'LICENSE', 'NOTICE.md', 'package.json',
+  'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
 ]);
 const PUBLIC_LABEL = 'PROJECT ZERO // PILOT CODEX WORKBENCH';
 
@@ -48,20 +36,16 @@ function snapshotTheme(theme) {
   });
 }
 
-async function rejectSymlinks(target, fsModule) {
-  const stat = await fsModule.lstat(target);
-  if (stat.isSymbolicLink()) throw Error('PRIVATE_STAGE_SYMLINK');
-  if (!stat.isDirectory()) return;
-  for (const entry of await fsModule.readdir(target)) {
-    await rejectSymlinks(path.join(target, entry), fsModule);
-  }
-}
-
 function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-async function openDirectoryIdentity(target, fsModule) {
+function combined(failures, message) {
+  if (failures.length === 0) return null;
+  return failures.length === 1 ? failures[0] : new AggregateError(failures, message);
+}
+
+async function openDirectory(target, fsModule) {
   const handle = await fsModule.open(
     target,
     constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
@@ -71,9 +55,7 @@ async function openDirectoryIdentity(target, fsModule) {
     const pathStat = await fsModule.lstat(target);
     const real = await fsModule.realpath(target);
     if (!identity.isDirectory() || pathStat.isSymbolicLink() || !pathStat.isDirectory() ||
-        !sameIdentity(identity, pathStat)) {
-      throw Error('PRIVATE_STAGE_IDENTITY');
-    }
+        !sameIdentity(identity, pathStat)) throw Error('PRIVATE_STAGE_IDENTITY');
     return {handle, identity, real, target};
   } catch (error) {
     await handle.close().catch(() => {});
@@ -81,23 +63,21 @@ async function openDirectoryIdentity(target, fsModule) {
   }
 }
 
-async function directoryIdentityMatches(directory, fsModule) {
+async function directoryMatches(directory, fsModule) {
   try {
-    const heldStat = await directory.handle.stat();
-    const pathStat = await fsModule.lstat(directory.target);
-    return heldStat.isDirectory() && sameIdentity(heldStat, directory.identity) &&
-      !pathStat.isSymbolicLink() && pathStat.isDirectory() &&
-      sameIdentity(pathStat, directory.identity) &&
+    const held = await directory.handle.stat();
+    const current = await fsModule.lstat(directory.target);
+    return held.isDirectory() && sameIdentity(held, directory.identity) &&
+      !current.isSymbolicLink() && current.isDirectory() &&
+      sameIdentity(current, directory.identity) &&
       await fsModule.realpath(directory.target) === directory.real;
   } catch {
     return false;
   }
 }
 
-async function requireDirectoryIdentity(directory, fsModule) {
-  if (!await directoryIdentityMatches(directory, fsModule)) {
-    throw Error('PRIVATE_STAGE_IDENTITY');
-  }
+async function requireDirectory(directory, fsModule) {
+  if (!await directoryMatches(directory, fsModule)) throw Error('PRIVATE_STAGE_IDENTITY');
 }
 
 async function openStageParent(realProjectRoot, fsModule) {
@@ -106,18 +86,17 @@ async function openStageParent(realProjectRoot, fsModule) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   });
-  if (existing) {
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw Error('PRIVATE_STAGE_PARENT');
-    }
-  } else {
+  if (existing && (existing.isSymbolicLink() || !existing.isDirectory())) {
+    throw Error('PRIVATE_STAGE_PARENT');
+  }
+  if (!existing) {
     try {
       await fsModule.mkdir(target, {recursive: false});
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
     }
   }
-  const directory = await openDirectoryIdentity(target, fsModule);
+  const directory = await openDirectory(target, fsModule);
   if (directory.real !== target) {
     await directory.handle.close().catch(() => {});
     throw Error('PRIVATE_STAGE_PARENT');
@@ -125,158 +104,202 @@ async function openStageParent(realProjectRoot, fsModule) {
   return directory;
 }
 
-async function rollbackUnopenedStage(target, stageParent, fsModule) {
-  if (!await directoryIdentityMatches(stageParent, fsModule)) {
-    throw Error('PRIVATE_STAGE_CLEANUP');
-  }
-  const firstStat = await fsModule.lstat(target).catch(() => null);
-  if (!firstStat || firstStat.isSymbolicLink() || !firstStat.isDirectory()) {
-    throw Error('PRIVATE_STAGE_CLEANUP');
-  }
+async function rollbackEmptyStage(target, parent, fsModule) {
+  if (!await directoryMatches(parent, fsModule)) throw Error('PRIVATE_STAGE_CLEANUP');
+  const first = await fsModule.lstat(target).catch(() => null);
   const real = await fsModule.realpath(target).catch(() => null);
-  const secondStat = await fsModule.lstat(target).catch(() => null);
-  if (!real || path.dirname(real) !== stageParent.real ||
-      !secondStat || secondStat.isSymbolicLink() || !secondStat.isDirectory() ||
-      !sameIdentity(firstStat, secondStat)) {
-    throw Error('PRIVATE_STAGE_CLEANUP');
-  }
-  await fsModule.rm(real, {recursive: true, force: true});
+  const second = await fsModule.lstat(target).catch(() => null);
+  if (!first || !second || !real || first.isSymbolicLink() || second.isSymbolicLink() ||
+      !first.isDirectory() || !second.isDirectory() || !sameIdentity(first, second) ||
+      path.dirname(real) !== parent.real) throw Error('PRIVATE_STAGE_CLEANUP');
+  await fsModule.rmdir(real);
 }
 
-async function createStageRoot(stageParent, fsModule) {
-  const target = await fsModule.mkdtemp(path.join(stageParent.real, 'stage-'));
+async function createStageRoot(parent, fsModule) {
+  const target = await fsModule.mkdtemp(path.join(parent.real, 'stage-'));
   let directory;
   try {
-    directory = await openDirectoryIdentity(target, fsModule);
+    directory = await openDirectory(target, fsModule);
+    if (path.dirname(directory.real) !== parent.real ||
+        path.dirname(directory.target) !== parent.real ||
+        !path.basename(directory.real).startsWith('stage-')) {
+      throw Error('PRIVATE_STAGE_IDENTITY');
+    }
+    return directory;
   } catch (error) {
+    await directory?.handle.close().catch(() => {});
     try {
-      await rollbackUnopenedStage(target, stageParent, fsModule);
+      await rollbackEmptyStage(target, parent, fsModule);
     } catch (cleanupCause) {
       throw new PrivateThemeOperationError(error, cleanupCause);
     }
     throw error;
   }
-  if (path.dirname(directory.real) !== stageParent.real ||
-      path.dirname(directory.target) !== stageParent.real ||
-      !path.basename(directory.real).startsWith('stage-')) {
-    await directory.handle.close().catch(() => {});
-    throw Error('PRIVATE_STAGE_IDENTITY');
-  }
-  return directory;
 }
 
-async function matchingChildDirectories(parent, identity, fsModule) {
-  const matches = [];
-  for (const entry of await fsModule.readdir(parent)) {
-    const target = path.join(parent, entry);
-    const stat = await fsModule.lstat(target).catch(() => null);
-    if (stat && !stat.isSymbolicLink() && stat.isDirectory() && sameIdentity(stat, identity)) {
-      matches.push({target, stat});
+async function rejectSymlinks(target, fsModule) {
+  const stat = await fsModule.lstat(target);
+  if (stat.isSymbolicLink()) throw Error('PRIVATE_STAGE_SYMLINK');
+  if (!stat.isDirectory()) return;
+  for (const entry of await fsModule.readdir(target)) {
+    await rejectSymlinks(path.join(target, entry), fsModule);
+  }
+}
+
+async function writePrivateFile(target, bytes, privateFiles, fsModule) {
+  const handle = await fsModule.open(target, constants.O_RDWR | constants.O_NOFOLLOW);
+  let identity;
+  try {
+    identity = await handle.stat();
+    const before = await fsModule.lstat(target);
+    if (!identity.isFile() || before.isSymbolicLink() || !before.isFile() ||
+        !sameIdentity(identity, before)) throw Error('PRIVATE_STAGE_IDENTITY');
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+  const held = {handle, identity, target};
+  privateFiles.push(held);
+  try {
+    await handle.truncate(0);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    const after = await fsModule.lstat(target);
+    if (after.isSymbolicLink() || !after.isFile() || !sameIdentity(identity, after)) {
+      throw Error('PRIVATE_STAGE_IDENTITY');
+    }
+    return held;
+  } catch (error) {
+    throw error;
+  }
+}
+
+function entryType(stat) {
+  if (stat.isDirectory()) return 'directory';
+  if (stat.isFile()) return 'file';
+  if (stat.isSymbolicLink()) return 'symlink';
+  return 'other';
+}
+
+async function buildInventory(root, fsModule, {allowSymlinks = false} = {}) {
+  const inventory = [];
+  async function visit(relative) {
+    const target = relative ? path.join(root, relative) : root;
+    const stat = await fsModule.lstat(target);
+    const type = entryType(stat);
+    if (type === 'other' || (!allowSymlinks && type === 'symlink')) {
+      throw Error('PRIVATE_STAGE_SYMLINK');
+    }
+    inventory.push({relative, dev: stat.dev, ino: stat.ino, type});
+    if (type === 'directory') {
+      for (const entry of (await fsModule.readdir(target)).sort()) {
+        await visit(relative ? path.join(relative, entry) : entry);
+      }
     }
   }
-  return matches;
+  await visit('');
+  return inventory;
 }
 
-async function removeStageAtVerifiedPath(target, expectedParent, identity, fsModule) {
-  const firstStat = await fsModule.lstat(target);
-  const real = await fsModule.realpath(target);
-  const secondStat = await fsModule.lstat(target);
-  if (firstStat.isSymbolicLink() || !firstStat.isDirectory() ||
-      secondStat.isSymbolicLink() || !secondStat.isDirectory() ||
-      !sameIdentity(firstStat, identity) || !sameIdentity(secondStat, identity) ||
-      path.dirname(real) !== expectedParent) {
-    throw Error('PRIVATE_STAGE_CLEANUP');
-  }
-  await fsModule.rm(real, {recursive: true, force: true});
+function matchesEntry(entry, stat) {
+  return entry.dev === stat.dev && entry.ino === stat.ino && entry.type === entryType(stat);
 }
 
-async function cleanupStageDirectory({
-  projectDirectory,
-  stageParent,
-  stageDirectory,
-  fsModule
-}) {
-  if (await directoryIdentityMatches(stageDirectory, fsModule)) {
-    await removeStageAtVerifiedPath(
-      stageDirectory.target,
-      stageParent.real,
-      stageDirectory.identity,
-      fsModule
-    );
-    return;
+async function verifyAncestors(root, entry, index, fsModule) {
+  const parts = entry.relative ? entry.relative.split(path.sep) : [];
+  for (let length = 0; length < parts.length; length += 1) {
+    const relative = parts.slice(0, length).join(path.sep);
+    const ancestor = index.get(relative);
+    const target = relative ? path.join(root, relative) : root;
+    const stat = await fsModule.lstat(target);
+    if (!ancestor || ancestor.type !== 'directory' || stat.isSymbolicLink() ||
+        !matchesEntry(ancestor, stat)) throw Error('PRIVATE_STAGE_CLEANUP');
   }
-  if (!await directoryIdentityMatches(projectDirectory, fsModule)) {
-    throw Error('PRIVATE_STAGE_CLEANUP');
-  }
+}
 
-  const parentMatches = await matchingChildDirectories(
-    projectDirectory.real,
-    stageParent.identity,
-    fsModule
+async function removeInventory(root, inventory, fsModule, {allowRecordedSymlinks = false} = {}) {
+  const index = new Map(inventory.map(entry => [entry.relative, entry]));
+  const depth = entry => entry.relative ? entry.relative.split(path.sep).length : 0;
+  const ordered = [...inventory].sort((left, right) =>
+    depth(right) - depth(left) || right.relative.localeCompare(left.relative)
   );
-  if (parentMatches.length !== 1) throw Error('PRIVATE_STAGE_CLEANUP');
-  const relocatedParent = parentMatches[0];
-  const parentReal = await fsModule.realpath(relocatedParent.target);
-  const parentCheck = await fsModule.lstat(relocatedParent.target);
-  if (path.dirname(parentReal) !== projectDirectory.real ||
-      parentCheck.isSymbolicLink() || !parentCheck.isDirectory() ||
-      !sameIdentity(parentCheck, stageParent.identity)) {
-    throw Error('PRIVATE_STAGE_CLEANUP');
+  // Node has no portable unlinkat/rmdirat. Identity checks fail closed for
+  // observed swaps, but cannot remove the final same-UID syscall race.
+  for (const entry of ordered) {
+    await verifyAncestors(root, entry, index, fsModule);
+    const target = entry.relative ? path.join(root, entry.relative) : root;
+    const stat = await fsModule.lstat(target);
+    if ((stat.isSymbolicLink() && !(allowRecordedSymlinks && entry.type === 'symlink')) ||
+        !matchesEntry(entry, stat)) {
+      throw Error('PRIVATE_STAGE_CLEANUP');
+    }
+    if (entry.type === 'directory') await fsModule.rmdir(target);
+    else await fsModule.unlink(target);
   }
+}
 
-  const stageMatches = await matchingChildDirectories(
-    parentReal,
-    stageDirectory.identity,
-    fsModule
-  );
-  if (stageMatches.length !== 1) throw Error('PRIVATE_STAGE_CLEANUP');
-  await removeStageAtVerifiedPath(
-    stageMatches[0].target,
-    parentReal,
-    stageDirectory.identity,
-    fsModule
-  );
+async function scrubPrivateFiles(files) {
+  const failures = [];
+  // Held handles clear the live inode before path cleanup. APFS/COW does not
+  // make this forensic secure erasure; a same-UID process can copy bytes too.
+  for (const file of files) {
+    for (const operation of [
+      () => file.handle.sync(),
+      () => file.handle.truncate(0),
+      () => file.handle.sync(),
+      () => file.handle.close()
+    ]) {
+      try {
+        await operation();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+  const failure = combined(failures, 'PRIVATE_STAGE_SCRUB');
+  if (failure) throw failure;
 }
 
 async function closeDirectories(directories) {
-  let closeFailure;
+  const failures = [];
   for (const directory of directories) {
     if (!directory) continue;
     try {
       await directory.handle.close();
     } catch (error) {
-      closeFailure ??= error;
+      failures.push(error);
     }
   }
-  if (closeFailure) throw closeFailure;
+  const failure = combined(failures, 'PRIVATE_STAGE_CLOSE');
+  if (failure) throw failure;
+}
+
+function assertOutputBoundary(root, output) {
+  if (path.dirname(output) !== root || path.basename(output) !== 'dist-private') {
+    throw Error('PRIVATE_OUTPUT_BOUNDARY');
+  }
 }
 
 async function packPrivateThemeInternal({
-  projectRoot,
-  themeRoot,
-  environment,
-  validateTheme,
-  runBuilder,
-  fsModule
+  projectRoot, themeRoot, environment, validateTheme, runBuilder, fsModule
 }) {
   const theme = snapshotTheme(await validateTheme(themeRoot));
   const realProjectRoot = await fsModule.realpath(projectRoot);
-  const projectDirectory = await openDirectoryIdentity(realProjectRoot, fsModule);
+  const projectDirectory = await openDirectory(realProjectRoot, fsModule);
   let stageParent;
   let stageDirectory;
+  let inventory;
+  let inventoryAllowsSymlinks = false;
+  const privateFiles = [];
   let result;
   let workFailure;
-  let cleanupFailure;
+  const cleanupFailures = [];
   try {
-    if (projectDirectory.real !== realProjectRoot) throw Error('PRIVATE_STAGE_IDENTITY');
     stageParent = await openStageParent(realProjectRoot, fsModule);
     stageDirectory = await createStageRoot(stageParent, fsModule);
     const stageRoot = stageDirectory.real;
-    const privateOutput = path.join(realProjectRoot, 'dist-private');
+    const output = path.join(realProjectRoot, 'dist-private');
 
-    await requireDirectoryIdentity(projectDirectory, fsModule);
-    await requireDirectoryIdentity(stageParent, fsModule);
-    await requireDirectoryIdentity(stageDirectory, fsModule);
     for (const entry of PROJECT_ENTRIES) {
       await fsModule.cp(path.join(realProjectRoot, entry), path.join(stageRoot, entry), {
         recursive: true,
@@ -287,37 +310,44 @@ async function packPrivateThemeInternal({
       await rejectSymlinks(path.join(stageRoot, entry), fsModule);
     }
 
-    const stagedRuntime = path.join(stageRoot, 'renderer', 'boot', 'assets');
-    for (const file of Object.values(theme.scenes)) {
-      await fsModule.writeFile(path.join(stagedRuntime, file), theme.contents.get(file));
+    const replacements = [
+      ...Object.values(theme.scenes).map(file => [
+        path.join(stageRoot, 'renderer', 'boot', 'assets', file),
+        theme.contents.get(file)
+      ]),
+      [path.join(stageRoot, 'assets', 'themes', 'project-zero', 'assets.json'),
+        theme.contents.get('assets.json')],
+      [path.join(stageRoot, 'assets', 'themes', 'project-zero', 'ASSET-LICENSE.md'),
+        theme.contents.get('ASSET-LICENSE.md')]
+    ];
+    for (const [target, bytes] of replacements) {
+      await writePrivateFile(target, bytes, privateFiles, fsModule);
     }
-    const stagedManifest = path.join(stageRoot, 'assets', 'themes', 'project-zero');
-    await fsModule.writeFile(
-      path.join(stagedManifest, 'assets.json'),
-      theme.contents.get('assets.json')
-    );
-    await fsModule.writeFile(
-      path.join(stagedManifest, 'ASSET-LICENSE.md'),
-      theme.contents.get('ASSET-LICENSE.md')
-    );
 
     const indexPath = path.join(stageRoot, 'renderer', 'boot', 'index.html');
     const index = await fsModule.readFile(indexPath, 'utf8');
     if (!index.includes(PUBLIC_LABEL)) throw Error('PRIVATE_THEME_PUBLIC_LABEL_MISSING');
-    await fsModule.writeFile(indexPath, index.replaceAll(PUBLIC_LABEL, theme.displayName));
+    await writePrivateFile(
+      indexPath,
+      Buffer.from(index.replaceAll(PUBLIC_LABEL, theme.displayName)),
+      privateFiles,
+      fsModule
+    );
 
     const packagePath = path.join(stageRoot, 'package.json');
     const packageJson = JSON.parse(await fsModule.readFile(packagePath, 'utf8'));
     packageJson.build = {
       ...packageJson.build,
-      directories: {...packageJson.build.directories, output: privateOutput}
+      directories: {...packageJson.build.directories, output}
     };
     await fsModule.writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 
-    await requireDirectoryIdentity(projectDirectory, fsModule);
-    await requireDirectoryIdentity(stageParent, fsModule);
-    await requireDirectoryIdentity(stageDirectory, fsModule);
-    await fsModule.rm(privateOutput, {recursive: true, force: true});
+    inventory = await buildInventory(stageRoot, fsModule);
+    await requireDirectory(projectDirectory, fsModule);
+    await requireDirectory(stageParent, fsModule);
+    await requireDirectory(stageDirectory, fsModule);
+    assertOutputBoundary(realProjectRoot, output);
+    await fsModule.rm(output, {recursive: true, force: true});
     let builderFailure;
     try {
       await runBuilder({
@@ -328,37 +358,57 @@ async function packPrivateThemeInternal({
     } catch (error) {
       builderFailure = error;
     }
-    await requireDirectoryIdentity(projectDirectory, fsModule);
-    await requireDirectoryIdentity(stageParent, fsModule);
-    await requireDirectoryIdentity(stageDirectory, fsModule);
+    await requireDirectory(projectDirectory, fsModule);
+    await requireDirectory(stageParent, fsModule);
+    await requireDirectory(stageDirectory, fsModule);
     if (builderFailure) throw builderFailure;
-    result = privateOutput;
+    result = output;
   } catch (error) {
     workFailure = error;
   } finally {
     try {
-      if (stageDirectory) {
-        await cleanupStageDirectory({
-          projectDirectory,
-          stageParent,
-          stageDirectory,
-          fsModule
-        });
-      }
+      await scrubPrivateFiles(privateFiles);
     } catch (error) {
-      cleanupFailure = error;
+      cleanupFailures.push(error);
+    }
+    if (stageDirectory) {
+      try {
+        if (!inventory) {
+          inventory = await buildInventory(stageDirectory.real, fsModule, {allowSymlinks: true});
+          inventoryAllowsSymlinks = true;
+        }
+        await removeInventory(stageDirectory.real, inventory, fsModule, {
+          allowRecordedSymlinks: inventoryAllowsSymlinks
+        });
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+    if (stageParent) {
+      try {
+        if (!await directoryMatches(stageParent, fsModule)) {
+          throw Error('PRIVATE_STAGE_CLEANUP');
+        }
+        await fsModule.rmdir(stageParent.real);
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
     }
     try {
       await closeDirectories([stageDirectory, stageParent, projectDirectory]);
     } catch (error) {
-      cleanupFailure ??= error;
+      cleanupFailures.push(error);
     }
   }
+
+  const cleanupFailure = combined(cleanupFailures, 'PRIVATE_STAGE_CLEANUP');
   if (workFailure && cleanupFailure) {
     throw new PrivateThemeOperationError(workFailure, cleanupFailure);
   }
   if (workFailure) throw workFailure;
-  if (cleanupFailure) throw cleanupFailure;
+  if (cleanupFailure) {
+    throw new PrivateThemeOperationError(Error('PRIVATE_THEME_CLEANUP_FAILED'), cleanupFailure);
+  }
   return result;
 }
 
@@ -372,12 +422,7 @@ async function packPrivateTheme({
 }) {
   try {
     return await packPrivateThemeInternal({
-      projectRoot,
-      themeRoot,
-      environment,
-      validateTheme,
-      runBuilder,
-      fsModule
+      projectRoot, themeRoot, environment, validateTheme, runBuilder, fsModule
     });
   } catch (error) {
     if (error instanceof ThemeValidationError || error instanceof PrivateThemePackError) throw error;

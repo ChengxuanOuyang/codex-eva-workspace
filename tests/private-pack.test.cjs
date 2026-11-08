@@ -19,6 +19,14 @@ const projectEntries = [
   'app', 'assets', 'LICENSE', 'NOTICE.md', 'package.json',
   'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
 ].sort();
+const privateStageFiles = [
+  'renderer/boot/assets/scene-a-sync.webp',
+  'renderer/boot/assets/scene-b-awakening.webp',
+  'renderer/boot/assets/scene-c-online.webp',
+  'assets/themes/project-zero/assets.json',
+  'assets/themes/project-zero/ASSET-LICENSE.md',
+  'renderer/boot/index.html'
+];
 
 function loadPacker() {
   return require('../scripts/pack-private-theme.cjs');
@@ -71,6 +79,10 @@ async function expectStablePackFailure(promise) {
     return true;
   });
   return captured;
+}
+
+async function assertMissing(target) {
+  await assert.rejects(fs.access(target), error => error.code === 'ENOENT');
 }
 
 test('validates before creating staging and leaves no staging on validation failure', async t => {
@@ -159,7 +171,7 @@ test('stages only fixed project entries and privately replaces exact validated c
     assert.deepEqual(builderCall.stagedContents.get(file), bytes);
   }
   assert.deepEqual(await publicHashes(projectRoot), before);
-  assert.deepEqual(await fs.readdir(path.join(projectRoot, '.private-build')), []);
+  await assertMissing(path.join(projectRoot, '.private-build'));
 });
 
 test('snapshots validated bytes before staging even if source and returned Map are replaced', async t => {
@@ -204,7 +216,7 @@ test('snapshots validated bytes before staging even if source and returned Map a
   for (const [file, bytes] of expected) {
     if (file !== 'theme.json') assert.deepEqual(staged.get(file), bytes);
   }
-  assert.deepEqual(await fs.readdir(path.join(temporaryProject, '.private-build')), []);
+  await assertMissing(path.join(temporaryProject, '.private-build'));
 });
 
 test('cleans staging after builder failure and removes stale private output first', async t => {
@@ -223,7 +235,7 @@ test('cleans staging after builder failure and removes stale private output firs
       throw Error('BUILDER_FAILED');
     }
   }));
-  assert.deepEqual(await fs.readdir(path.join(temporaryProject, '.private-build')), []);
+  await assertMissing(path.join(temporaryProject, '.private-build'));
 });
 
 test('rejects a symlink copied through a fixed project entry before invoking the builder', async t => {
@@ -243,7 +255,7 @@ test('rejects a symlink copied through a fixed project entry before invoking the
     }
   }));
   assert.equal(builderCalled, false);
-  assert.deepEqual(await fs.readdir(path.join(temporaryProject, '.private-build')), []);
+  await assertMissing(path.join(temporaryProject, '.private-build'));
 });
 
 test('rejects an outside staging-parent symlink before mkdtemp or copying', async t => {
@@ -293,7 +305,7 @@ test('rejects staging identities replaced while the builder is running', async t
   await fs.writeFile(outsideMarker, 'outside');
 
   const {packPrivateTheme} = loadPacker();
-  await expectStablePackFailure(packPrivateTheme({
+  const error = await expectStablePackFailure(packPrivateTheme({
     projectRoot: temporaryProject,
     themeRoot,
     runBuilder: async () => {
@@ -303,7 +315,13 @@ test('rejects staging identities replaced while the builder is running', async t
       await fs.symlink(outside, path.join(stageParent, 'outside-link'));
     }
   }));
-  assert.deepEqual(await fs.readdir(movedParent), []);
+  assert.ok(error.cleanupCause instanceof Error);
+  const movedEntries = await fs.readdir(movedParent);
+  assert.equal(movedEntries.length, 1);
+  const movedStage = path.join(movedParent, movedEntries[0]);
+  for (const file of privateStageFiles) {
+    assert.equal((await fs.stat(path.join(movedStage, file))).size, 0);
+  }
   assert.equal(await fs.readFile(path.join(stageParent, 'replacement-marker.txt'), 'utf8'), 'replacement');
   assert.equal((await fs.lstat(path.join(stageParent, 'outside-link'))).isSymbolicLink(), true);
   assert.equal(await fs.readFile(outsideMarker, 'utf8'), 'outside');
@@ -335,32 +353,50 @@ test('rolls back a newly-created stage when opening its identity fails', async t
     runBuilder: async () => assert.fail('builder must not run')
   }));
   assert.ok(stageTarget);
-  assert.deepEqual(await fs.readdir(path.join(temporaryProject, '.private-build')), []);
+  await assertMissing(path.join(temporaryProject, '.private-build'));
 });
 
-test('keeps the work failure primary when secure cleanup also fails and closes handles', async t => {
+test('keeps work failure primary when private scrub operations also fail and closes handles', async t => {
   const themeRoot = await isolatedTheme(t);
   const temporaryProject = await isolatedProject(t, 'project-zero-pack-double-failure-');
   const primary = Error('PRIMARY_BUILDER_FAILURE');
-  const cleanup = Object.assign(Error('SECONDARY_CLEANUP_FAILURE'), {code: 'EIO'});
+  const cleanup = Object.assign(Error('SECONDARY_SCRUB_FAILURE'), {code: 'EIO'});
   let opened = 0;
   let closed = 0;
+  let builderStarted = false;
+  const scrubAttempts = {sync: 0, truncate: 0, close: 0};
   const fsModule = {
     ...fs,
-    async open(...arguments_) {
-      const handle = await fs.open(...arguments_);
+    async open(target, ...arguments_) {
+      const handle = await fs.open(target, ...arguments_);
       opened += 1;
+      const isPrivate = privateStageFiles.some(file => target.endsWith(file));
       return {
         stat: (...statArguments) => handle.stat(...statArguments),
+        truncate: async (...truncateArguments) => {
+          if (isPrivate && builderStarted) {
+            scrubAttempts.truncate += 1;
+            throw cleanup;
+          }
+          return handle.truncate(...truncateArguments);
+        },
+        writeFile: (...writeArguments) => handle.writeFile(...writeArguments),
+        sync: async (...syncArguments) => {
+          if (isPrivate && builderStarted) {
+            scrubAttempts.sync += 1;
+            throw cleanup;
+          }
+          return handle.sync(...syncArguments);
+        },
         async close() {
           closed += 1;
-          return handle.close();
+          await handle.close();
+          if (isPrivate && builderStarted) {
+            scrubAttempts.close += 1;
+            throw cleanup;
+          }
         }
       };
-    },
-    async rm(target, options) {
-      if (path.basename(target).startsWith('stage-')) throw cleanup;
-      return fs.rm(target, options);
     }
   };
 
@@ -369,12 +405,152 @@ test('keeps the work failure primary when secure cleanup also fails and closes h
     projectRoot: temporaryProject,
     themeRoot,
     fsModule,
-    runBuilder: async () => { throw primary; }
+    runBuilder: async () => {
+      builderStarted = true;
+      throw primary;
+    }
   }));
   assert.equal(error.cause, primary);
-  assert.equal(error.cleanupCause, cleanup);
-  assert.equal(opened, 3);
+  assert.ok(error.cleanupCause instanceof Error);
+  assert.equal(scrubAttempts.truncate, 6);
+  assert.equal(scrubAttempts.sync, 12);
+  assert.equal(scrubAttempts.close, 6);
+  assert.equal(opened, 9);
   assert.equal(closed, opened);
+});
+
+test('renamed private derivatives are truncated through held handles and every handle closes', async t => {
+  const themeRoot = await isolatedTheme(t);
+  for (const privateFile of privateStageFiles) {
+    await t.test(privateFile, async subtest => {
+      const temporaryProject = await isolatedProject(subtest, 'project-zero-pack-private-rename-');
+      let opened = 0;
+      let closed = 0;
+      let moved;
+      const fsModule = {
+        ...fs,
+        async open(...arguments_) {
+          const handle = await fs.open(...arguments_);
+          opened += 1;
+          return {
+            stat: (...statArguments) => handle.stat(...statArguments),
+            truncate: (...truncateArguments) => handle.truncate(...truncateArguments),
+            writeFile: (...writeArguments) => handle.writeFile(...writeArguments),
+            sync: (...syncArguments) => handle.sync(...syncArguments),
+            async close() {
+              closed += 1;
+              return handle.close();
+            }
+          };
+        }
+      };
+
+      const {packPrivateTheme} = loadPacker();
+      const error = await expectStablePackFailure(packPrivateTheme({
+        projectRoot: temporaryProject,
+        themeRoot,
+        fsModule,
+        runBuilder: async ({projectRoot: stageRoot}) => {
+          const target = path.join(stageRoot, privateFile);
+          moved = `${target}.moved`;
+          await fs.rename(target, moved);
+        }
+      }));
+      assert.ok(error.cleanupCause instanceof Error);
+      assert.equal((await fs.stat(moved)).size, 0);
+      assert.equal(closed, opened);
+    });
+  }
+});
+
+test('final cleanup rejects swapped victims without deleting replacements or outside files', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-pack-final-swap-');
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-pack-final-outside-'));
+  t.after(() => fs.rm(outside, {recursive: true, force: true}));
+  const outsideMarker = path.join(outside, 'marker.txt');
+  await fs.writeFile(outsideMarker, 'outside');
+  let builderFinished = false;
+  let swapped = false;
+  let movedVictim;
+  const victimSuffix = privateStageFiles[0];
+  const fsModule = {
+    ...fs,
+    async lstat(target, ...arguments_) {
+      if (builderFinished && !swapped && target.endsWith(victimSuffix)) {
+        swapped = true;
+        movedVictim = `${target}.moved`;
+        await fs.rename(target, movedVictim);
+        await fs.symlink(outsideMarker, target);
+      }
+      return fs.lstat(target, ...arguments_);
+    }
+  };
+
+  const {packPrivateTheme} = loadPacker();
+  const error = await expectStablePackFailure(packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    fsModule,
+    runBuilder: async () => {
+      builderFinished = true;
+    }
+  }));
+  assert.ok(error.cleanupCause instanceof Error);
+  assert.equal((await fs.stat(movedVictim)).size, 0);
+  const replacement = movedVictim.slice(0, -'.moved'.length);
+  assert.equal((await fs.lstat(replacement)).isSymbolicLink(), true);
+  assert.equal(await fs.readFile(outsideMarker, 'utf8'), 'outside');
+});
+
+test('inventory cleanup never recursively removes replacement directories', async t => {
+  const themeRoot = await isolatedTheme(t);
+  for (const kind of ['empty', 'nonempty', 'symlink']) {
+    await t.test(kind, async subtest => {
+      const temporaryProject = await isolatedProject(subtest, `project-zero-pack-dir-${kind}-`);
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-pack-dir-outside-'));
+      subtest.after(() => fs.rm(outside, {recursive: true, force: true}));
+      const marker = path.join(outside, 'marker.txt');
+      await fs.writeFile(marker, 'outside');
+      let replacement;
+
+      const {packPrivateTheme} = loadPacker();
+      const error = await expectStablePackFailure(packPrivateTheme({
+        projectRoot: temporaryProject,
+        themeRoot,
+        runBuilder: async ({projectRoot: stageRoot}) => {
+          const victim = path.join(stageRoot, 'app');
+          await fs.rename(victim, `${victim}.moved`);
+          replacement = victim;
+          if (kind === 'symlink') await fs.symlink(outside, replacement);
+          else await fs.mkdir(replacement);
+          if (kind === 'nonempty') await fs.writeFile(path.join(replacement, 'keep.txt'), 'keep');
+        }
+      }));
+      assert.ok(error.cleanupCause instanceof Error);
+      if (kind === 'symlink') assert.equal((await fs.lstat(replacement)).isSymbolicLink(), true);
+      else assert.equal((await fs.lstat(replacement)).isDirectory(), true);
+      if (kind === 'nonempty') assert.equal(await fs.readFile(path.join(replacement, 'keep.txt'), 'utf8'), 'keep');
+      assert.equal(await fs.readFile(marker, 'utf8'), 'outside');
+    });
+  }
+});
+
+test('inventory cleanup fails closed on an unknown builder file', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-pack-unknown-file-');
+  let unknown;
+  const {packPrivateTheme} = loadPacker();
+  const error = await expectStablePackFailure(packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    runBuilder: async ({projectRoot: stageRoot}) => {
+      unknown = path.join(stageRoot, 'app', 'builder-unknown.txt');
+      await fs.writeFile(unknown, 'keep');
+    }
+  }));
+  assert.ok(error.cleanupCause instanceof Error);
+  assert.equal(await fs.readFile(unknown, 'utf8'), 'keep');
 });
 
 test('maps missing entries and native staging failures to one stable pack error', async t => {
