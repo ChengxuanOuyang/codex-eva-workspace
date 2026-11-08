@@ -25,8 +25,10 @@ aerospace cockpit preserve broad negative space for the local boot interface.
 The masters were created with built-in image generation under human creative
 direction, without supplying an existing image as a reference or edit target.
 They were reviewed by a human for consistent helmet and armour geometry,
-complete head and shoulder framing, UI negative space, and the absence of a
-visible face, hair, eyes, skin, text, logos, insignia, and watermarks.
+UI negative space, and the absence of a visible face, hair, eyes, skin, text,
+logos, insignia, and watermarks. The helmet remains complete and the primary
+shoulder-armour structure remains visible. The half-body crop at the right edge
+comes from the user-approved original generated composition.
 
 No official frames, promotional artwork, character sheets, screenshots, logos,
 wordmarks, or other third-party visual source assets were supplied as inputs or
@@ -35,7 +37,11 @@ endorsement by, or authorization from OpenAI or any other third party. This
 record documents intended provenance and licensing; it is not an independent
 legal determination of rights or clearance.
 
-Each approved PNG master was center-cropped to 16:9, normalized to 1536×864, and adapted locally into a quality-90 WebP runtime derivative in `renderer/boot/assets/`.
+Normalization from 1672×941 removed approximately four pixels from each side
+and two to three pixels from the top and bottom before rescaling to 1536×864; it
+did not materially crop key helmet or armour detail.
+Each PNG master is rendered to a WebP runtime derivative by [`scripts/render-theme-webp.sh`](../../../scripts/render-theme-webp.sh)
+using cwebp 1.3.2 or newer with quality 90 and metadata removal.
 The masters live in `source/`. Individual filenames, checksums, production method,
 and prompt summaries are recorded in [`assets.json`](assets.json).
 

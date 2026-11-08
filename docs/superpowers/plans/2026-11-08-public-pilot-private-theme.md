@@ -6,7 +6,7 @@
 
 **架构：** 公共 `pack` 继续只构建仓库内的 PILOT 主题。私人主题使用严格 manifest 合同验证后复制到隔离 staging 树，再由固定的本地 Electron Builder 生成 `dist-private/`；整个过程不修改 tracked 公共素材。最终公开 `main` 从安全工作树创建单一干净提交，避免把功能分支中曾出现的私人图片历史推送到 GitHub。
 
-**技术栈：** Electron 45、Node.js 26 CommonJS、electron-builder 26、Node test runner、Playwright、内置 image generation、macOS `sips`、SHA-256。
+**技术栈：** Electron 45、Node.js 26 CommonJS、electron-builder 26、Node test runner、Playwright、内置 image generation、macOS `sips`、cwebp 1.3.2+、SHA-256。
 
 ---
 
@@ -16,6 +16,7 @@
 
 - `scripts/theme-contract.cjs`：解析并 fail-closed 验证本地主题 manifest、固定文件、普通文件边界和 SHA-256。
 - `scripts/pack-private-theme.cjs`：创建隔离 staging、叠加已验证主题、生成独立私人产物并清理 staging。
+- `scripts/render-theme-webp.sh`：使用固定 cwebp 版本下限和编码参数复现公共 WebP 运行时素材。
 - `tests/theme-contract.test.cjs`：纯函数与文件系统边界测试。
 - `tests/private-pack.test.cjs`：staging、输出隔离、清理和 builder 调用测试。
 - `tests/fixtures/private-theme-valid/`：只含合成测试素材，不含 Rei 或私人图片。
@@ -282,15 +283,22 @@ Constraints: preserve generous negative space for UI; no visible face, hair, eye
 
 - [ ] **步骤 4：生成 16:9 master 和 WebP**
 
-将批准的生成结果复制到安全临时文件，使用 `sips` 居中裁切到 16:9；人工复查裁切没有切断头盔或关键肩甲，再输出 master PNG 和高质量 WebP：
+将批准的 1672×941 生成结果复制到安全临时文件，使用 `sips` 居中裁切到
+1664×936（每边约 4 px、上下约 2–3 px），人工复查没有实质裁掉头盔或关键肩甲，
+再正规化为 1536×864 master PNG：
 
 ```bash
-sips --cropToHeightWidth 864 1536 approved-scene-a.png --out assets/themes/project-zero/source/scene-a-sync.png
-sips --cropToHeightWidth 864 1536 approved-scene-b.png --out assets/themes/project-zero/source/scene-b-awakening.png
-sips --cropToHeightWidth 864 1536 approved-scene-c.png --out assets/themes/project-zero/source/scene-c-online.png
-sips -s format webp -s formatOptions 90 assets/themes/project-zero/source/scene-a-sync.png --out renderer/boot/assets/scene-a-sync.webp
-sips -s format webp -s formatOptions 90 assets/themes/project-zero/source/scene-b-awakening.png --out renderer/boot/assets/scene-b-awakening.webp
-sips -s format webp -s formatOptions 90 assets/themes/project-zero/source/scene-c-online.png --out renderer/boot/assets/scene-c-online.webp
+sips --cropToHeightWidth 936 1664 approved-scene-a.png --out cropped-scene-a.png
+sips --resampleHeightWidth 864 1536 cropped-scene-a.png --out assets/themes/project-zero/source/scene-a-sync.png
+# 对 B/C 重复相同的安全裁切与正规化步骤。
+```
+
+WebP 不使用在当前 macOS 上写入失败的 `sips -s format webp` 路径。安装
+cwebp 1.3.2 或更新版本（缺失时运行 `brew install webp`），再用仓库脚本固定
+`-q 90 -metadata none` 和三个输入/输出 basename：
+
+```bash
+scripts/render-theme-webp.sh
 ```
 
 - [ ] **步骤 5：更新 provenance、hash 和公开 notice**

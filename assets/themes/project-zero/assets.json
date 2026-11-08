@@ -20,7 +20,7 @@
         "height": 864
       },
       "generationMethod": "Built-in image generation under human creative direction, followed by human composition and rights-boundary review.",
-      "adaptation": "Approved generated PNG was center-cropped to 16:9, resampled as a 1536x864 lossless PNG master, and adapted locally with cwebp quality 90 to a WebP runtime derivative.",
+      "adaptation": "Approved generated 1672x941 PNG was center-cropped by about 4 pixels per side and 2-3 pixels at the top and bottom, resampled as a 1536x864 lossless PNG master, and rendered by scripts/render-theme-webp.sh using cwebp 1.3.2 or newer with -q 90 -metadata none to a WebP runtime derivative.",
       "promptSummary": "The same anonymous adult aerospace pilot in side-profile half-body framing, wearing a fully sealed graphite helmet, opaque black visor, narrow cyan life-status line, cold-grey segmented neck ring, layered graphite shoulder armour, and restrained orange mechanical locks; ice-blue synchronization chamber with an original orange circular reflection and generous central and left-side UI negative space; no visible face, hair, eyes, text, logo, or watermark; no visible skin, insignia, letters, numbers, or recognizable third-party character design."
     },
     {
@@ -38,7 +38,7 @@
         "height": 864
       },
       "generationMethod": "Built-in image generation under human creative direction, followed by human composition and rights-boundary review.",
-      "adaptation": "Approved generated PNG was center-cropped to 16:9, resampled as a 1536x864 lossless PNG master, and adapted locally with cwebp quality 90 to a WebP runtime derivative.",
+      "adaptation": "Approved generated 1672x941 PNG was center-cropped by about 4 pixels per side and 2-3 pixels at the top and bottom, resampled as a 1536x864 lossless PNG master, and rendered by scripts/render-theme-webp.sh using cwebp 1.3.2 or newer with -q 90 -metadata none to a WebP runtime derivative.",
       "promptSummary": "The same anonymous adult aerospace pilot in side-profile half-body framing, wearing a fully sealed graphite helmet, opaque black visor, narrow cyan life-status line, cold-grey segmented neck ring, layered graphite shoulder armour, and restrained orange mechanical locks; cold-white maintenance bay with the pilot on the right and broad left-side title negative space; no visible face, hair, eyes, text, logo, or watermark; no visible skin, insignia, letters, numbers, amber immersion liquid, or recognizable third-party character design."
     },
     {
@@ -56,7 +56,7 @@
         "height": 864
       },
       "generationMethod": "Built-in image generation under human creative direction, followed by human composition and rights-boundary review.",
-      "adaptation": "Approved generated PNG was center-cropped to 16:9, resampled as a 1536x864 lossless PNG master, and adapted locally with cwebp quality 90 to a WebP runtime derivative.",
+      "adaptation": "Approved generated 1672x941 PNG was center-cropped by about 4 pixels per side and 2-3 pixels at the top and bottom, resampled as a 1536x864 lossless PNG master, and rendered by scripts/render-theme-webp.sh using cwebp 1.3.2 or newer with -q 90 -metadata none to a WebP runtime derivative.",
       "promptSummary": "The same anonymous adult aerospace pilot in side-profile half-body framing, wearing a fully sealed graphite helmet, opaque black visor, narrow cyan life-status line, cold-grey segmented neck ring, layered graphite shoulder armour, and restrained orange mechanical locks; dark aerospace cockpit with the pilot in the lower right and generous central and left-side system-online negative space; no visible face, hair, eyes, text, logo, or watermark; no visible skin, insignia, letters, numbers, immersion chamber, or recognizable third-party character design."
     }
   ]

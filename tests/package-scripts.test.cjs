@@ -2,9 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsPromises = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const pkg = require('../package.json');
 
@@ -67,6 +69,76 @@ test('production scripts and packaging never enable the test bridge', () => {
   assert.doesNotMatch(
     JSON.stringify(productionConfiguration),
     /PROJECT_ZERO_TEST_BRIDGE_MODULE|NODE_ENV=test/
+  );
+});
+
+test('public theme WebP rendering is reproducible and fails closed without cwebp', async t => {
+  const projectRoot = path.join(__dirname, '..');
+  const scriptPath = path.join(projectRoot, 'scripts', 'render-theme-webp.sh');
+  const source = await fsPromises.readFile(scriptPath, 'utf8');
+
+  assert.match(source, /minimum_cwebp_version=['"]1\.3\.2['"]/);
+  assert.match(source, /command -v cwebp/);
+  assert.match(source, /brew install webp/);
+  assert.match(source, /-q 90/);
+  assert.match(source, /-metadata none/);
+  assert.doesNotMatch(source, /\bsips\b/);
+  for (const scene of ['scene-a-sync', 'scene-b-awakening', 'scene-c-online']) {
+    assert.match(source, new RegExp(`${scene}\\.png`));
+    assert.match(source, new RegExp(`${scene}\\.webp`));
+  }
+
+  const emptyPath = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'project-zero-no-cwebp-'));
+  t.after(() => fsPromises.rm(emptyPath, {recursive: true, force: true}));
+  const result = childProcess.spawnSync('/bin/sh', [scriptPath], {
+    encoding: 'utf8',
+    env: {...process.env, PATH: emptyPath}
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /brew install webp/);
+
+  const executionRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'project-zero-cwebp-'));
+  t.after(() => fsPromises.rm(executionRoot, {recursive: true, force: true}));
+  const binDirectory = path.join(executionRoot, 'bin');
+  const sourceDirectory = path.join(executionRoot, 'source');
+  const outputDirectory = path.join(executionRoot, 'output');
+  await Promise.all([
+    fsPromises.mkdir(binDirectory),
+    fsPromises.mkdir(sourceDirectory)
+  ]);
+  const fakeCwebp = path.join(binDirectory, 'cwebp');
+  await fsPromises.writeFile(fakeCwebp, `#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo "1.3.2"
+  exit 0
+fi
+output=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    output=$1
+  fi
+  shift
+done
+[ -n "$output" ] || exit 2
+printf 'fake-webp' > "$output"
+`);
+  await fsPromises.chmod(fakeCwebp, 0o755);
+  for (const scene of ['scene-a-sync', 'scene-b-awakening', 'scene-c-online']) {
+    await fsPromises.writeFile(path.join(sourceDirectory, `${scene}.png`), 'fake-png');
+  }
+  const execution = childProcess.spawnSync(
+    '/bin/sh',
+    [scriptPath, sourceDirectory, outputDirectory],
+    {
+      encoding: 'utf8',
+      env: {...process.env, PATH: `${binDirectory}:/usr/bin:/bin`}
+    }
+  );
+  assert.equal(execution.status, 0, execution.stderr);
+  assert.deepEqual(
+    (await fsPromises.readdir(outputDirectory)).sort(),
+    ['scene-a-sync.webp', 'scene-b-awakening.webp', 'scene-c-online.webp']
   );
 });
 
