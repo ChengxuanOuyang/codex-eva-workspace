@@ -260,3 +260,87 @@ test('requires assets.json to cover each WebP exactly once', async t => {
     root: themeRoot
   });
 });
+
+test('does not follow a theme file swapped to an outside symlink before reading', async t => {
+  const {temporaryRoot, themeRoot} = await isolatedTheme(t);
+  const realRoot = await fs.realpath(themeRoot);
+  const themeTarget = path.join(realRoot, 'theme.json');
+  const outsideTheme = path.join(temporaryRoot, 'outside-theme.json');
+  const outsidePayload = await readJson(themeRoot, 'theme.json');
+  outsidePayload.displayName = 'OUTSIDE SYMLINK PAYLOAD';
+  await writeJson(temporaryRoot, 'outside-theme.json', outsidePayload);
+  let swapped = false;
+  let outsideBytesRead = false;
+
+  async function swapLeaf() {
+    if (swapped) return;
+    swapped = true;
+    await fs.rm(themeTarget);
+    await fs.symlink(outsideTheme, themeTarget);
+  }
+
+  const fsModule = {
+    ...fs,
+    async open(target, ...arguments_) {
+      if (target === themeTarget) await swapLeaf();
+      return fs.open(target, ...arguments_);
+    },
+    async readFile(target, ...arguments_) {
+      if (target === themeTarget) {
+        await swapLeaf();
+        outsideBytesRead = true;
+      }
+      return fs.readFile(target, ...arguments_);
+    }
+  };
+
+  await expectThemeError(
+    validateThemeDirectory(themeRoot, {fsModule}),
+    'THEME_SYMLINK',
+    {file: 'theme.json', root: themeRoot, forbidden: ['OUTSIDE SYMLINK PAYLOAD']}
+  );
+  assert.equal(outsideBytesRead, false);
+});
+
+test('rejects a theme root whose directory identity changes during validation', async t => {
+  const {temporaryRoot, themeRoot} = await isolatedTheme(t);
+  const realRoot = await fs.realpath(themeRoot);
+  const themeTarget = path.join(realRoot, 'theme.json');
+  const movedRoot = path.join(temporaryRoot, 'original-theme-moved');
+  const replacementRoot = path.join(temporaryRoot, 'replacement-theme');
+  await fs.cp(fixtureRoot, replacementRoot, {recursive: true});
+  const replacementTheme = await readJson(replacementRoot, 'theme.json');
+  replacementTheme.displayName = 'OUTSIDE ROOT PAYLOAD';
+  await writeJson(replacementRoot, 'theme.json', replacementTheme);
+  let swapped = false;
+  let replacementBytesReadByPath = false;
+
+  async function swapRoot() {
+    if (swapped) return;
+    swapped = true;
+    await fs.rename(themeRoot, movedRoot);
+    await fs.rename(replacementRoot, themeRoot);
+  }
+
+  const fsModule = {
+    ...fs,
+    async open(target, ...arguments_) {
+      if (target === themeTarget) await swapRoot();
+      return fs.open(target, ...arguments_);
+    },
+    async readFile(target, ...arguments_) {
+      if (target === themeTarget) {
+        await swapRoot();
+        replacementBytesReadByPath = true;
+      }
+      return fs.readFile(target, ...arguments_);
+    }
+  };
+
+  await expectThemeError(
+    validateThemeDirectory(themeRoot, {fsModule}),
+    'THEME_ROOT',
+    {root: themeRoot, forbidden: ['OUTSIDE ROOT PAYLOAD']}
+  );
+  assert.equal(replacementBytesReadByPath, false);
+});
