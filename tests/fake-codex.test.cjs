@@ -3,10 +3,33 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const {bridgeOptionsForEnvironment} = require('../app/main.cjs');
+const {bridgeOptionsForEnvironment, configureProductUserData} = require('../app/main.cjs');
 const {InMemoryCodexBridge, createBridgeOptions} = require('./support/fake-codex.cjs');
 
 const fakeModule = path.join(__dirname, 'support', 'fake-codex.cjs');
+
+test('the product userData directory is fixed before lifecycle startup', () => {
+  const calls = [];
+  const app = {
+    getPath(name) {
+      calls.push(`get:${name}`);
+      assert.equal(name, 'appData');
+      return '/Users/test/Library/Application Support';
+    },
+    setPath(name, value) {
+      calls.push(`set:${name}:${value}`);
+    }
+  };
+
+  assert.equal(
+    configureProductUserData(app, path.posix),
+    '/Users/test/Library/Application Support/Project Zero'
+  );
+  assert.deepEqual(calls, [
+    'get:appData',
+    'set:userData:/Users/test/Library/Application Support/Project Zero'
+  ]);
+});
 
 test('test bridge requires explicit development-only module injection', () => {
   for (const environment of [

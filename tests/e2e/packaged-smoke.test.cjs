@@ -7,17 +7,12 @@ const os = require('node:os');
 const path = require('node:path');
 const {_electron: electron} = require('playwright');
 const pkg = require('../../package.json');
+const {unpackedApplicationDirectory} = require('../../scripts/pack.cjs');
 
 async function packagedExecutable() {
-  const dist = path.join(__dirname, '..', '..', 'dist');
-  const directories = (await fs.readdir(dist, {withFileTypes: true}))
-    .filter(entry => entry.isDirectory() && entry.name.startsWith('mac'))
-    .map(entry => entry.name)
-    .sort();
-  assert.ok(directories.length > 0, 'npm run pack must create a mac app directory');
+  const projectRoot = path.join(__dirname, '..', '..');
   return path.join(
-    dist,
-    directories[0],
+    unpackedApplicationDirectory(projectRoot),
     `${pkg.build.productName}.app`,
     'Contents',
     'MacOS',

@@ -3,7 +3,7 @@
 ## 结果
 
 - 将普通测试限定为 `node --test tests/*.test.cjs`，`verify` 不再递归发现或启动 Electron E2E。
-- 增加仅在 `NODE_ENV === 'test'` 且 `PROJECT_ZERO_FAKE_CODEX === '1'` 时启用的内存 Codex bridge；任一条件单独存在时仍走真实发现与真实 bridge。
+- 当前实现使用仓库外置测试模块；仅当 `NODE_ENV === 'test'`、Electron 未打包且显式提供 `PROJECT_ZERO_TEST_BRIDGE_MODULE` 时启用内存 Codex bridge。任一条件缺失时仍走真实发现与真实 bridge。
 - 内存 bridge 不 spawn child，`connected` 生命周期与现有 bridge 一致，`stop()` 返回可复用 Promise，并提供固定的 signed-in account 与可用 model catalog。
 - Electron E2E 使用当前 UI 文本，在 99.2% 且确认按钮 enabled 后点击，等待 100.0% 与 `SYSTEM ONLINE`；同时验证 `127.0.0.1`、无远程资源、无 Codex child、关闭后 loopback listener 和任务进程均消失。
 - 生成 arm64 未签名目录开发包并检查 `.app` 元数据、主可执行文件、asar 内容与生产配置。
@@ -13,7 +13,7 @@
 1. `node --test tests/package-scripts.test.cjs`
    - 退出码 `1`。
    - 预期失败：实际 `test` 为递归的 `node --test`，而期望为 `node --test tests/*.test.cjs`。
-2. `NODE_ENV=test PROJECT_ZERO_FAKE_CODEX=1 npm run test:e2e`
+2. `npm run test:e2e`（源码 E2E 由测试本身显式注入外置 bridge 模块）
    - 退出码 `1`。
    - E2E 到达等待确认后发现真实 `codex app-server` child，准确证明 fake 开关尚未实现。
 3. `node --test tests/fake-codex.test.cjs tests/package-scripts.test.cjs`
@@ -23,7 +23,7 @@
 ## TDD：GREEN
 
 - `node --test tests/fake-codex.test.cjs tests/package-scripts.test.cjs`：5/5 通过。
-- `NODE_ENV=test PROJECT_ZERO_FAKE_CODEX=1 npm run test:e2e`：1/1 通过。
+- `npm run test:e2e`：源码 E2E 使用双门控外置 fake；packaged smoke 拒绝相同注入并使用真实 Codex。
 - `npm run verify`：lint 通过，普通测试 70/70 通过；没有隐式启动 GUI。
 
 ## Electron E2E
@@ -47,7 +47,7 @@
 - `CFBundleExecutable`：`PROJECT ZERO — REI CODEX WORKBENCH`，文件存在且可执行。
 - `app.asar` 共 21 个条目，仅包含 allowlisted app/workbench/renderer、元数据和许可证文件；没有 tests/reference/fixture 路径。
 - `.app` 与 asar 列表中没有参考视频、`auth.json`、`private-themes` 或 `.env*`。
-- asar 内生产 `package.json` 没有配置 `PROJECT_ZERO_FAKE_CODEX` 或 `NODE_ENV=test`。
+- asar 内生产 `package.json` 没有配置 `PROJECT_ZERO_TEST_BRIDGE_MODULE` 或 `NODE_ENV=test`。
 - 本任务只验证未签名目录开发包；不声称已签名或公证。electron-builder 明确报告跳过签名，符合阶段划分。
 
 ## 修改文件
@@ -64,7 +64,7 @@
 
 ## 自审
 
-- 双条件门控使用严格相等比较，未向 `start`、`dev`、`pack`、发行脚本或 build 配置注入测试环境。
+- 三条件门控要求测试环境、未打包 Electron 和显式模块路径；`start`、`dev`、`pack`、发行脚本和 build 配置均不启用测试 bridge。
 - 非 fake 分支向 lifecycle 传空 options，保留既有真实 Codex 发现顺序与 bridge 实现。
 - fake 仅实现启动门槛及后续阶段需要的 account/model 请求；未知请求显式拒绝，避免伪造成功。
 - lifecycle 仍把 bridge cleanup 放入既有清理栈；内存与真实 bridge 都遵循 Promise stop 契约。
@@ -75,4 +75,4 @@
 
 - electron-builder 提示缺少 author 且使用默认 Electron 图标；不影响本任务的目录开发包验证，可在品牌/发行阶段处理。
 - 开发包按配置未签名，也未公证；签名与公证属于阶段 4。
-- 本任务不重复真实 Codex 发现烟雾测试；依照简报沿用前序证据，E2E 只使用双门控 fake。
+- 源码 E2E 使用确定性 fake；packaged smoke 是独立的 owner-machine 真实 Codex/登录检查。前者不证明真实登录，后者也不能替代无账户环境中的确定性回归测试。
