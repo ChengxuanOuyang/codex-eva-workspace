@@ -61,4 +61,3 @@ Apple Silicon 输出在 `dist/mac-arm64/`，Intel 输出在 `dist/mac/`。当前
 
 公开 GitHub 仓库不包含 Rei、EVA 或其他私人角色素材。私人素材必须由使用者自行合法取得、
 保存在 ignored 本地目录，并自行承担分享或使用时的授权责任。
-

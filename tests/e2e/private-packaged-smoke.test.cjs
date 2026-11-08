@@ -50,9 +50,11 @@ test('synthetic private theme packs independently, preserves public files, and l
   assert.notEqual(privateApplicationDirectory, publicApplicationDirectory);
   await fs.access(path.join(publicApplicationDirectory, `${pkg.build.productName}.app`));
   for (const asset of fixtureManifest.assets) {
+    const expectedHash = sha256(await fs.readFile(path.join(themeRoot, asset.file)));
+    assert.equal(asset.sha256, expectedHash);
     assert.equal(
       sha256(read(archive, `renderer/boot/assets/${asset.file}`)),
-      asset.sha256
+      expectedHash
     );
   }
   const index = read(archive, 'renderer/boot/index.html').toString('utf8');

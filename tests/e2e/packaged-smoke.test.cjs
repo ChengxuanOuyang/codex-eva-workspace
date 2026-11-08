@@ -10,9 +10,9 @@ const pkg = require('../../package.json');
 const {unpackedApplicationDirectory} = require('../../scripts/pack.cjs');
 const {
   assertNoSensitiveArchiveContent,
+  assertThemeMatchesExpected,
   entries,
-  read,
-  sha256
+  read
 } = require('./asar-assertions.cjs');
 
 const projectRoot = path.join(__dirname, '..', '..');
@@ -37,25 +37,45 @@ function publicArchive() {
   );
 }
 
-test('public ASAR contains only the PILOT VOIDGLASS product and exact scene hashes', () => {
+test('public ASAR contains only the tracked PILOT VOIDGLASS product and exact scenes', async () => {
   const archive = publicArchive();
   const archiveEntries = entries(archive);
   const index = read(archive, 'renderer/boot/index.html').toString('utf8');
   const manifests = archiveEntries.filter(entry => /assets\/themes\/.+\/assets\.json$/.test(entry));
   assert.deepEqual(manifests, ['assets/themes/project-zero/assets.json']);
-  const manifest = JSON.parse(read(archive, manifests[0]).toString('utf8'));
+  const packagedManifest = JSON.parse(read(archive, manifests[0]).toString('utf8'));
+  const trackedManifestPath = path.join(
+    projectRoot,
+    'assets',
+    'themes',
+    'project-zero',
+    'assets.json'
+  );
+  const expectedManifest = JSON.parse(await fs.readFile(trackedManifestPath, 'utf8'));
+  const expectedRuntime = new Map();
+  const packagedRuntime = new Map();
 
   assert.match(index, /<title>PROJECT ZERO \/\/ PILOT CODEX WORKBENCH<\/title>/);
-  assert.equal(manifest.themeId, 'voidglass-pilot');
-  assert.equal(manifest.subject, 'PILOT-00 / VOIDGLASS');
-  assert.equal(manifest.assets.length, 3);
-  for (const asset of manifest.assets) {
+  assert.equal(expectedManifest.themeId, 'voidglass-pilot');
+  assert.equal(expectedManifest.subject, 'PILOT-00 / VOIDGLASS');
+  assert.equal(expectedManifest.assets.length, 3);
+  for (const asset of expectedManifest.assets) {
     const runtime = path.posix.normalize(path.posix.join(
       path.posix.dirname(manifests[0]),
       asset.runtime.file
     ));
-    assert.equal(sha256(read(archive, runtime)), asset.runtime.sha256);
+    expectedRuntime.set(
+      asset.runtime.file,
+      await fs.readFile(path.resolve(path.dirname(trackedManifestPath), asset.runtime.file))
+    );
+    packagedRuntime.set(asset.runtime.file, read(archive, runtime));
   }
+  assertThemeMatchesExpected({
+    expectedManifest,
+    packagedManifest,
+    expectedRuntime,
+    packagedRuntime
+  });
   assertNoSensitiveArchiveContent(archive);
 });
 

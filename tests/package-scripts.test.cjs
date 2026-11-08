@@ -9,6 +9,7 @@ const fsPromises = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const pkg = require('../package.json');
+const {assertThemeMatchesExpected} = require('./e2e/asar-assertions.cjs');
 
 test('packaged runtime artwork includes checksummed provenance and bounded art terms', async () => {
   const projectRoot = path.join(__dirname, '..');
@@ -51,6 +52,33 @@ test('packaged runtime artwork includes checksummed provenance and bounded art t
   assert.match(notice, /does not license or clear.*character.*trademark/i);
   assert.match(notice, /not.*commercial-use guarantee/i);
   assert.match(notice, /PNG.*WebP/i);
+});
+
+test('artifact verification rejects a manifest and scene tampered in agreement', () => {
+  const expectedBytes = Buffer.from('tracked-scene');
+  const tamperedBytes = Buffer.from('tampered-scene');
+  const expectedHash = crypto.createHash('sha256').update(expectedBytes).digest('hex');
+  const tamperedHash = crypto.createHash('sha256').update(tamperedBytes).digest('hex');
+  const expectedManifest = {
+    schemaVersion: 1,
+    themeId: 'voidglass-pilot',
+    assets: [{runtime: {file: 'scene.webp', sha256: expectedHash}}]
+  };
+  const packagedManifest = structuredClone(expectedManifest);
+  packagedManifest.assets[0].runtime.sha256 = tamperedHash;
+
+  assert.doesNotThrow(() => assertThemeMatchesExpected({
+    expectedManifest,
+    packagedManifest: expectedManifest,
+    expectedRuntime: new Map([['scene.webp', expectedBytes]]),
+    packagedRuntime: new Map([['scene.webp', expectedBytes]])
+  }));
+  assert.throws(() => assertThemeMatchesExpected({
+    expectedManifest,
+    packagedManifest,
+    expectedRuntime: new Map([['scene.webp', expectedBytes]]),
+    packagedRuntime: new Map([['scene.webp', tamperedBytes]])
+  }), error => error?.code === 'ERR_ASSERTION');
 });
 const {
   cleanAndPack,

@@ -37,14 +37,17 @@ function snapshotTheme(theme) {
   });
 }
 
-function visibleThemeLabel(displayName) {
-  return displayName
+function escapeHtml(text) {
+  return text
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-    .replace(' // ', ' <span>//</span> ');
+    .replaceAll("'", '&#39;');
+}
+
+function visibleThemeLabel(escapedDisplayName) {
+  return escapedDisplayName.replace(' // ', ' <span>//</span> ');
 }
 
 function sameIdentity(left, right) {
@@ -384,11 +387,12 @@ async function packPrivateThemeInternal({
     const indexPath = path.join(stageRoot, 'renderer', 'boot', 'index.html');
     const index = await fsModule.readFile(indexPath, 'utf8');
     if (!index.includes(PUBLIC_LABEL)) throw Error('PRIVATE_THEME_PUBLIC_LABEL_MISSING');
+    const escapedDisplayName = escapeHtml(theme.displayName);
     await writePrivateFile(
       indexPath,
       Buffer.from(index
-        .replaceAll(PUBLIC_LABEL, theme.displayName)
-        .replaceAll(PUBLIC_VISIBLE_LABEL, visibleThemeLabel(theme.displayName))),
+        .replaceAll(PUBLIC_LABEL, escapedDisplayName)
+        .replaceAll(PUBLIC_VISIBLE_LABEL, visibleThemeLabel(escapedDisplayName))),
       privateFiles,
       fsModule
     );

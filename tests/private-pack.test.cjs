@@ -179,6 +179,35 @@ test('stages only fixed project entries and privately replaces exact validated c
   await assertMissing(path.join(projectRoot, '.private-build'));
 });
 
+test('escapes a validator-approved display name in document and visible titles', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-title-escape-');
+  const themePath = path.join(themeRoot, 'theme.json');
+  const theme = JSON.parse(await fs.readFile(themePath, 'utf8'));
+  theme.displayName = `PROJECT ZERO // </title><img src=x>&"'`;
+  await fs.writeFile(themePath, `${JSON.stringify(theme, null, 2)}\n`);
+  let index;
+
+  const {packPrivateTheme} = loadPacker();
+  await packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    runBuilder: async ({projectRoot: stageRoot}) => {
+      index = await fs.readFile(path.join(stageRoot, 'renderer', 'boot', 'index.html'), 'utf8');
+    }
+  });
+
+  assert.doesNotMatch(index, /<img src=x>/);
+  assert.match(
+    index,
+    /<title>PROJECT ZERO \/\/ &lt;\/title&gt;&lt;img src=x&gt;&amp;&quot;&#39;<\/title>/
+  );
+  assert.match(
+    index,
+    /PROJECT ZERO <span>\/\/<\/span> &lt;\/title&gt;&lt;img src=x&gt;&amp;&quot;&#39;/
+  );
+});
+
 test('snapshots validated bytes before staging even if source and returned Map are replaced', async t => {
   const themeRoot = await isolatedTheme(t);
   const temporaryProject = await isolatedProject(t);

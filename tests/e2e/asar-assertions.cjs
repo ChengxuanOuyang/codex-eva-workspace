@@ -20,6 +20,26 @@ function sha256(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+function assertThemeMatchesExpected({
+  expectedManifest,
+  packagedManifest,
+  expectedRuntime,
+  packagedRuntime
+}) {
+  assert.deepEqual(packagedManifest, expectedManifest);
+  assert.equal(packagedRuntime.size, expectedManifest.assets.length);
+  for (const asset of expectedManifest.assets) {
+    const key = asset.runtime.file;
+    const expectedBytes = expectedRuntime.get(key);
+    const packagedBytes = packagedRuntime.get(key);
+    assert.ok(Buffer.isBuffer(expectedBytes), `missing tracked runtime bytes: ${key}`);
+    assert.ok(Buffer.isBuffer(packagedBytes), `missing packaged runtime bytes: ${key}`);
+    const expectedHash = sha256(expectedBytes);
+    assert.equal(asset.runtime.sha256, expectedHash);
+    assert.equal(sha256(packagedBytes), expectedHash);
+  }
+}
+
 function assertNoSensitiveArchiveContent(archive, {allowTestPrivateTitle = false} = {}) {
   const archiveEntries = entries(archive);
   for (const entry of archiveEntries) {
@@ -44,4 +64,10 @@ function assertNoSensitiveArchiveContent(archive, {allowTestPrivateTitle = false
   }
 }
 
-module.exports = {assertNoSensitiveArchiveContent, entries, read, sha256};
+module.exports = {
+  assertNoSensitiveArchiveContent,
+  assertThemeMatchesExpected,
+  entries,
+  read,
+  sha256
+};
