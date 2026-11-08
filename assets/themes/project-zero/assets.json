@@ -1,5 +1,7 @@
 {
   "schemaVersion": 1,
+  "themeId": "voidglass-pilot",
+  "subject": "PILOT-00 / VOIDGLASS",
   "license": "CC BY 4.0",
   "attribution": "PROJECT ZERO contributors",
   "assets": [
@@ -7,55 +9,55 @@
       "scene": "A — Synchronization",
       "master": {
         "file": "source/scene-a-sync.png",
-        "sha256": "0a3c4d59b8830184cedd16af0773b768ae9b7ecf862129753bed53be27de5de9"
+        "sha256": "5abaf988face9012d273fe24c651e1b3346de8bf3aa5aa0ab29de22626bd1d23"
       },
       "runtime": {
         "file": "../../../renderer/boot/assets/scene-a-sync.webp",
-        "sha256": "464b75c15fd37ab25fa8ac4e4770b82a50552c71ff8ff8d8875b165cf5e58e00"
+        "sha256": "5e6c3797a6d9968fe65adae2e26c654458ac85dbff7e19bcd2acd17e9b2317e0"
       },
       "dimensions": {
-        "width": 1672,
-        "height": 941
+        "width": 1536,
+        "height": 864
       },
-      "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
-      "adaptation": "Lossless PNG master adapted locally to a high-quality WebP runtime derivative.",
-      "promptSummary": "Original adult pilot in a non-official white biomechanical suit with pale-cyan seams and muted-red accents, placed on the right and looking left into an ice-blue circular synchronization chamber; preserve broad left-side negative space for the synchronization ring, 99.2% readout, status, and confirmation controls; no text, logos, watermarks, or remote content."
+      "generationMethod": "Built-in image generation under human creative direction, followed by human composition and rights-boundary review.",
+      "adaptation": "Approved generated PNG was center-cropped to 16:9, resampled as a 1536x864 lossless PNG master, and adapted locally with cwebp quality 90 to a WebP runtime derivative.",
+      "promptSummary": "The same anonymous adult aerospace pilot in side-profile half-body framing, wearing a fully sealed graphite helmet, opaque black visor, narrow cyan life-status line, cold-grey segmented neck ring, layered graphite shoulder armour, and restrained orange mechanical locks; ice-blue synchronization chamber with an original orange circular reflection and generous central and left-side UI negative space; no visible face, hair, eyes, text, logo, or watermark; no visible skin, insignia, letters, numbers, or recognizable third-party character design."
     },
     {
-      "scene": "B — System Awakening / LCL",
+      "scene": "B — System Awakening",
       "master": {
         "file": "source/scene-b-awakening.png",
-        "sha256": "46873e5a9e03d21fea3fa901188edaab56a8612f1e716037ec75b3108366faa1"
+        "sha256": "3ae777d36b2241527eee13623f54bede3ca7d60acb8c2f52462250dd1ca59927"
       },
       "runtime": {
         "file": "../../../renderer/boot/assets/scene-b-awakening.webp",
-        "sha256": "938ef1f5d11b812e0e8b802a03ae84f1a23c2e2e918b2dfec459093c788492de"
+        "sha256": "db6856717515f8cf75c821b3e79ce3909b38ce96c548369273f2a18ab271f9ef"
       },
       "dimensions": {
-        "width": 1672,
-        "height": 941
+        "width": 1536,
+        "height": 864
       },
-      "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
-      "adaptation": "Lossless PNG master adapted locally to a high-quality WebP runtime derivative.",
-      "promptSummary": "Close side-profile half-body view of the same original adult pilot behind a translucent warm-amber fluid or glass layer, with bubbles and restrained geometric instrumentation; preserve dark left-side negative space for the system-awakening title; no text, logos, watermarks, or remote content."
+      "generationMethod": "Built-in image generation under human creative direction, followed by human composition and rights-boundary review.",
+      "adaptation": "Approved generated PNG was center-cropped to 16:9, resampled as a 1536x864 lossless PNG master, and adapted locally with cwebp quality 90 to a WebP runtime derivative.",
+      "promptSummary": "The same anonymous adult aerospace pilot in side-profile half-body framing, wearing a fully sealed graphite helmet, opaque black visor, narrow cyan life-status line, cold-grey segmented neck ring, layered graphite shoulder armour, and restrained orange mechanical locks; cold-white maintenance bay with the pilot on the right and broad left-side title negative space; no visible face, hair, eyes, text, logo, or watermark; no visible skin, insignia, letters, numbers, amber immersion liquid, or recognizable third-party character design."
     },
     {
       "scene": "C — System Online",
       "master": {
         "file": "source/scene-c-online.png",
-        "sha256": "b19e7566e46233c607cc512314e62249051fdb81a71809e5593cafb1ac4f03fa"
+        "sha256": "e45537e8a02098bc089770b8c53a61bb1e4fee67dece50596d6c92de4a9ffc46"
       },
       "runtime": {
         "file": "../../../renderer/boot/assets/scene-c-online.webp",
-        "sha256": "e8fe96e26efbf0021b2dbb36ec11a1a4b3849e40f4662738468557ac68e253d9"
+        "sha256": "0f90a825f38eaa192e7f19816652f3a1ff1139f034adbace4fade7d70cbb93a5"
       },
       "dimensions": {
-        "width": 1672,
-        "height": 941
+        "width": 1536,
+        "height": 864
       },
-      "generationMethod": "Built-in image generation under human creative direction; high-quality WebP derivative encoded locally.",
-      "adaptation": "Lossless PNG master adapted locally to a high-quality WebP runtime derivative.",
-      "promptSummary": "Wide cockpit half-body view of the same original adult pilot in the lower right, facing an ice-blue systems chamber with a central synchronization ring; preserve central and left-side negative space for the SYSTEM ONLINE beat; no text, logos, watermarks, or remote content."
+      "generationMethod": "Built-in image generation under human creative direction, followed by human composition and rights-boundary review.",
+      "adaptation": "Approved generated PNG was center-cropped to 16:9, resampled as a 1536x864 lossless PNG master, and adapted locally with cwebp quality 90 to a WebP runtime derivative.",
+      "promptSummary": "The same anonymous adult aerospace pilot in side-profile half-body framing, wearing a fully sealed graphite helmet, opaque black visor, narrow cyan life-status line, cold-grey segmented neck ring, layered graphite shoulder armour, and restrained orange mechanical locks; dark aerospace cockpit with the pilot in the lower right and generous central and left-side system-online negative space; no visible face, hair, eyes, text, logo, or watermark; no visible skin, insignia, letters, numbers, immersion chamber, or recognizable third-party character design."
     }
   ]
 }

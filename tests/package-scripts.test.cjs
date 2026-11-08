@@ -18,9 +18,18 @@ test('packaged runtime artwork includes checksummed provenance and bounded art t
 
   assert.equal(packagedFiles.has('assets/themes/project-zero/assets.json'), true);
   assert.equal(packagedFiles.has('assets/themes/project-zero/ASSET-LICENSE.md'), true);
+  assert.equal(manifest.themeId, 'voidglass-pilot');
+  assert.equal(manifest.subject, 'PILOT-00 / VOIDGLASS');
+  assert.doesNotMatch(JSON.stringify(manifest), /\bREI\b|绫波丽|EVANGELION|\bNERV\b/iu);
   assert.equal(manifest.assets.length, 3);
   const recordedRuntimeFiles = [];
   for (const asset of manifest.assets) {
+    assert.match(asset.promptSummary, /sealed graphite helmet/i);
+    assert.match(asset.promptSummary, /opaque black visor/i);
+    assert.match(
+      asset.promptSummary,
+      /no visible face, hair, eyes, text, logo, or watermark/i
+    );
     assert.match(asset.runtime.file, /renderer\/boot\/assets\/scene-[abc]-.+\.webp$/);
     assert.match(asset.runtime.sha256, /^[a-f0-9]{64}$/);
     assert.match(asset.adaptation, /PNG.*WebP/i);

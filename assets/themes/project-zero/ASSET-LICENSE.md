@@ -1,39 +1,43 @@
-# PROJECT ZERO original scene artwork
+# PROJECT ZERO VOIDGLASS pilot scene artwork
 
 Copyright © 2026 PROJECT ZERO contributors.
 
-The contributors offer their original expression in this directory and its
-runtime derivatives under the [Creative Commons Attribution 4.0 International
-License](https://creativecommons.org/licenses/by/4.0/). CC BY applies only to the contributors' original expression to the extent they own it. Give appropriate
-credit to **PROJECT ZERO contributors**, link the license, and indicate whether
-changes were made.
+The contributors license only their original expression to the extent they own
+it under the [Creative Commons Attribution 4.0 International
+License](https://creativecommons.org/licenses/by/4.0/). Give appropriate credit
+to **PROJECT ZERO contributors**, link the license, and indicate whether changes
+were made.
 
-CC BY 4.0 does not license or clear third-party character or trademark rights,
-and it is not a commercial-use guarantee. Anyone redistributing these fan-project
-assets remains responsible for evaluating any additional permissions required in
-their jurisdiction and use case.
+This notice does not license or clear any third-party character or trademark
+rights, and it is not a commercial-use guarantee. Anyone redistributing these
+assets remains responsible for evaluating any additional permissions required
+for their jurisdiction and use case.
 
 ## Production record and boundaries
 
-The three scene masters were created with built-in image generation under human
-creative direction. The production direction required one consistent original
-adult pilot character, an original white biomechanical suit with pale-cyan seams
-and muted-red accents, an ice-blue short bob, restrained red eyes, geometric
-control spaces, and amber-fluid lighting where applicable. The generated output
-was reviewed by a human for the intended framing, protected UI negative space,
-and the absence of visible text, logos, watermarks, and remote content.
+The three public scene masters depict `PILOT-00 / VOIDGLASS`, an original
+anonymous adult aerospace pilot. The shared design uses a fully sealed graphite
+helmet, a completely opaque black visor, a narrow cyan life-status line, a
+cold-grey segmented neck ring, layered graphite shoulder armour, and restrained
+orange mechanical locks. The maintenance bay, synchronization chamber, and dark
+aerospace cockpit preserve broad negative space for the local boot interface.
 
-No official anime frames, promotional artwork, character sheets, screenshots,
-logos, wordmarks, or other official source assets were supplied as inputs or are
-included in these files. The assets are an independent fan-project visual
-vocabulary and do not imply affiliation with, endorsement by, or authorization
-from Evangelion rights holders, OpenAI, or any other third party. This record
-documents the project's intended provenance and licensing; it is not an
-independent legal determination of rights or clearance.
+The masters were created with built-in image generation under human creative
+direction, without supplying an existing image as a reference or edit target.
+They were reviewed by a human for consistent helmet and armour geometry,
+complete head and shoulder framing, UI negative space, and the absence of a
+visible face, hair, eyes, skin, text, logos, insignia, and watermarks.
 
-The lossless PNG masters live in `source/`. Each PNG was adapted locally into the high-quality WebP runtime derivative in `renderer/boot/assets/`. Individual
-filenames, checksums, production method, and prompt summaries are recorded in
-[`assets.json`](assets.json).
+No official frames, promotional artwork, character sheets, screenshots, logos,
+wordmarks, or other third-party visual source assets were supplied as inputs or
+are included in these public files. The work does not imply affiliation with,
+endorsement by, or authorization from OpenAI or any other third party. This
+record documents intended provenance and licensing; it is not an independent
+legal determination of rights or clearance.
+
+Each approved PNG master was center-cropped to 16:9, normalized to 1536×864, and adapted locally into a quality-90 WebP runtime derivative in `renderer/boot/assets/`.
+The masters live in `source/`. Individual filenames, checksums, production method,
+and prompt summaries are recorded in [`assets.json`](assets.json).
 
 The repository's source code is licensed separately under MIT. This art notice
 does not change the code license, and the MIT license does not change these art
