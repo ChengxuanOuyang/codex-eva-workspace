@@ -2,6 +2,11 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
+> **当前公共身份：** 本计划中的旧命名与公共主题说明已由
+> [`2026-11-08-public-pilot-private-rei-theme-design.md`](../specs/2026-11-08-public-pilot-private-rei-theme-design.md)
+> 覆盖。当前公开产品为 `PROJECT ZERO // PILOT CODEX WORKBENCH`，公开发行物只包含
+> 原创 `PILOT-00 / VOIDGLASS` 主题。
+
 **目标：** 将工作台变成可重复构建、可验证、可安装的 macOS 开源项目，并为用户和贡献者提供完整中文/英文文档。
 
 **架构：** 安全回归、许可证检查、打包和文档检查均由仓库脚本驱动；GitHub Actions 在 Apple Silicon 与 Intel runner 上分别构建。发布物使用 ad-hoc 签名、SHA-256 校验和与明确的 Gatekeeper 说明，不声称 Apple 公证。
@@ -101,7 +106,7 @@ test('artifact verification rejects an unsigned or wrong-architecture app', asyn
 
 ```yaml
 appId: io.github.chengxuanouyang.codex-eva-workspace
-productName: PROJECT ZERO — REI CODEX WORKBENCH
+productName: PROJECT ZERO — PILOT CODEX WORKBENCH
 asar: true
 afterPack: scripts/after-pack.cjs
 files:
@@ -143,7 +148,7 @@ artifactName: '${productName}-${version}-${arch}.${ext}'
 
 ```bash
 npm run build:mac:arm64
-npm run verify:artifact -- "dist/PROJECT ZERO — REI CODEX WORKBENCH-0.1.0-preview.0-arm64.dmg" arm64
+npm run verify:artifact -- "dist/PROJECT ZERO — PILOT CODEX WORKBENCH-0.1.0-preview.0-arm64.dmg" arm64
 ```
 
 预期：DMG 验证 PASS；`codesign` 显示 ad-hoc；架构包含 `arm64`。`spctl --assess` 可能因未公证而拒绝，此结果必须记录为预期限制，不能改写为通过。

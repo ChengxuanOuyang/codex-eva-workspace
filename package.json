@@ -1,5 +1,5 @@
 {
-  "name": "project-zero-rei-codex-workbench",
+  "name": "project-zero-pilot-codex-workbench",
   "version": "0.1.0-preview.0",
   "private": true,
   "description": "Unofficial local-first PROJECT ZERO Codex workbench for macOS",
@@ -26,7 +26,7 @@
   },
   "build": {
     "appId": "io.github.chengxuanouyang.codex-eva-workspace",
-    "productName": "PROJECT ZERO — REI CODEX WORKBENCH",
+    "productName": "PROJECT ZERO — PILOT CODEX WORKBENCH",
     "asar": true,
     "files": ["app/**/*", "workbench/**/*", "renderer/**/*", "assets/themes/project-zero/assets.json", "assets/themes/project-zero/ASSET-LICENSE.md", "package.json", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
     "mac": {"category": "public.app-category.developer-tools", "hardenedRuntime": false, "identity": null}

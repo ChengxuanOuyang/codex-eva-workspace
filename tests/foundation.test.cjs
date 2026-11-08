@@ -7,7 +7,7 @@ const pkg = require('../package.json');
 const gitignorePath = path.join(__dirname, '..', '.gitignore');
 
 test('application metadata and exact runtime versions are pinned', () => {
-  assert.equal(pkg.name, 'project-zero-rei-codex-workbench');
+  assert.equal(pkg.name, 'project-zero-pilot-codex-workbench');
   assert.equal(pkg.main, 'app/main.cjs');
   for (const version of Object.values({...pkg.dependencies, ...pkg.devDependencies})) {
     assert.doesNotMatch(version, /^[~^*]|latest$/);
@@ -26,4 +26,13 @@ test('private themes and private build outputs are excluded from Git', async () 
   assert.match(ignore, /^\/private-themes\/$/m);
   assert.match(ignore, /^\/\.private-build\/$/m);
   assert.match(ignore, /^\/dist-private\/$/m);
+});
+
+test('public product identity is PILOT and contains no REI product branding', async () => {
+  assert.equal(pkg.name, 'project-zero-pilot-codex-workbench');
+  assert.equal(pkg.build.productName, 'PROJECT ZERO — PILOT CODEX WORKBENCH');
+  const publicRuntime = await Promise.all([
+    'package.json', 'NOTICE.md', 'workbench/bridge.cjs', 'renderer/boot/index.html'
+  ].map(file => fs.promises.readFile(path.join(__dirname, '..', file), 'utf8')));
+  assert.doesNotMatch(publicRuntime.join('\n'), /\bREI\b|绫波丽|EVANGELION|\bNERV\b/iu);
 });

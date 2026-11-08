@@ -2,6 +2,11 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
+> **当前公共身份：** 本计划中的旧命名与公共主题说明已由
+> [`2026-11-08-public-pilot-private-rei-theme-design.md`](../specs/2026-11-08-public-pilot-private-rei-theme-design.md)
+> 覆盖。公开产品固定为 `PROJECT ZERO // PILOT CODEX WORKBENCH` 与原创
+> `PILOT-00 / VOIDGLASS` 主题；任何角色灵感主题只能通过 Git 忽略的本地私人主题机制使用。
+
 **目标：** 增加终端、Git、插件、私人主题、原创音频、设置与诊断，同时保持 Codex 权限和手动工具权限的清晰分离。
 
 **架构：** 每个开发工具由独立服务模块负责参数校验与生命周期；Renderer 通过固定 API 操作。主题包使用声明文件和 Application Support 沙箱；声音只加载仓库内已登记许可证的原创文件或用户本地文件。
@@ -177,7 +182,7 @@ test('private theme export excludes local copyrighted assets by default', async 
 
 默认原创主题清单只引用仓库 `assets/themes/project-zero` 内资产，并包含 `license: MIT` 或各资产许可证标识。
 
-默认主题固定采用已批准的「徽记 + 核心侧影」构图：公开包只包含原创 `PROJECT ZERO / 00` 徽记与原创绫波丽视觉编码。私人主题可导入用户自行提供且有权使用的官方风格图片，但这些文件只安装到 Application Support，必须被 Git、诊断、设置导出和公开构建排除；应用不得下载或附带此类素材。
+默认主题固定采用已批准的公共 PILOT 构图：公开包只包含原创 `PROJECT ZERO / 00` 徽记与 `PILOT-00 / VOIDGLASS` 匿名驾驶员视觉。私人主题可导入用户自行提供且有权使用的本地图片，但这些文件只安装到 Application Support，必须被 Git、诊断、设置导出和公开构建排除；应用不得下载或附带此类素材。
 
 - [ ] **步骤 4：运行测试并检查仓库**
 

@@ -2,6 +2,11 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
+> **当前公共身份：** 本计划中的旧命名与公共主题说明已由
+> [`2026-11-08-public-pilot-private-rei-theme-design.md`](../specs/2026-11-08-public-pilot-private-rei-theme-design.md)
+> 覆盖。当前公开产品为 `PROJECT ZERO // PILOT CODEX WORKBENCH`，公共主题为原创
+> `PILOT-00 / VOIDGLASS` 匿名驾驶员。
+
 **目标：** 交付一个可运行的 macOS Electron 应用，播放原创 PROJECT ZERO 启动序列，安全启动官方 Codex app-server，并在后端就绪后完成 99.2% 驾驶员确认。
 
 **架构：** Electron 主进程启动受保护的随机端口回环服务；Renderer 只访问该服务并保持 Node 隔离；`CodexBridge` 以 stdio 启动官方 Codex。启动动画与后端初始化并行，但确认按钮由真实健康状态控制。
@@ -45,7 +50,7 @@ const fs = require('node:fs');
 const pkg = require('../package.json');
 
 test('application metadata and exact runtime versions are pinned', () => {
-  assert.equal(pkg.name, 'project-zero-rei-codex-workbench');
+  assert.equal(pkg.name, 'project-zero-pilot-codex-workbench');
   assert.equal(pkg.main, 'app/main.cjs');
   for (const version of Object.values({...pkg.dependencies, ...pkg.devDependencies})) {
     assert.doesNotMatch(version, /^[~^*]|latest$/);
@@ -69,7 +74,7 @@ test('private and credential-bearing paths are ignored', () => {
 
 ```json
 {
-  "name": "project-zero-rei-codex-workbench",
+  "name": "project-zero-pilot-codex-workbench",
   "version": "0.1.0-preview.0",
   "private": true,
   "description": "Unofficial local-first PROJECT ZERO Codex workbench for macOS",
@@ -96,7 +101,7 @@ test('private and credential-bearing paths are ignored', () => {
   },
   "build": {
     "appId": "io.github.chengxuanouyang.codex-eva-workspace",
-    "productName": "PROJECT ZERO — REI CODEX WORKBENCH",
+    "productName": "PROJECT ZERO — PILOT CODEX WORKBENCH",
     "asar": true,
     "files": ["app/**/*", "workbench/**/*", "renderer/**/*", "package.json", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
     "mac": {"category": "public.app-category.developer-tools", "hardenedRuntime": false, "identity": null}
@@ -331,7 +336,7 @@ test('skip changes presentation only', () => {
 
 `nextBootState` 只接受 `tick`、`ready`、`failed`、`confirm`、`skip`、`complete`；任何未知事件返回原状态。`confirm` 只有在 `progress === 99.2 && ready` 时进入 `completing`。`skip` 进入无动画等待页而不是工作台。
 
-HTML/CSS 按批准的「徽记 + 核心侧影」视觉实现冰白控制面、原创 `PROJECT ZERO / 00` 几何印记、侧边状态六边形、橙色流体层和同步环。同步核心加入本项目原创的冰蓝短发、红瞳信号与白色驾驶服几何侧影，且不得遮挡 99.2% 读数或操作按钮；不得包含 NERV 叶片/字标、官方人物图、临摹构图或参考视频像素。`prefers-reduced-motion: reduce` 禁用液面和侧影的大幅位移并缩短过渡。
+HTML/CSS 按已批准的公共 PILOT 视觉实现冰白控制面、原创 `PROJECT ZERO / 00` 几何印记、侧边状态六边形和同步环。同步核心使用 `PILOT-00 / VOIDGLASS` 匿名驾驶员：全封闭石墨头盔、不透明黑色面罩、青色生命状态线和原创工业肩甲，且不得遮挡 99.2% 读数或操作按钮；不得包含第三方标志、官方人物图、临摹构图或参考视频像素。`prefers-reduced-motion: reduce` 禁用大幅位移并缩短过渡。
 
 `boot.js` 每 500ms 请求 `/health`；后端 ready 后派发 `ready`；3 秒后显示跳过；`Esc` 仅派发 `skip`；确认按钮按状态启用。
 
@@ -381,7 +386,7 @@ test('application reaches pilot confirmation without remote content', async () =
 - [ ] **步骤 4：运行全阶段验证和未签名目录构建**
 
 运行：`npm run verify && npm run test:e2e && npm run pack`
-预期：全部测试 PASS；`dist/mac*/PROJECT ZERO — REI CODEX WORKBENCH.app` 生成；应用包内不存在参考视频、`auth.json` 或 `private-themes`。
+预期：全部测试 PASS；`dist/mac*/PROJECT ZERO — PILOT CODEX WORKBENCH.app` 生成；应用包内不存在参考视频、`auth.json` 或 `private-themes`。
 
 - [ ] **步骤 5：Commit**
 

@@ -90,8 +90,8 @@ class CodexBridge extends EventEmitter {
     try {
       await this.request('initialize', {
         clientInfo: {
-          name: 'project-zero-rei-codex-workbench',
-          title: 'PROJECT ZERO — REI CODEX WORKBENCH',
+          name: 'project-zero-pilot-codex-workbench',
+          title: 'PROJECT ZERO — PILOT CODEX WORKBENCH',
           version: '0.1.0-preview.0'
         },
         capabilities: {experimentalApi: false}

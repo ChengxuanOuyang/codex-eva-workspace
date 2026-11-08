@@ -25,7 +25,8 @@ function contrast(foreground, background) {
 test('boot document uses the exact product name and only local allowlisted assets', async () => {
   const html = await read('boot/index.html');
 
-  assert.match(html, /<title>PROJECT ZERO \/\/ REI CODEX WORKBENCH<\/title>/);
+  assert.match(html, /<title>PROJECT ZERO \/\/ PILOT CODEX WORKBENCH<\/title>/);
+  assert.match(html, /PROJECT ZERO <span>\/\/<\/span> PILOT CODEX WORKBENCH/);
   assert.match(html, /href="\/boot\.css"/);
   assert.match(html, /src="\/shared\/api\.js"/);
   assert.match(html, /src="\/boot\.js"/);
