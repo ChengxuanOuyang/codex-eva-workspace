@@ -1,0 +1,7 @@
+{
+  "assets": [
+    {"file": "source/scene-a-sync.png", "license": "CC-BY-4.0", "sha256": "5abaf988face9012d273fe24c651e1b3346de8bf3aa5aa0ab29de22626bd1d23"},
+    {"file": "source/scene-b-awakening.png", "license": "CC-BY-4.0", "sha256": "3ae777d36b2241527eee13623f54bede3ca7d60acb8c2f52462250dd1ca59927"},
+    {"file": "source/scene-c-online.png", "license": "CC-BY-4.0", "sha256": "e45537e8a02098bc089770b8c53a61bb1e4fee67dece50596d6c92de4a9ffc46"}
+  ]
+}
