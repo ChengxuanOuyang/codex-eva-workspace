@@ -101,20 +101,27 @@ test('declarative boot modules are served through exact allowlist entries only',
   try {
     await fs.mkdir(bootRoot);
     await fs.mkdir(sharedRoot);
-    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js']) {
+    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js', 'sequence-audio.js', 'audio-clock.js']) {
       await fs.writeFile(path.join(bootRoot, script), `globalThis.${script} = true;`);
     }
     const address = await service.listen();
 
-    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js']) {
+    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js', 'sequence-audio.js', 'audio-clock.js']) {
       const response = await request(address, `/${script}`);
       assert.equal(response.status, 200, script);
       assert.equal(response.headers['content-type'], 'text/javascript; charset=utf-8', script);
     }
 
-    const unknown = await request(address, '/unlisted-boot-module.js');
-    assert.equal(unknown.status, 404);
-    assert.deepEqual(JSON.parse(unknown.body), {error: 'Not found'});
+    for (const requestPath of [
+      '/unlisted-boot-module.js',
+      '/audio-clock.js?cache=1',
+      '/sequence-audio.js.bak',
+      '/boot/audio-clock.js'
+    ]) {
+      const unknown = await request(address, requestPath);
+      assert.equal(unknown.status, 404, requestPath);
+      assert.deepEqual(JSON.parse(unknown.body), {error: 'Not found'}, requestPath);
+    }
   } finally {
     await service.close();
     await fs.rm(fixtureRoot, {recursive: true, force: true});
