@@ -72,7 +72,7 @@ function deferred() {
   return {promise, resolve, reject};
 }
 
-function fixture(api) {
+function fixture(api, {reducedMotion = false} = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
   const sandbox = {AbortController};
   sandbox.globalThis = sandbox;
@@ -102,7 +102,7 @@ function fixture(api) {
     clock,
     document,
     now: () => 0,
-    reducedMotion: false,
+    reducedMotion,
     root
   });
   controller.start();
@@ -203,6 +203,54 @@ test('post-ready disconnect revokes an in-progress confirmation and cannot enter
   assert.notEqual(view.document.body.dataset.scene, 'online');
 });
 
+test('reduced-motion completion requires a fresh exact READY snapshot', async () => {
+  let calls = 0;
+  const view = fixture({
+    health: () => Promise.resolve(++calls === 1
+      ? {ready: true, code: 'READY'}
+      : {ready: true}),
+    retryReadiness: () => Promise.resolve()
+  }, {reducedMotion: true});
+
+  view.clock.fireTimeout(600);
+  await view.clock.fireTimeout(0);
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
+  view.elements['#confirm-button'].dispatch('click');
+  assert.equal(view.controller.getState().phase, 'completing');
+
+  await view.clock.fireTimeout(120);
+
+  assert.equal(calls, 2);
+  assert.equal(view.controller.getState().phase, 'failed');
+  assert.equal(view.controller.getState().ready, false);
+  assert.equal(view.document.body.dataset.scene, 'sync');
+  assert.equal(view.elements['#confirm-button'].disabled, true);
+  assert.equal(view.elements['#retry-button'].hidden, false);
+  assert.equal(view.clock.countTimeouts(500), 1);
+});
+
+test('completion health error revokes readiness and resumes recovery polling', async () => {
+  let calls = 0;
+  const view = fixture({
+    health: () => ++calls === 1
+      ? Promise.resolve({ready: true, code: 'READY'})
+      : Promise.reject(Error('/private/final health failure')),
+    retryReadiness: () => Promise.resolve()
+  }, {reducedMotion: true});
+
+  await view.clock.fireTimeout(0);
+  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
+  view.elements['#confirm-button'].dispatch('click');
+  await view.clock.fireTimeout(120);
+
+  assert.equal(view.controller.getState().phase, 'failed');
+  assert.equal(view.controller.getState().ready, false);
+  assert.equal(view.elements['#backend-state'].textContent, '连接已断开');
+  assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|final health failure/);
+  assert.equal(view.elements['#retry-button'].hidden, false);
+  assert.equal(view.clock.countTimeouts(500), 1);
+});
+
 test('retry aborts and invalidates stale health so it cannot restore ready', async () => {
   const stale = deferred();
   const retry = deferred();
@@ -270,16 +318,20 @@ test('health polling is serial and never has more than one request in flight', a
   assert.equal(maxInFlight, 1);
 });
 
-test('completion aborts health and a late response cannot overwrite SYSTEM ONLINE', async () => {
+test('completion invalidates an overlapping stale poll and trusts only its final health response', async () => {
   const late = deferred();
+  const finalHealth = deferred();
   let calls = 0;
   let lateSignal;
   const view = fixture({
     health: ({signal}) => {
       calls += 1;
-      if (calls === 1) return Promise.resolve({ready: true});
-      lateSignal = signal;
-      return late.promise;
+      if (calls === 1) return Promise.resolve({ready: true, code: 'READY'});
+      if (calls === 2) {
+        lateSignal = signal;
+        return late.promise;
+      }
+      return finalHealth.promise;
     }
   });
 
@@ -288,20 +340,24 @@ test('completion aborts health and a late response cannot overwrite SYSTEM ONLIN
   assert.equal(view.controller.getState().progress, 99.2);
   const lateRun = view.clock.fireTimeout(500);
   view.elements['#confirm-button'].dispatch('click');
-  view.clock.fireTimeout(720);
+  const completionRun = view.clock.fireTimeout(720);
+
+  assert.equal(calls, 3);
+  assert.equal(lateSignal.aborted, true);
+  assert.equal(view.controller.getState().phase, 'completing');
+  late.resolve({ready: false, code: 'DISCONNECTED'});
+  await lateRun;
+  assert.equal(view.controller.getState().phase, 'completing');
+
+  finalHealth.resolve({ready: true, code: 'READY'});
+  await completionRun;
 
   assert.equal(view.document.body.dataset.phase, 'complete');
   assert.equal(view.elements['#sync-heading'].textContent, 'SYSTEM ONLINE');
-  assert.equal(lateSignal.aborted, true);
   assert.equal(view.elements['#confirm-button'].listeners.has('click'), false);
   assert.equal(view.elements['#skip-button'].listeners.has('click'), false);
   assert.equal(view.rootListeners.has('keydown'), false);
   assert.equal(view.rootListeners.has('pagehide'), true);
-  const writes = view.elements['#diagnostic-text'].textWrites;
-  late.resolve({ready: false});
-  await lateRun;
-  assert.equal(view.elements['#sync-heading'].textContent, 'SYSTEM ONLINE');
-  assert.equal(view.elements['#diagnostic-text'].textWrites, writes);
 });
 
 test('destroy aborts an in-flight request and blocks later DOM writes', async () => {
@@ -333,7 +389,7 @@ test('render updates aria-valuenow and identical health states do not rewrite th
 });
 
 test('scene mapping keeps awakening to the opening beat, sync through confirmation, and online after completion', async () => {
-  const view = fixture({health: () => Promise.resolve({ready: true})});
+  const view = fixture({health: () => Promise.resolve({ready: true, code: 'READY'})});
 
   assert.equal(view.document.body.dataset.scene, 'awakening');
   view.clock.fireTimeout(600);
@@ -346,7 +402,7 @@ test('scene mapping keeps awakening to the opening beat, sync through confirmati
   while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
   view.elements['#confirm-button'].dispatch('click');
   assert.equal(view.document.body.dataset.scene, 'sync');
-  view.clock.fireTimeout(720);
+  await view.clock.fireTimeout(720);
   assert.equal(view.controller.getState().phase, 'complete');
   assert.equal(view.document.body.dataset.scene, 'online');
 });

@@ -102,12 +102,20 @@ test('application reaches user confirmation without remote content and closes cl
       assert.equal(new URL(resourceUrl).origin, origin, `remote resource loaded: ${resourceUrl}`);
     }
 
+    await page.evaluate(() => {
+      globalThis.__projectZeroSawOnline = document.body.dataset.scene === 'online';
+      new MutationObserver(() => {
+        if (document.body.dataset.scene === 'online') globalThis.__projectZeroSawOnline = true;
+      }).observe(document.body, {attributes: true, attributeFilter: ['data-scene']});
+    });
+    await confirm.click();
+    await page.waitForFunction(() => document.body.dataset.phase === 'completing');
     await fs.writeFile(disconnectSignalPath, 'disconnect');
-    await page.waitForFunction(() => document.querySelector('#confirm-button').disabled);
-    await page.getByText('Codex 连接已断开。请重试建立本地连接。', {exact: true}).waitFor();
-    await page.evaluate(() => document.querySelector('#confirm-button').click());
-    await page.waitForTimeout(800);
+    await page.waitForFunction(() => document.body.dataset.phase === 'failed', null, {timeout: 2000});
     assert.notEqual(await page.locator('body').getAttribute('data-scene'), 'online');
+    assert.equal(await page.evaluate(() => globalThis.__projectZeroSawOnline), false);
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByText('Codex 连接已断开。请重试建立本地连接。', {exact: true}).waitFor();
 
     await fs.rm(disconnectSignalPath, {force: true});
     await page.getByRole('button', {name: '重新检查 Codex'}).click();

@@ -169,6 +169,13 @@
       healthTimer = clock.setTimeout(pollHealth, delay);
     }
 
+    function completionFailure(health) {
+      const code = normalizeReadiness(health);
+      return code === 'READY' || code === 'INITIALIZING'
+        ? {ready: false, code: 'DISCONNECTED'}
+        : {ready: false, code};
+    }
+
     async function pollHealth() {
       healthTimer = undefined;
       if (destroyed || state.phase === 'complete') return;
@@ -212,6 +219,35 @@
       }
     }
 
+    async function revalidateCompletion() {
+      if (destroyed || state.phase !== 'completing') return;
+      stopHealth();
+      const generation = ++healthGeneration;
+      const controller = new root.AbortController();
+      healthController = controller;
+
+      try {
+        const health = await api.health({signal: controller.signal});
+        if (destroyed || generation !== healthGeneration || state.phase !== 'completing') return;
+        if (health?.ready !== true || health.code !== 'READY') {
+          applyReadiness(completionFailure(health));
+          return;
+        }
+        dispatch({type: 'complete'});
+        stopTicker();
+        stopHealth();
+        freezePresentation();
+      } catch {
+        if (destroyed || generation !== healthGeneration || controller.signal.aborted) return;
+        applyReadiness({ready: false, code: 'DISCONNECTED'});
+      } finally {
+        if (generation === healthGeneration) {
+          healthController = undefined;
+          scheduleHealth(500);
+        }
+      }
+    }
+
     function skipPresentation() {
       if (!skipAvailable) return;
       opening = false;
@@ -222,11 +258,7 @@
       if (!dispatch({type: 'confirm'})) return;
       completeTimer = clock.setTimeout(() => {
         completeTimer = undefined;
-        dispatch({type: 'complete'});
-        stopTicker();
-        stopHealth();
-        if (clockTimer !== undefined) clock.clearInterval(clockTimer);
-        clockTimer = undefined;
+        return revalidateCompletion();
       }, reducedMotion ? 120 : 720);
     }
 
