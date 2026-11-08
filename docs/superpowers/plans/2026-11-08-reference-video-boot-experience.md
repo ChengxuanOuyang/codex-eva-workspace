@@ -175,7 +175,7 @@ function sampleTimeline(elapsedMs, {authorized = false, reducedMotion = false} =
 }
 ```
 
-实现使用 UMD 风格导出：CommonJS 设置 `module.exports`，浏览器分别设置 `globalThis.ProjectZeroMotion`、`ProjectZeroStageLayout` 和 `ProjectZeroTimeline`。运动函数从上游 `motion-v12.js` 改编并保持纯函数；布局从 `stage-layout.js` 改编为视频的浅色 NERV 构图。`validateTimeline()` 拒绝非有限时间、非单调边界、重复 stage、负区间和 `connect` 之前超过 99.2 的数据。
+实现使用 UMD 风格导出：CommonJS 设置 `module.exports`，浏览器分别设置 `globalThis.ProjectZeroMotion`、`ProjectZeroStageLayout` 和 `ProjectZeroTimeline`。运动函数从上游 `motion-v12.js` 改编并保持纯函数；布局从 `stage-layout.js` 改编为视频的浅色 NERV 构图。两个改编文件的头部注释必须包含上游仓库 URL、完整 commit、原文件名和 MIT 代码范围，并明确未复制上游媒体。`validateTimeline()` 拒绝非有限时间、非单调边界、重复 stage、负区间和 `connect` 之前超过 99.2 的数据。
 
 - [ ] **步骤 4：把脚本加入严格静态资源白名单并验证**
 
@@ -242,7 +242,7 @@ test('the sequence decoder fetches and decodes one complete local track', async 
 
 - [ ] **步骤 3：实现 `createAudioClock`**
 
-先把上游 `sequence-audio.js` 改编为依赖注入的 UMD 模块：一次 fetch 完整本地文件、一次 `decodeAudioData`、通过 `AudioBufferSourceNode` 支持播放/暂停/seek/close，不依赖 HTTP Range。然后实现固定接口：
+先把上游 `sequence-audio.js` 改编为依赖注入的 UMD 模块：一次 fetch 完整本地文件、一次 `decodeAudioData`、通过 `AudioBufferSourceNode` 支持播放/暂停/seek/close，不依赖 HTTP Range。文件头部注释必须包含上游仓库 URL、完整 commit、原文件名和 MIT 代码范围，并明确上游 voice/audio 未复制。然后实现固定接口：
 
 ```js
 createAudioClock({
@@ -495,7 +495,6 @@ git commit -m "feat: transition boot from fullscreen to workbench"
 - [ ] **步骤 1：把视觉结构写成失败的静态测试**
 
 ```js
-assert.match(html, /id="boot-mark"/);
 assert.match(html, /id="boot-sequence"/);
 assert.match(html, /id="pilot-authorization"/);
 assert.match(html, /id="transition-curtain"/);
@@ -533,6 +532,8 @@ assert.doesNotMatch(html, /pilot-silhouette|cockpit|helmet/i);
 次要假面骑士参考只贡献四个动作规则：节点级联、认证前信息检查、短促全场认证闪屏、完成后主题连续进入工作台。禁止出现其 HIDDEN 标志、骑士人物、荧光绿、日文认证字样或声音。若其动作与 EVA 主视频冲突，主视频优先。
 
 `drawBootFrame(context, snapshot, assets, viewport)` 必须是同输入同绘制命令的确定性函数。私人 mark 通过已验证 ImageBitmap/HTMLImageElement 注入；加载失败时使用公开原创 mark，而不是空白。
+
+`boot-canvas.js` 的来源注释必须点名上游仓库、完整 commit 和被改编的 `unified-sequence.js`、`boot-atmosphere.js`、`stage-layout.js`；它不得声称上游 NERV/人物/音频媒体适用 MIT。
 
 - [ ] **步骤 5：实现 Canvas/DOM 合成视觉系统**
 
@@ -605,6 +606,8 @@ const audioClock = createAudioClock({
   }
 });
 ```
+
+当 tick 首次到达 15500 ms 且尚未授权时，控制器必须立即调用一次 `audioClock.pause()`；重复 health poll 和 render 不得重复 pause。确认成功后调用一次 `audioClock.resume()`。这条暂停/恢复行为分别由 fake clock 的调用次数断言覆盖。
 
 如果 `/private/theme.json` 返回 404，使用公共模式 `{audio: null, audioStartMs: 0, audioEndMs: 20500}`，由静音时钟驱动。私人 mark 和 portrait URL 只从固定 private config 字段选择，不接受任意 URL。
 
