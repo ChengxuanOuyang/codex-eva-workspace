@@ -8,8 +8,12 @@ const {scanPosition} = require('../renderer/boot/motion.js');
 const {stageLayout} = require('../renderer/boot/stage-layout.js');
 
 test('reference timeline exposes the five approved stages', () => {
-  assert.deepEqual(BOOT_TIMELINE.map(cue => cue.stage), [
-    'wake', 'scan', 'synchronize', 'authorize', 'connect'
+  assert.deepEqual(BOOT_TIMELINE, [
+    {stage: 'wake', startMs: 0, endMs: 3500, from: 0, to: 0},
+    {stage: 'scan', startMs: 3500, endMs: 8500, from: 0, to: 0},
+    {stage: 'synchronize', startMs: 8500, endMs: 15500, from: 0, to: 99.2},
+    {stage: 'authorize', startMs: 15500, endMs: 15500, from: 99.2, to: 99.2},
+    {stage: 'connect', startMs: 15500, endMs: 20500, from: 99.2, to: 100}
   ]);
   assert.equal(validateTimeline(BOOT_TIMELINE), true);
   assert.equal(Object.isFrozen(BOOT_TIMELINE), true);
@@ -21,13 +25,22 @@ test('timeline reaches but never crosses 99.2 before authorization', () => {
   assert.equal(sampleTimeline(15_500).progress, 99.2);
   assert.equal(sampleTimeline(20_500, {authorized: false}).progress, 99.2);
   assert.equal(sampleTimeline(20_500, {authorized: true}).progress, 100);
+  assert.equal(sampleTimeline(20_500, {authorized: 'true'}).progress, 99.2);
+  assert.equal(sampleTimeline(20_500, null).progress, 99.2);
+  assert.equal(sampleTimeline(20_500, 'authorized').progress, 99.2);
   assert.equal(sampleTimeline(-1).elapsedMs, 0);
   assert.equal(sampleTimeline(Number.NaN).elapsedMs, 0);
   assert.equal(sampleTimeline(4_000, {reducedMotion: true}).scan, 1);
 });
 
-test('motion and layout are deterministic at reference sizes', () => {
-  assert.equal(scanPosition(5.5, 900, 5), scanPosition(5.5, 900, 5));
+test('motion uses the upstream quintic scan path at fixed reference times', () => {
+  assert.equal(scanPosition(0, 900, 5), -72);
+  assert.equal(scanPosition(5, 900, 5), 972);
+  assert.ok(Math.abs(scanPosition(5.5, 900, 5) - 963.06336) < 1e-8);
+  assert.equal(scanPosition(10, 900, 5), -72);
+});
+
+test('stage layout is deterministic at reference size', () => {
   assert.deepEqual(stageLayout(1440, 900), {
     cx: 720, cy: 405, ringRadius: 171, nodeSize: 58, markSize: 270
   });

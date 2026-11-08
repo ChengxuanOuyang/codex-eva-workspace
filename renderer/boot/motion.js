@@ -12,30 +12,56 @@
 })(typeof globalThis === 'object' ? globalThis : this, function createMotion() {
   'use strict';
 
-  function clamp(value, minimum, maximum) {
-    return Math.min(maximum, Math.max(minimum, value));
+  function clamp(value) {
+    return Math.max(0, Math.min(1, value));
   }
 
-  function easeInOut(value) {
-    const progress = clamp(Number.isFinite(value) ? value : 0, 0, 1);
-    return progress * progress * (3 - 2 * progress);
+  function sCurve(value) {
+    const progress = clamp(value);
+    return progress * progress * progress * (progress * (progress * 6 - 15) + 10);
   }
 
-  function loop(value, period) {
-    if (!Number.isFinite(value) || !Number.isFinite(period) || period <= 0) return 0;
-    return ((value % period) + period) % period;
+  function stage(time, start, end) {
+    return sCurve((time - start) / (end - start));
   }
 
-  function pingPong(value, distance) {
-    if (!Number.isFinite(distance) || distance <= 0) return 0;
-    const phase = loop(value, distance * 2);
-    return distance - Math.abs(phase - distance);
+  function loopTime(time, period = 1, offset = 0) {
+    const phase = time / period + offset;
+    const lap = Math.floor(phase);
+    return lap + sCurve(phase - lap);
   }
 
-  function scanPosition(seconds, span, speed) {
-    if (!Number.isFinite(seconds) || !Number.isFinite(span) || !Number.isFinite(speed)) return 0;
-    return pingPong(seconds * speed, Math.max(0, span));
+  function pingPong(time, legSeconds = 1, offset = 0) {
+    const phase = ((time / legSeconds + offset) % 2 + 2) % 2;
+    return sCurve(phase <= 1 ? phase : 2 - phase);
   }
 
-  return Object.freeze({clamp, easeInOut, loop, pingPong, scanPosition});
+  function breathe(time, period = 4, offset = 0) {
+    return (1 - Math.cos(loopTime(time, period, offset) * Math.PI * 2)) / 2;
+  }
+
+  function curvePoint(progress, start, controlA, controlB, end) {
+    const inverse = 1 - progress;
+    return {
+      x: inverse ** 3 * start.x + 3 * inverse ** 2 * progress * controlA.x + 3 * inverse * progress ** 2 * controlB.x + progress ** 3 * end.x,
+      y: inverse ** 3 * start.y + 3 * inverse ** 2 * progress * controlA.y + 3 * inverse * progress ** 2 * controlB.y + progress ** 3 * end.y
+    };
+  }
+
+  function scanPosition(time, height, legSeconds) {
+    return -72 + pingPong(time, legSeconds) * (height + 144);
+  }
+
+  return Object.freeze({
+    clamp,
+    sCurve,
+    stage,
+    loopTime,
+    pingPong,
+    breathe,
+    curvePoint,
+    scanPosition,
+    easeInOut: sCurve,
+    loop: loopTime
+  });
 });

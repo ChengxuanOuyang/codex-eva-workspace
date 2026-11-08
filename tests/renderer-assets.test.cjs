@@ -3,7 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const http = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
+const {createWorkbenchService} = require('../workbench/service.cjs');
 
 const rendererRoot = path.join(__dirname, '..', 'renderer');
 
@@ -74,13 +77,47 @@ test('served renderer code contains no Node API, embedded token, or remote resou
   assert.doesNotMatch(source, /https?:\/\//i);
 });
 
-test('declarative boot modules are served only through explicit script allowlist entries', async () => {
-  const service = await fs.readFile(path.join(__dirname, '..', 'workbench', 'service.cjs'), 'utf8');
+function request(address, requestPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port: address.port, path: requestPath
+    }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve({status: res.statusCode, headers: res.headers, body}));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
-  for (const script of ['motion.js', 'stage-layout.js', 'timeline.js']) {
-    const source = await read(`boot/${script}`);
-    assert.match(source, /ProjectZero(?:Motion|StageLayout|Timeline)/);
-    assert.match(service, new RegExp(`\\['/${script.replace('.', '\\.')}', \\{root: bootRoot, fileName: '${script.replace('.', '\\.')}', contentType: 'text/javascript; charset=utf-8'\\}\\]`));
+test('declarative boot modules are served through exact allowlist entries only', async () => {
+  const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-boot-modules-'));
+  const bootRoot = path.join(fixtureRoot, 'boot');
+  const sharedRoot = path.join(fixtureRoot, 'shared');
+  const service = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
+
+  try {
+    await fs.mkdir(bootRoot);
+    await fs.mkdir(sharedRoot);
+    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js']) {
+      await fs.writeFile(path.join(bootRoot, script), `globalThis.${script} = true;`);
+    }
+    const address = await service.listen();
+
+    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js']) {
+      const response = await request(address, `/${script}`);
+      assert.equal(response.status, 200, script);
+      assert.equal(response.headers['content-type'], 'text/javascript; charset=utf-8', script);
+    }
+
+    const unknown = await request(address, '/unlisted-boot-module.js');
+    assert.equal(unknown.status, 404);
+    assert.deepEqual(JSON.parse(unknown.body), {error: 'Not found'});
+  } finally {
+    await service.close();
+    await fs.rm(fixtureRoot, {recursive: true, force: true});
   }
 });
 

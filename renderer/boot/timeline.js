@@ -44,7 +44,16 @@
     return true;
   }
 
-  function sampleTimeline(elapsedMs, {authorized = false, reducedMotion = false} = {}) {
+  function normalizeOptions(options) {
+    const source = options !== null && typeof options === 'object' ? options : {};
+    return {
+      authorized: source.authorized === true,
+      reducedMotion: source.reducedMotion === true
+    };
+  }
+
+  function sampleTimeline(elapsedMs, options) {
+    const {authorized, reducedMotion} = normalizeOptions(options);
     const safeMs = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0);
     const logicalMs = authorized ? Math.min(safeMs, 20500) : Math.min(safeMs, 15500);
     const stage = !authorized && logicalMs >= 15500 ? 'authorize'
