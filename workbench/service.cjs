@@ -148,6 +148,9 @@ function createWorkbenchService({
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
     ['/boot.js', {root: bootRoot, fileName: 'boot.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/motion.js', {root: bootRoot, fileName: 'motion.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/stage-layout.js', {root: bootRoot, fileName: 'stage-layout.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/timeline.js', {root: bootRoot, fileName: 'timeline.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/shared/api.js', {root: sharedRoot, fileName: 'api.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/workbench.css', {root: workbenchRoot, fileName: 'workbench.css', contentType: 'text/css; charset=utf-8'}],
     ['/workbench.js', {root: workbenchRoot, fileName: 'app.js', contentType: 'text/javascript; charset=utf-8'}],

@@ -74,6 +74,16 @@ test('served renderer code contains no Node API, embedded token, or remote resou
   assert.doesNotMatch(source, /https?:\/\//i);
 });
 
+test('declarative boot modules are served only through explicit script allowlist entries', async () => {
+  const service = await fs.readFile(path.join(__dirname, '..', 'workbench', 'service.cjs'), 'utf8');
+
+  for (const script of ['motion.js', 'stage-layout.js', 'timeline.js']) {
+    const source = await read(`boot/${script}`);
+    assert.match(source, /ProjectZero(?:Motion|StageLayout|Timeline)/);
+    assert.match(service, new RegExp(`\\['/${script.replace('.', '\\.')}', \\{root: bootRoot, fileName: '${script.replace('.', '\\.')}', contentType: 'text/javascript; charset=utf-8'\\}\\]`));
+  }
+});
+
 test('reduced motion removes decorative animation and keeps scene changes to a short cross-fade', async () => {
   const css = await read('boot/boot.css');
 
