@@ -4,11 +4,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const {_electron: electron} = require('playwright');
 const pkg = require('../../package.json');
 const {packPrivateTheme} = require('../../scripts/pack-private-theme.cjs');
-const {unpackedApplicationDirectory} = require('../../scripts/pack.cjs');
+const {
+  runElectronBuilder,
+  unpackedApplicationDirectory
+} = require('../../scripts/pack.cjs');
 const {
   assertNoSensitiveArchiveContent,
   read,
@@ -17,6 +21,10 @@ const {
 
 const projectRoot = path.join(__dirname, '..', '..');
 const themeRoot = path.join(__dirname, '..', 'fixtures', 'private-theme-valid');
+const projectEntries = [
+  'app', 'assets', 'LICENSE', 'NOTICE.md', 'package.json',
+  'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
+];
 const publicFiles = [
   'renderer/boot/index.html',
   'renderer/boot/assets/scene-a-sync.webp',
@@ -33,22 +41,39 @@ async function trackedHashes() {
   ])));
 }
 
+async function isolatedProject(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-private-e2e-'));
+  t.after(() => fs.rm(root, {recursive: true, force: true}));
+  for (const entry of projectEntries) {
+    await fs.cp(path.join(projectRoot, entry), path.join(root, entry), {recursive: true});
+  }
+  return root;
+}
+
 test('synthetic private theme packs independently, preserves public files, and launches', {
   timeout: 120000
-}, async () => {
+}, async t => {
   const before = await trackedHashes();
-  const output = await packPrivateTheme({projectRoot, themeRoot});
-  const privateApplicationDirectory = unpackedApplicationDirectory(projectRoot, {
+  const temporaryProject = await isolatedProject(t);
+  const output = await packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    runBuilder: runElectronBuilder
+  });
+  const privateApplicationDirectory = unpackedApplicationDirectory(temporaryProject, {
     outputDirectory: 'dist-private'
   });
-  const publicApplicationDirectory = unpackedApplicationDirectory(projectRoot);
+  const publicApplicationDirectory = unpackedApplicationDirectory(temporaryProject);
   const application = path.join(privateApplicationDirectory, `${pkg.build.productName}.app`);
   const archive = path.join(application, 'Contents', 'Resources', 'app.asar');
   const fixtureManifest = JSON.parse(await fs.readFile(path.join(themeRoot, 'assets.json'), 'utf8'));
 
-  assert.equal(output, path.join(await fs.realpath(projectRoot), 'dist-private'));
+  assert.equal(output, path.join(await fs.realpath(temporaryProject), 'dist-private'));
   assert.notEqual(privateApplicationDirectory, publicApplicationDirectory);
-  await fs.access(path.join(publicApplicationDirectory, `${pkg.build.productName}.app`));
+  await assert.rejects(
+    fs.access(path.join(publicApplicationDirectory, `${pkg.build.productName}.app`)),
+    {code: 'ENOENT'}
+  );
   for (const asset of fixtureManifest.assets) {
     const expectedHash = sha256(await fs.readFile(path.join(themeRoot, asset.file)));
     assert.equal(asset.sha256, expectedHash);

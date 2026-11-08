@@ -116,20 +116,18 @@ test('validates before creating staging and leaves no staging on validation fail
 
 test('stages only fixed project entries and privately replaces exact validated content', async t => {
   const themeRoot = await isolatedTheme(t);
-  const before = await publicHashes(projectRoot);
+  const temporaryProject = await isolatedProject(t);
+  const realTemporaryProject = await fs.realpath(temporaryProject);
+  const before = await publicHashes(temporaryProject);
   const expectedTheme = await validateThemeDirectory(themeRoot);
-  const oldOutput = path.join(projectRoot, 'dist-private', 'stale.txt');
+  const oldOutput = path.join(temporaryProject, 'dist-private', 'stale.txt');
   await fs.mkdir(path.dirname(oldOutput), {recursive: true});
   await fs.writeFile(oldOutput, 'stale');
-  t.after(async () => {
-    await fs.rm(path.join(projectRoot, '.private-build'), {recursive: true, force: true});
-    await fs.rm(path.join(projectRoot, 'dist-private'), {recursive: true, force: true});
-  });
   let builderCall;
 
   const {packPrivateTheme} = loadPacker();
   const output = await packPrivateTheme({
-    projectRoot,
+    projectRoot: temporaryProject,
     themeRoot,
     environment: {
       SAFE_VALUE: 'kept',
@@ -156,9 +154,12 @@ test('stages only fixed project entries and privately replaces exact validated c
     }
   });
 
-  assert.equal(output, path.join(projectRoot, 'dist-private'));
-  assert.notEqual(output, path.join(projectRoot, 'dist'));
-  assert.equal(builderCall.projectRoot.startsWith(path.join(projectRoot, '.private-build', 'stage-')), true);
+  assert.equal(output, path.join(realTemporaryProject, 'dist-private'));
+  assert.notEqual(output, path.join(realTemporaryProject, 'dist'));
+  assert.equal(
+    builderCall.projectRoot.startsWith(path.join(realTemporaryProject, '.private-build', 'stage-')),
+    true
+  );
   assert.deepEqual(builderCall.arguments, ['--dir']);
   assert.deepEqual(builderCall.environment, {SAFE_VALUE: 'kept'});
   assert.equal(builderCall.environment.PROJECT_ZERO_LOCAL_THEME_DIR, undefined);
@@ -175,8 +176,23 @@ test('stages only fixed project entries and privately replaces exact validated c
     if (file === 'theme.json') continue;
     assert.deepEqual(builderCall.stagedContents.get(file), bytes);
   }
+  assert.deepEqual(await publicHashes(temporaryProject), before);
+  await assertMissing(path.join(temporaryProject, '.private-build'));
+});
+
+test('isolated private packing leaves the real tracked public assets unchanged', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t);
+  const before = await publicHashes(projectRoot);
+
+  const {packPrivateTheme} = loadPacker();
+  await packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    runBuilder: async () => {}
+  });
+
   assert.deepEqual(await publicHashes(projectRoot), before);
-  await assertMissing(path.join(projectRoot, '.private-build'));
 });
 
 test('escapes a validator-approved display name in document and visible titles', async t => {
