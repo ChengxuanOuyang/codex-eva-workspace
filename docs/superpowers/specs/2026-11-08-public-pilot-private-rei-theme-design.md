@@ -64,9 +64,10 @@ claim or official affiliation.
 
 ### Private local theme
 
-Before replacing tracked public artwork, copy the existing Rei-inspired PNG, WebP, manifest,
-and notice into the ignored local directory `private-themes/rei/`. These files remain outside
-Git and outside the public ASAR.
+Before replacing tracked public artwork, copy the existing Rei-inspired PNG masters into the
+ignored local directory `private-themes/rei/source/`. Put only the packable WebP files, theme
+manifest, asset manifest, and notice into `private-themes/rei/package/`. These files remain
+outside Git and outside the public ASAR.
 
 The private theme manifest may use the in-app label
 `PROJECT ZERO // REI PRIVATE THEME`. It must state that it is unofficial fan material, is for
@@ -75,8 +76,9 @@ of the open-source distribution.
 
 ## Local theme packaging architecture
 
-Add an explicit private-package command that receives a local theme directory. The default
-public `pack` command never reads private themes or implicit user directories.
+Add an explicit private-package command that receives the exact package directory (for the
+owner theme, `private-themes/rei/package/`). The default public `pack` command never reads
+private themes, the sibling PNG source directory, or implicit user directories.
 
 The private packer must:
 
