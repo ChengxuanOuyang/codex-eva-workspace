@@ -1,26 +1,36 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const {EventEmitter} = require('node:events');
 const fs = require('node:fs/promises');
 const {normalizeModels, selectModel} = require('./model-options.cjs');
 const {reduceEvent} = require('./state-reducer.cjs');
 
 const MAX_MESSAGE_LENGTH = 60_000;
+const APPROVAL_METHODS = new Set([
+  'item/commandExecution/requestApproval',
+  'item/fileChange/requestApproval',
+  'item/permissions/requestApproval',
+  'item/tool/requestUserInput'
+]);
 
 function clone(value) {
   return structuredClone(value);
 }
 
-class WorkbenchController {
+class WorkbenchController extends EventEmitter {
   constructor({bridge, store}) {
+    super();
     this.bridge = bridge;
     this.store = store;
     this.state = store.read();
     this.models = [];
     this.resumed = new Set();
+    this.approvals = new Map();
     this.persistQueue = Promise.resolve();
     this.closed = false;
     this.onNotification = message => this.handleNotification(message.method, message.params);
+    this.onApproval = message => this.handleApproval(message);
     this.onDisconnected = () => {
       for (const thread of this.state.threads) {
         if (thread.activeTurn) {
@@ -47,12 +57,19 @@ class WorkbenchController {
     this.models = normalizeModels(pages);
     if (this.models.length === 0) throw new Error('No supported Codex models');
     this.bridge.on?.('notification', this.onNotification);
+    this.bridge.on?.('approval', this.onApproval);
     this.bridge.on?.('disconnected', this.onDisconnected);
     return this.snapshot();
   }
 
   snapshot() {
-    return {...clone(this.state), models: clone(this.models)};
+    return {
+      ...clone(this.state),
+      models: clone(this.models),
+      approvals: [...this.approvals.values()].map(approval => clone({
+        id: String(approval.id), method: approval.method, params: approval.params
+      }))
+    };
   }
 
   persist() {
@@ -63,6 +80,7 @@ class WorkbenchController {
       state.threads = snapshot.threads;
     }));
     this.persistQueue = operation.catch(() => {});
+    this.emit('snapshot', this.snapshot());
     return operation;
   }
 
@@ -186,6 +204,7 @@ class WorkbenchController {
   }
 
   handleNotification(method, params = {}) {
+    if (method === 'turn/completed' && params.turn?.id) this.clearTurnApprovals(params.threadId, params.turn.id);
     const threadId = params.threadId || params.thread?.id;
     const thread = this.state.threads.find(entry => entry.id === threadId);
     if (!thread) return false;
@@ -194,11 +213,66 @@ class WorkbenchController {
     return true;
   }
 
+  handleApproval(message) {
+    if (!APPROVAL_METHODS.has(message?.method)) {
+      this.bridge.respondError(message?.id, {
+        code: -32601,
+        message: 'Unsupported request; no permission granted'
+      });
+      return false;
+    }
+    const id = String(message.id);
+    this.approvals.set(id, {
+      id: message.id,
+      method: message.method,
+      params: clone(message.params || {})
+    });
+    this.emit('snapshot', this.snapshot());
+    return true;
+  }
+
+  approvalResult(approval, {accept, answers}) {
+    if (approval.method === 'item/commandExecution/requestApproval' ||
+        approval.method === 'item/fileChange/requestApproval') {
+      return {decision: accept ? 'accept' : 'decline'};
+    }
+    if (approval.method === 'item/permissions/requestApproval') {
+      return {
+        permissions: accept ? clone(approval.params.permissions || {}) : {},
+        scope: 'turn'
+      };
+    }
+    return {answers: accept && answers && typeof answers === 'object' ? clone(answers) : {}};
+  }
+
+  async answerApproval({id, accept, answers}) {
+    const key = String(id);
+    const approval = this.approvals.get(key);
+    if (!approval) throw new Error('Unknown approval');
+    this.approvals.delete(key);
+    this.bridge.respond(approval.id, this.approvalResult(approval, {accept: accept === true, answers}));
+    this.emit('snapshot', this.snapshot());
+  }
+
+  clearTurnApprovals(threadId, turnId) {
+    for (const [key, approval] of this.approvals) {
+      if (approval.params.threadId !== threadId || approval.params.turnId !== turnId) continue;
+      this.approvals.delete(key);
+      this.bridge.respond(approval.id, this.approvalResult(approval, {accept: false}));
+    }
+    this.emit('snapshot', this.snapshot());
+  }
+
   async close() {
     if (this.closed) return;
     this.closed = true;
     this.bridge.off?.('notification', this.onNotification);
+    this.bridge.off?.('approval', this.onApproval);
     this.bridge.off?.('disconnected', this.onDisconnected);
+    for (const approval of this.approvals.values()) {
+      this.bridge.respond(approval.id, this.approvalResult(approval, {accept: false}));
+    }
+    this.approvals.clear();
     await this.persistQueue;
     await this.store.close();
   }

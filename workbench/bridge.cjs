@@ -154,6 +154,10 @@ class CodexBridge extends EventEmitter {
     this.send({id, result});
   }
 
+  respondError(id, error) {
+    this.send({id, error});
+  }
+
   fail(error, child) {
     if (child && this.child !== child) return;
     const disconnected = Error('Codex connection stopped');

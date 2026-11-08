@@ -5,6 +5,7 @@ const {constants} = require('node:fs');
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
+const {createWorkbenchRoutes} = require('./routes.cjs');
 
 const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -48,7 +49,10 @@ function isAbortedRequest(req, error) {
 async function validateRequestBody(req, res) {
   const declaredLength = Number(req.headers['content-length'] || 0);
   const hasBody = declaredLength > 0 || req.headers['transfer-encoding'] !== undefined;
-  if (!hasBody) return true;
+  if (!hasBody) {
+    req.body = undefined;
+    return true;
+  }
   if (!JSON_CONTENT_TYPE.test(req.headers['content-type'] || '')) {
     req.resume();
     send(res, 415, {error: 'Unsupported media type'});
@@ -73,7 +77,7 @@ async function validateRequestBody(req, res) {
     throw error;
   }
   try {
-    JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    req.body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
     send(res, 400, {error: 'Invalid JSON'});
     return false;
@@ -130,7 +134,7 @@ function hasSession(req, token) {
   return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 }
 
-function createWorkbenchService({snapshot, retryInitialization = () => Promise.resolve(), bootRoot, sharedRoot}) {
+function createWorkbenchService({snapshot, retryInitialization = () => Promise.resolve(), bootRoot, sharedRoot, controller}) {
   const token = crypto.randomBytes(32).toString('hex');
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
@@ -140,12 +144,14 @@ function createWorkbenchService({snapshot, retryInitialization = () => Promise.r
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
   ]);
+  const workbenchRoutes = controller ? createWorkbenchRoutes(controller) : null;
   const routeMethods = new Map([
     ['/', ['GET']],
     ['/health', ['GET']],
     ['/api/state', ['GET']],
     ['/api/readiness/retry', ['POST']],
-    ...[...staticFiles.keys()].map(route => [route, ['GET']])
+    ...[...staticFiles.keys()].map(route => [route, ['GET']]),
+    ...[...(workbenchRoutes?.routeMethods || new Map())]
   ]);
   let server;
   async function handleRequest(req, res) {
@@ -166,6 +172,7 @@ function createWorkbenchService({snapshot, retryInitialization = () => Promise.r
       return send(res, 403, {error: 'Invalid origin'});
     }
     if (!await validateRequestBody(req, res)) return;
+    if (workbenchRoutes && await workbenchRoutes.handle(req, res, {send, setSecurityHeaders})) return;
     if (req.url === '/health') return send(res, 200, {app: 'PROJECT-ZERO', ...snapshot()});
     if (req.url === '/') {
       res.setHeader('Set-Cookie', `project_zero_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
