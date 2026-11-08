@@ -238,6 +238,113 @@ test('cleans staging after builder failure and removes stale private output firs
   await assertMissing(path.join(temporaryProject, '.private-build'));
 });
 
+test('removes a dist-private symlink without following its outside target', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-output-link-');
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-output-outside-'));
+  t.after(() => fs.rm(outside, {recursive: true, force: true}));
+  const marker = path.join(outside, 'marker.txt');
+  await fs.writeFile(marker, 'outside');
+  const output = path.join(temporaryProject, 'dist-private');
+  await fs.symlink(outside, output);
+  let builderCalled = false;
+
+  const {packPrivateTheme} = loadPacker();
+  await packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    runBuilder: async () => {
+      builderCalled = true;
+      await assertMissing(output);
+      assert.equal(await fs.readFile(marker, 'utf8'), 'outside');
+    }
+  });
+  assert.equal(builderCalled, true);
+  assert.equal(await fs.readFile(marker, 'utf8'), 'outside');
+});
+
+test('fails closed when a frozen output victim is swapped before final unlink', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-output-swap-');
+  const output = path.join(await fs.realpath(temporaryProject), 'dist-private');
+  const victim = path.join(output, 'old-private.txt');
+  const movedVictim = `${victim}.moved`;
+  await fs.mkdir(output);
+  await fs.writeFile(victim, 'old-private');
+  let victimStats = 0;
+  let builderCalled = false;
+  const fsModule = {
+    ...fs,
+    async lstat(target, ...arguments_) {
+      if (target === victim) {
+        victimStats += 1;
+        if (victimStats === 2) {
+          await fs.rename(victim, movedVictim);
+          await fs.mkdir(victim);
+          await fs.writeFile(path.join(victim, 'keep.txt'), 'replacement');
+        }
+      }
+      return fs.lstat(target, ...arguments_);
+    }
+  };
+
+  const {packPrivateTheme} = loadPacker();
+  await expectStablePackFailure(packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    fsModule,
+    runBuilder: async () => {
+      builderCalled = true;
+    }
+  }));
+  assert.equal(builderCalled, false);
+  assert.equal(await fs.readFile(movedVictim, 'utf8'), 'old-private');
+  assert.equal(await fs.readFile(path.join(victim, 'keep.txt'), 'utf8'), 'replacement');
+});
+
+test('does not recursively remove a nonempty output replacement at final rmdir', async t => {
+  const themeRoot = await isolatedTheme(t);
+  const temporaryProject = await isolatedProject(t, 'project-zero-output-rmdir-swap-');
+  const output = path.join(await fs.realpath(temporaryProject), 'dist-private');
+  const movedOutput = `${output}.moved`;
+  const marker = path.join(output, 'keep.txt');
+  await fs.mkdir(output);
+  await fs.writeFile(path.join(output, 'old-private.txt'), 'old-private');
+  let swapped = false;
+  let builderCalled = false;
+  const fsModule = {
+    ...fs,
+    async rmdir(target, ...arguments_) {
+      if (target === output && !swapped) {
+        swapped = true;
+        await fs.rename(output, movedOutput);
+        await fs.mkdir(output);
+        await fs.writeFile(marker, 'replacement');
+      }
+      return fs.rmdir(target, ...arguments_);
+    }
+  };
+
+  const {packPrivateTheme} = loadPacker();
+  await expectStablePackFailure(packPrivateTheme({
+    projectRoot: temporaryProject,
+    themeRoot,
+    fsModule,
+    runBuilder: async () => {
+      builderCalled = true;
+    }
+  }));
+  assert.equal(swapped, true);
+  assert.equal(builderCalled, false);
+  assert.equal(await fs.readFile(marker, 'utf8'), 'replacement');
+  assert.deepEqual(await fs.readdir(movedOutput), []);
+});
+
+test('private pack source contains no recursive removal', async () => {
+  const source = await fs.readFile(path.join(projectRoot, 'scripts', 'pack-private-theme.cjs'), 'utf8');
+  assert.doesNotMatch(source, /fsModule\.rm\s*\(/);
+});
+
 test('rejects a symlink copied through a fixed project entry before invoking the builder', async t => {
   const themeRoot = await isolatedTheme(t);
   const temporaryProject = await isolatedProject(t, 'project-zero-pack-symlink-');

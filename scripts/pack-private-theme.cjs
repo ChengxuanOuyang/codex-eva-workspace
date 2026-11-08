@@ -274,10 +274,56 @@ async function closeDirectories(directories) {
   if (failure) throw failure;
 }
 
-function assertOutputBoundary(root, output) {
-  if (path.dirname(output) !== root || path.basename(output) !== 'dist-private') {
-    throw Error('PRIVATE_OUTPUT_BOUNDARY');
+async function clearExistingPrivateOutput(realProjectRoot, fsModule) {
+  const output = path.join(realProjectRoot, 'dist-private');
+  const existing = await fsModule.lstat(output).catch(error => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!existing) return;
+
+  // A top-level link is itself the output entry. Unlink it only after a second
+  // identity check; never inspect or remove anything in its target.
+  if (existing.isSymbolicLink()) {
+    const current = await fsModule.lstat(output);
+    if (!current.isSymbolicLink() || !sameIdentity(existing, current)) {
+      throw Error('PRIVATE_OUTPUT_IDENTITY');
+    }
+    await fsModule.unlink(output);
+    return;
   }
+  if (!existing.isDirectory()) throw Error('PRIVATE_OUTPUT_TYPE');
+
+  let directory;
+  let operationFailure;
+  try {
+    directory = await openDirectory(output, fsModule);
+    if (directory.real !== output || path.dirname(directory.real) !== realProjectRoot ||
+        path.basename(directory.real) !== 'dist-private') {
+      throw Error('PRIVATE_OUTPUT_BOUNDARY');
+    }
+    const inventory = await buildInventory(output, fsModule, {allowSymlinks: true});
+    const root = inventory.find(entry => entry.relative === '');
+    if (!root || !matchesEntry(root, directory.identity)) {
+      throw Error('PRIVATE_OUTPUT_IDENTITY');
+    }
+    await requireDirectory(directory, fsModule);
+    await removeInventory(output, inventory, fsModule, {allowRecordedSymlinks: true});
+  } catch (error) {
+    operationFailure = error;
+  }
+
+  let closeFailure;
+  try {
+    await directory?.handle.close();
+  } catch (error) {
+    closeFailure = error;
+  }
+  if (operationFailure && closeFailure) {
+    throw new PrivateThemeOperationError(operationFailure, closeFailure);
+  }
+  if (operationFailure) throw operationFailure;
+  if (closeFailure) throw closeFailure;
 }
 
 async function packPrivateThemeInternal({
@@ -346,8 +392,7 @@ async function packPrivateThemeInternal({
     await requireDirectory(projectDirectory, fsModule);
     await requireDirectory(stageParent, fsModule);
     await requireDirectory(stageDirectory, fsModule);
-    assertOutputBoundary(realProjectRoot, output);
-    await fsModule.rm(output, {recursive: true, force: true});
+    await clearExistingPrivateOutput(realProjectRoot, fsModule);
     let builderFailure;
     try {
       await runBuilder({
