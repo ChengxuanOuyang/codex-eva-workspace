@@ -28,6 +28,12 @@ function send(res, status, payload) {
   res.end(body);
 }
 
+function sendEmpty(res, status) {
+  setSecurityHeaders(res);
+  res.statusCode = status;
+  res.end();
+}
+
 function methodNotAllowed(res, allowedMethods) {
   res.setHeader('Allow', allowedMethods.join(', '));
   return send(res, 405, {error: 'Method not allowed'});
@@ -87,13 +93,17 @@ async function validateRequestBody(req, res) {
   return true;
 }
 
-async function readRegularFile(rootDirectory, fileName) {
+async function readRegularFile(rootDirectory, fileName, boundaryDirectory = rootDirectory) {
   const root = path.resolve(rootDirectory);
+  const boundary = path.resolve(boundaryDirectory);
   const filePath = path.resolve(root, fileName);
   const relativePath = path.relative(root, filePath);
   if (!relativePath || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) return null;
 
+  const canonicalBoundary = await fs.realpath(boundary);
   const canonicalRoot = await fs.realpath(root);
+  const canonicalRootRelativePath = path.relative(canonicalBoundary, canonicalRoot);
+  if (canonicalRootRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(canonicalRootRelativePath)) return null;
   const canonicalFile = await fs.realpath(filePath);
   const canonicalRelativePath = path.relative(canonicalRoot, canonicalFile);
   if (!canonicalRelativePath || canonicalRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(canonicalRelativePath)) return null;
@@ -109,9 +119,9 @@ async function readRegularFile(rootDirectory, fileName) {
   }
 }
 
-async function serveFile(root, fileName, contentType, res) {
+async function serveFile(root, fileName, contentType, res, boundaryRoot) {
   try {
-    const body = await readRegularFile(root, fileName);
+    const body = await readRegularFile(root, fileName, boundaryRoot);
     if (body === null) return send(res, 404, {error: 'Not found'});
 
     setSecurityHeaders(res);
@@ -139,12 +149,14 @@ function hasSession(req, token) {
 function createWorkbenchService({
   snapshot,
   retryInitialization = () => Promise.resolve(),
+  onPresentationComplete = async () => {},
   bootRoot,
   sharedRoot,
   workbenchRoot = path.join(bootRoot, '..', 'workbench'),
   controller
 }) {
   const token = crypto.randomBytes(32).toString('hex');
+  const privateBootRoot = path.join(bootRoot, 'private');
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
     ['/boot.js', {root: bootRoot, fileName: 'boot.js', contentType: 'text/javascript; charset=utf-8'}],
@@ -169,7 +181,12 @@ function createWorkbenchService({
     ['/vendor/xterm-addon-fit.js', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm-addon-fit.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/assets/scene-a-sync.webp', {root: bootRoot, fileName: 'assets/scene-a-sync.webp', contentType: 'image/webp'}],
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
-    ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}]
+    ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}],
+    ['/private/theme.json', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'theme.json', contentType: 'application/json; charset=utf-8'}],
+    ['/private/boot-mark.webp', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'boot-mark.webp', contentType: 'image/webp'}],
+    ['/private/rei-portrait.webp', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'rei-portrait.webp', contentType: 'image/webp'}],
+    ['/private/startup-reference.wav', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'startup-reference.wav', contentType: 'audio/wav'}],
+    ['/private/startup-reference.m4a', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'startup-reference.m4a', contentType: 'audio/mp4'}]
     ,['/audio/system-awake.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'system-awake.wav', contentType: 'audio/wav'}]
     ,['/audio/sync-start.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'sync-start.wav', contentType: 'audio/wav'}]
     ,['/audio/pilot-confirm.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'pilot-confirm.wav', contentType: 'audio/wav'}]
@@ -182,10 +199,20 @@ function createWorkbenchService({
     ['/health', ['GET']],
     ['/api/state', ['GET']],
     ['/api/readiness/retry', ['POST']],
+    ['/api/presentation/complete', ['POST']],
     ...[...staticFiles.keys()].map(route => [route, ['GET']]),
     ...[...(workbenchRoutes?.routeMethods || new Map())]
   ]);
+  let presentationCompletion;
   let server;
+
+  function completePresentation() {
+    if (!presentationCompletion) {
+      presentationCompletion = Promise.resolve().then(() => onPresentationComplete());
+    }
+    return presentationCompletion;
+  }
+
   async function handleRequest(req, res) {
     const port = server.address().port;
     const origin = `http://127.0.0.1:${port}`;
@@ -219,12 +246,20 @@ function createWorkbenchService({
     }
     const staticFile = staticFiles.get(req.url);
     if (staticFile) {
-      return serveFile(staticFile.root, staticFile.fileName, staticFile.contentType, res);
+      return serveFile(staticFile.root, staticFile.fileName, staticFile.contentType, res, staticFile.boundaryRoot);
     }
     if (req.routePath === '/api/state') return send(res, 200, snapshot());
     if (req.routePath === '/api/readiness/retry') {
       void Promise.resolve(retryInitialization()).catch(() => {});
       return send(res, 202, {accepted: true});
+    }
+    if (req.url === '/api/presentation/complete') {
+      try {
+        await completePresentation();
+        return sendEmpty(res, 204);
+      } catch {
+        return send(res, 500, {error: 'Presentation completion failed'});
+      }
     }
     return send(res, 404, {error: 'Not found'});
   }

@@ -61,5 +61,22 @@
     return response.json();
   }
 
-  root.ProjectZeroApi = Object.freeze({health, retryReadiness, MAX_UNCONFIRMED_PROGRESS, nextBootState});
+  async function completePresentation({signal} = {}) {
+    const response = await root.fetch('/api/presentation/complete', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: {Accept: 'application/json'},
+      signal
+    });
+    if (response.status !== 204) throw Error('Presentation completion unavailable');
+  }
+
+  root.ProjectZeroApi = Object.freeze({
+    health,
+    retryReadiness,
+    completePresentation,
+    MAX_UNCONFIRMED_PROGRESS,
+    nextBootState
+  });
 }(globalThis));

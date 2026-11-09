@@ -84,6 +84,31 @@ async function openWorkbench() {
   return {response, cookie: setCookie[0].split(';', 1)[0]};
 }
 
+async function createIsolatedFixture(t, {privateFiles = {}, onPresentationComplete} = {}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-isolated-service-'));
+  const isolatedBootRoot = path.join(root, 'boot');
+  const isolatedSharedRoot = path.join(root, 'shared');
+  const privateRoot = path.join(isolatedBootRoot, 'private');
+  await fs.mkdir(privateRoot, {recursive: true});
+  await fs.mkdir(isolatedSharedRoot);
+  await fs.writeFile(path.join(isolatedBootRoot, 'index.html'), '<!doctype html>');
+  for (const [fileName, contents] of Object.entries(privateFiles)) {
+    await fs.writeFile(path.join(privateRoot, fileName), contents);
+  }
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true, code: 'READY'}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot,
+    onPresentationComplete
+  });
+  const isolatedAddress = await isolatedService.listen();
+  t.after(async () => {
+    await isolatedService.close();
+    await fs.rm(root, {recursive: true, force: true});
+  });
+  return {address: isolatedAddress, bootRoot: isolatedBootRoot, privateRoot};
+}
+
 test('listens only on a random IPv4 loopback port', () => {
   assert.equal(service.server.address().address, '127.0.0.1');
   assert.equal(service.server.address().port, address.port);
@@ -344,6 +369,179 @@ test('serves only the three exact boot artwork routes as WebP', async () => {
     assert.equal(response.status, 404, requestPath);
     assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
   }
+});
+
+test('private boot assets may be absent and only exact allowlisted URLs are served', async t => {
+  const missing = await request({requestPath: '/private/theme.json'});
+  assert.equal(missing.status, 404);
+  assert.deepEqual(JSON.parse(missing.body), {error: 'Not found'});
+
+  const privateFiles = {
+    'theme.json': '{"displayName":"PRIVATE"}',
+    'boot-mark.webp': 'boot-mark',
+    'rei-portrait.webp': 'portrait',
+    'startup-reference.wav': 'wave',
+    'startup-reference.m4a': 'm4a'
+  };
+  const fixture = await createIsolatedFixture(t, {privateFiles});
+  const expected = new Map([
+    ['/private/theme.json', ['application/json; charset=utf-8', privateFiles['theme.json']]],
+    ['/private/boot-mark.webp', ['image/webp', privateFiles['boot-mark.webp']]],
+    ['/private/rei-portrait.webp', ['image/webp', privateFiles['rei-portrait.webp']]],
+    ['/private/startup-reference.wav', ['audio/wav', privateFiles['startup-reference.wav']]],
+    ['/private/startup-reference.m4a', ['audio/mp4', privateFiles['startup-reference.m4a']]]
+  ]);
+
+  for (const [requestPath, [contentType, body]] of expected) {
+    const response = await requestAt(fixture.address, {requestPath});
+    assert.equal(response.status, 200, requestPath);
+    assert.equal(response.headers['content-type'], contentType, requestPath);
+    assert.equal(response.body, body, requestPath);
+  }
+
+  for (const requestPath of [
+    '/private',
+    '/private/',
+    '/private/Theme.json',
+    '/private/theme.json/',
+    '/private//theme.json',
+    '/private/theme.json?cache=1',
+    '/private/../theme.json',
+    '/private/%2e%2e/theme.json',
+    '/private/%74heme.json',
+    '/private/theme%2ejson',
+    '/private/boot-mark.webp.bak',
+    '/private/startup-reference.mp3'
+  ]) {
+    const response = await requestAt(fixture.address, {requestPath});
+    assert.equal(response.status, 404, requestPath);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Not found'}, requestPath);
+    assert.doesNotMatch(response.body, /project-zero-isolated-service|PRIVATE|boot-mark|portrait/);
+  }
+});
+
+test('private boot assets reject parent-directory symlinks and non-regular files without path disclosure', async t => {
+  const fixture = await createIsolatedFixture(t);
+  const outsideRoot = path.join(path.dirname(fixture.bootRoot), 'outside-private');
+  await fs.mkdir(outsideRoot);
+  await fs.writeFile(path.join(outsideRoot, 'theme.json'), 'outside private theme');
+  await fs.rm(fixture.privateRoot, {recursive: true});
+  await fs.symlink(outsideRoot, fixture.privateRoot);
+
+  const symlinkedRoot = await requestAt(fixture.address, {requestPath: '/private/theme.json'});
+  assert.equal(symlinkedRoot.status, 404);
+  assert.deepEqual(JSON.parse(symlinkedRoot.body), {error: 'Not found'});
+  assert.doesNotMatch(symlinkedRoot.body, /outside|private|theme\.json|project-zero-isolated-service/);
+
+  await fs.rm(fixture.privateRoot);
+  await fs.mkdir(fixture.privateRoot);
+  await fs.mkdir(path.join(fixture.privateRoot, 'theme.json'));
+  const directory = await requestAt(fixture.address, {requestPath: '/private/theme.json'});
+  assert.equal(directory.status, 404);
+  assert.deepEqual(JSON.parse(directory.body), {error: 'Not found'});
+  assert.doesNotMatch(directory.body, /theme\.json|project-zero-isolated-service/);
+});
+
+test('presentation completion requires the session and exact origin, then succeeds only once', async t => {
+  let completionCalls = 0;
+  let markCompletionStarted;
+  let releaseCompletion;
+  const completionStarted = new Promise(resolve => { markCompletionStarted = resolve; });
+  const completionGate = new Promise(resolve => { releaseCompletion = resolve; });
+  const fixture = await createIsolatedFixture(t, {
+    onPresentationComplete: async () => {
+      completionCalls += 1;
+      markCompletionStarted();
+      await completionGate;
+    }
+  });
+  const opened = await requestAt(fixture.address);
+  const cookie = opened.headers['set-cookie'][0].split(';', 1)[0];
+  const origin = `http://127.0.0.1:${fixture.address.port}`;
+
+  const wrongMethod = await requestAt(fixture.address, {
+    requestPath: '/api/presentation/complete', method: 'GET', headers: {Cookie: cookie}
+  });
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.allow, 'POST');
+
+  const unauthenticated = await requestAt(fixture.address, {
+    requestPath: '/api/presentation/complete', method: 'POST', headers: {Origin: origin}
+  });
+  assert.equal(unauthenticated.status, 403);
+  assert.deepEqual(JSON.parse(unauthenticated.body), {error: 'Open the workbench first'});
+
+  for (const invalidOrigin of [undefined, 'https://example.com', `${origin}/`]) {
+    const headers = {Cookie: cookie};
+    if (invalidOrigin !== undefined) headers.Origin = invalidOrigin;
+    const response = await requestAt(fixture.address, {
+      requestPath: '/api/presentation/complete', method: 'POST', headers
+    });
+    assert.equal(response.status, 403, String(invalidOrigin));
+    assert.deepEqual(JSON.parse(response.body), {error: 'Invalid origin'});
+  }
+
+  for (const requestPath of [
+    '/api/presentation/complete/',
+    '/api/presentation/complete?again=1',
+    '/api/presentation/%63omplete'
+  ]) {
+    const response = await requestAt(fixture.address, {
+      requestPath, method: 'POST', headers: {Cookie: cookie, Origin: origin}
+    });
+    assert.equal(response.status, 404, requestPath);
+  }
+
+  const requests = [1, 2, 3].map(() => requestAt(fixture.address, {
+    requestPath: '/api/presentation/complete',
+    method: 'POST',
+    headers: {Cookie: cookie, Origin: origin}
+  }));
+  await completionStarted;
+  assert.equal(completionCalls, 1);
+  releaseCompletion();
+  const concurrent = await Promise.all(requests);
+  for (const response of concurrent) {
+    assert.equal(response.status, 204);
+    assert.equal(response.body, '');
+    assert.equal(response.headers['content-security-policy'], CSP);
+  }
+
+  const repeated = await requestAt(fixture.address, {
+    requestPath: '/api/presentation/complete',
+    method: 'POST',
+    headers: {Cookie: cookie, Origin: origin}
+  });
+  assert.equal(repeated.status, 204);
+  assert.equal(repeated.body, '');
+  assert.equal(completionCalls, 1);
+});
+
+test('presentation completion failure is stable, redacted, and never re-executes the callback', async t => {
+  let completionCalls = 0;
+  const fixture = await createIsolatedFixture(t, {
+    onPresentationComplete: async () => {
+      completionCalls += 1;
+      throw Error('/Users/example/private/window-error');
+    }
+  });
+  const opened = await requestAt(fixture.address);
+  const cookie = opened.headers['set-cookie'][0].split(';', 1)[0];
+  const headers = {Cookie: cookie, Origin: `http://127.0.0.1:${fixture.address.port}`};
+
+  const first = await requestAt(fixture.address, {
+    requestPath: '/api/presentation/complete', method: 'POST', headers
+  });
+  const repeated = await requestAt(fixture.address, {
+    requestPath: '/api/presentation/complete', method: 'POST', headers
+  });
+
+  for (const response of [first, repeated]) {
+    assert.equal(response.status, 500);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Presentation completion failed'});
+    assert.doesNotMatch(response.body, /Users|private|window-error/);
+  }
+  assert.equal(completionCalls, 1);
 });
 
 test('rejects allowlisted artwork when the assets directory is an outside symlink', async () => {

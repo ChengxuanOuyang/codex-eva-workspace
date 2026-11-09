@@ -3,10 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const {createWorkbenchService} = require('../workbench/service.cjs');
 
 class FakeController extends EventEmitter {
@@ -111,4 +113,40 @@ test('events endpoint sends an initial snapshot over authenticated SSE', async t
   assert.equal(event.status, 200);
   assert.equal(event.contentType, 'text/event-stream; charset=utf-8');
   assert.match(event.body, /^event: snapshot\ndata: /);
+});
+
+test('browser completion API posts to the exact same-origin route and forwards AbortSignal', async () => {
+  const source = fsSync.readFileSync(path.join(__dirname, '..', 'renderer', 'shared', 'api.js'), 'utf8');
+  const calls = [];
+  const sandbox = {
+    fetch: async (url, options) => {
+      calls.push({url, options});
+      return {status: 204};
+    }
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/shared/api.js'});
+  const controller = new AbortController();
+
+  const result = await sandbox.ProjectZeroApi.completePresentation({signal: controller.signal});
+
+  assert.equal(result, undefined);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/presentation/complete');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.cache, 'no-store');
+  assert.equal(calls[0].options.credentials, 'same-origin');
+  assert.equal(calls[0].options.signal, controller.signal);
+});
+
+test('browser completion API exposes only a stable error when completion fails', async () => {
+  const source = fsSync.readFileSync(path.join(__dirname, '..', 'renderer', 'shared', 'api.js'), 'utf8');
+  const sandbox = {fetch: async () => ({status: 500})};
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/shared/api.js'});
+
+  await assert.rejects(
+    sandbox.ProjectZeroApi.completePresentation(),
+    error => error.message === 'Presentation completion unavailable'
+  );
 });
