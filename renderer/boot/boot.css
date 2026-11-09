@@ -181,7 +181,6 @@ body[data-transition="closing"] .transition-curtain { opacity: 1; transition: op
 
 .workbench-shell { position: relative; min-height: 100vh; isolation: isolate; overflow: hidden; }
 .workbench-scene { position: absolute; inset: 0; z-index: -2; opacity: 0; background: var(--theme-workbench-background, url("/assets/scene-c-online.webp")) center / cover no-repeat; transition: opacity 180ms linear; }
-.workbench-scene::before { position: absolute; inset: 5% 2% 5% 55%; content: ""; background: var(--theme-workbench-portrait, none) right center / contain no-repeat; }
 .workbench-scene::after { position: absolute; inset: 0; content: ""; background: linear-gradient(90deg, rgba(246, 251, 250, 0.94), rgba(246, 251, 250, 0.66) 56%, rgba(16, 41, 52, 0.18)); }
 body[data-scene="online"] #workbench-shell:not([hidden]) .workbench-scene { opacity: 1; }
 .workbench-header { min-height: 92px; padding: 18px 34px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: rgba(246, 251, 250, 0.9); backdrop-filter: blur(18px); }

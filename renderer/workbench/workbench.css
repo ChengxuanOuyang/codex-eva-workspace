@@ -1,3 +1,19 @@
+.workbench-portrait {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: min(34vw, 520px);
+  height: min(82vh, 820px);
+  opacity: .34;
+  pointer-events: none;
+  background: var(--theme-workbench-portrait, none) right bottom / contain no-repeat;
+}
+
+html[data-private-workbench="false"] .workbench-portrait { display: none; }
+
+.workbench-header, .core-workbench { position: relative; z-index: 2; }
+
 .core-workbench {
   height: calc(100vh - 92px);
   display: grid;
@@ -134,6 +150,7 @@
 }
 
 @media (max-width: 680px) {
+  .workbench-portrait { display: none; }
   .core-workbench { display: block; }
   .project-column, .activity-column { border: 0; border-bottom: 1px solid rgba(29, 92, 111, .24); }
   .conversation-column { min-height: 680px; }

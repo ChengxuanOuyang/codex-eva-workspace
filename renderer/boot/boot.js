@@ -195,6 +195,8 @@
         return PUBLIC_PRESENTATION;
       }
       return Object.freeze({
+        displayName: theme.displayName,
+        mark: PRIVATE_MARK_URL,
         audio: theme.soundtrack,
         audioStartMs: theme.audioStartMs,
         audioEndMs: theme.audioEndMs,
@@ -218,6 +220,19 @@
     }
 
     function applyPrivatePresentation(theme) {
+      if (typeof eventRoot.ProjectZeroThemes?.applyPrivateConfig === 'function') {
+        eventRoot.ProjectZeroThemes.applyPrivateConfig(
+          theme.portrait === PRIVATE_PORTRAIT_URL ? {
+            displayName: theme.displayName,
+            mark: PRIVATE_MARK_URL,
+            portrait: PRIVATE_PORTRAIT_URL,
+            soundtrack: theme.audio,
+            audioStartMs: theme.audioStartMs,
+            audioEndMs: theme.audioEndMs
+          } : null
+        );
+        return;
+      }
       const style = document.documentElement?.style;
       if (!style) return;
       if (theme.portrait === PRIVATE_PORTRAIT_URL) {

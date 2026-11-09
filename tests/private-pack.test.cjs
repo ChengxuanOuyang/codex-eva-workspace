@@ -7,10 +7,14 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const {
   ThemeValidationError,
   validateThemeDirectory
 } = require('../scripts/theme-contract.cjs');
+const {
+  preparePrivateAudio
+} = require('../scripts/prepare-private-audio.cjs');
 
 const projectRoot = path.join(__dirname, '..');
 const fixtureRoot = path.join(__dirname, 'fixtures', 'private-theme-valid');
@@ -89,6 +93,291 @@ async function expectStablePackFailure(promise) {
 async function assertMissing(target) {
   await assert.rejects(fs.access(target), error => error.code === 'ENOENT');
 }
+
+function atom(type, payload) {
+  const bytes = Buffer.alloc(8 + payload.length);
+  bytes.writeUInt32BE(bytes.length, 0);
+  bytes.write(type, 4, 4, 'ascii');
+  payload.copy(bytes, 8);
+  return bytes;
+}
+
+function syntheticM4a({timescale = 1000, duration = 20_500} = {}) {
+  const ftyp = Buffer.alloc(16);
+  ftyp.write('M4A ', 0, 4, 'ascii');
+  ftyp.writeUInt32BE(0, 4);
+  ftyp.write('M4A ', 8, 4, 'ascii');
+  ftyp.write('isom', 12, 4, 'ascii');
+  const mvhd = Buffer.alloc(20);
+  mvhd.writeUInt8(0, 0);
+  mvhd.writeUInt32BE(timescale, 12);
+  mvhd.writeUInt32BE(duration, 16);
+  return Buffer.concat([atom('ftyp', ftyp), atom('moov', atom('mvhd', mvhd))]);
+}
+
+async function privateAudioFixture(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-private-audio-'));
+  t.after(() => fs.rm(root, {recursive: true, force: true}));
+  const input = path.join(root, 'source.mp4');
+  const outputParent = path.join(root, 'output');
+  const output = path.join(outputParent, 'startup-reference.m4a');
+  await fs.writeFile(input, 'synthetic input');
+  await fs.mkdir(outputParent);
+  return {input, output, outputParent, root};
+}
+
+async function expectStableAudioFailure(operation, forbidden = []) {
+  await assert.rejects(operation, error => {
+    assert.equal(error.code, 'PRIVATE_AUDIO_PREP_FAILED');
+    assert.equal(error.message, 'PRIVATE_AUDIO_PREP_FAILED');
+    for (const value of forbidden) assert.equal(error.message.includes(value), false);
+    return true;
+  });
+}
+
+test('prepares private audio with the exact afconvert argument array and redacted summary', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const calls = [];
+  const logs = [];
+
+  const result = await preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async (...arguments_) => {
+      calls.push(arguments_);
+      await fs.writeFile(output, syntheticM4a());
+    },
+    log: line => logs.push(line)
+  });
+
+  assert.deepEqual(calls, [[
+    '/usr/bin/afconvert',
+    [input, output, '-f', 'm4af', '-d', 'aac', '-b', '128000']
+  ]]);
+  assert.equal(result.bytes, syntheticM4a().length);
+  assert.equal(result.durationMs, 20_500);
+  assert.match(result.sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(logs, [
+    `PRIVATE_AUDIO_READY bytes=${result.bytes} duration_ms=20500 sha256=${result.sha256}`
+  ]);
+  assert.equal(logs[0].includes(input), false);
+  assert.equal(logs[0].includes(output), false);
+});
+
+test('private audio preparation accepts only the exact absolute mp4 to m4a syntax', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const invalidArguments = [
+    [],
+    ['--input', input, '--output', output, '--bitrate', '64000'],
+    ['--output', output, '--input', input],
+    ['--input', path.basename(input), '--output', output],
+    ['--input', input, '--output', path.basename(output)],
+    ['--input', input.replace(/\.mp4$/, '.mov'), '--output', output],
+    ['--input', input, '--output', output.replace(/\.m4a$/, '.wav')]
+  ];
+  let calls = 0;
+  for (const argv of invalidArguments) {
+    await expectStableAudioFailure(preparePrivateAudio({
+      argv,
+      execFile: async () => { calls += 1; },
+      log: () => assert.fail('failure must not log')
+    }), [input, output]);
+  }
+  assert.equal(calls, 0);
+});
+
+test('private audio preparation rejects linked input and linked output parents', async t => {
+  const {input, output, root} = await privateAudioFixture(t);
+  const inputLink = path.join(root, 'linked.mp4');
+  const inputDirectory = path.join(root, 'directory.mp4');
+  const outsideParent = path.join(root, 'outside');
+  const parentLink = path.join(root, 'linked-output');
+  await fs.mkdir(inputDirectory);
+  await fs.mkdir(outsideParent);
+  await fs.symlink(input, inputLink);
+  await fs.symlink(outsideParent, parentLink);
+  let calls = 0;
+
+  for (const [linkedInput, linkedOutput] of [
+    [inputLink, output],
+    [inputDirectory, output],
+    [input, path.join(parentLink, 'startup-reference.m4a')]
+  ]) {
+    await expectStableAudioFailure(preparePrivateAudio({
+      argv: ['--input', linkedInput, '--output', linkedOutput],
+      execFile: async () => { calls += 1; },
+      log: () => assert.fail('failure must not log')
+    }), [linkedInput, linkedOutput]);
+  }
+  assert.equal(calls, 0);
+});
+
+test('private audio preparation detects output-parent replacement around conversion', async t => {
+  const {input, output, outputParent, root} = await privateAudioFixture(t);
+  const movedParent = path.join(root, 'moved-output');
+
+  await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => {
+      await fs.rename(outputParent, movedParent);
+      await fs.mkdir(outputParent);
+      await fs.writeFile(output, syntheticM4a());
+    },
+    log: () => assert.fail('failure must not log')
+  }), [input, output]);
+});
+
+test('private audio preparation validates the generated regular file, size, and M4A duration', async t => {
+  const cases = [
+    {
+      name: 'linked output',
+      write: async ({output, root}) => {
+        const outside = path.join(root, 'outside.m4a');
+        await fs.writeFile(outside, syntheticM4a());
+        await fs.symlink(outside, output);
+      }
+    },
+    {
+      name: 'oversize output',
+      write: async ({output}) => {
+        const handle = await fs.open(output, 'w');
+        await handle.truncate(32 * 1024 * 1024 + 1);
+        await handle.close();
+      }
+    },
+    {
+      name: 'invalid duration',
+      write: async ({output}) => fs.writeFile(output, syntheticM4a({timescale: 0}))
+    },
+    {
+      name: 'not an M4A',
+      write: async ({output}) => fs.writeFile(output, 'not an m4a')
+    }
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async subtest => {
+      const fixture = await privateAudioFixture(subtest);
+      await expectStableAudioFailure(preparePrivateAudio({
+        argv: ['--input', fixture.input, '--output', fixture.output],
+        execFile: async () => scenario.write(fixture),
+        log: () => assert.fail('failure must not log')
+      }), [fixture.input, fixture.output]);
+    });
+  }
+});
+
+test('private audio preparation never exposes converter stderr or paths on failure', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const logs = [];
+
+  await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => {
+      throw Error(`afconvert failed: ${input} ${output} codec-private-stderr`);
+    },
+    log: line => logs.push(line)
+  }), [input, output, 'codec-private-stderr']);
+  assert.deepEqual(logs, []);
+});
+
+test('private audio CLI emits only its stable failure code', () => {
+  const result = childProcess.spawnSync(
+    process.execPath,
+    ['scripts/prepare-private-audio.cjs', '--input', 'relative.mp4', '--output', 'relative.m4a'],
+    {cwd: projectRoot, encoding: 'utf8'}
+  );
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, 'PRIVATE_AUDIO_PREP_FAILED\n');
+});
+
+function rendererThemeFixture() {
+  const properties = new Map();
+  const documentElement = {
+    dataset: {},
+    style: {
+      setProperty: (name, value) => properties.set(name, value),
+      removeProperty: name => properties.delete(name),
+      getPropertyValue: name => properties.get(name) || ''
+    }
+  };
+  const root = {Audio: function FakeAudio() {}, document: {documentElement}};
+  root.window = root;
+  const sandbox = {document: root.document, window: root};
+  const source = childProcess.execFileSync(process.execPath, ['-e', [
+    "const fs=require('node:fs');",
+    "process.stdout.write(fs.readFileSync('renderer/workbench/themes.js'));"
+  ].join('')], {cwd: projectRoot, encoding: 'utf8'});
+  vm.runInNewContext(source, sandbox, {filename: 'renderer/workbench/themes.js'});
+  return {documentElement, properties, themes: root.ProjectZeroThemes};
+}
+
+function fixedPrivateConfig(overrides = {}) {
+  return {
+    displayName: 'PROJECT ZERO // TEST PRIVATE THEME',
+    mark: '/private/boot-mark.webp',
+    portrait: '/private/rei-portrait.webp',
+    soundtrack: '/private/startup-reference.wav',
+    audioStartMs: 0,
+    audioEndMs: 20_500,
+    ...overrides
+  };
+}
+
+test('workbench portrait is enabled only by the exact fixed private config', () => {
+  const {documentElement, themes} = rendererThemeFixture();
+
+  assert.equal(themes.applyPrivateConfig(fixedPrivateConfig()), true);
+  assert.equal(documentElement.dataset.privateWorkbench, 'true');
+  assert.equal(
+    documentElement.style.getPropertyValue('--theme-workbench-portrait'),
+    'url("/private/rei-portrait.webp")'
+  );
+
+  themes.apply({
+    id: 'untrusted-theme',
+    colors: {},
+    portrait: 'https://example.test/arbitrary.webp'
+  });
+  assert.equal(
+    documentElement.style.getPropertyValue('--theme-workbench-portrait'),
+    'url("/private/rei-portrait.webp")'
+  );
+
+  assert.equal(themes.applyPrivateConfig(null), false);
+  assert.equal(documentElement.dataset.privateWorkbench, 'false');
+  assert.equal(documentElement.style.getPropertyValue('--theme-workbench-portrait'), '');
+});
+
+test('workbench rejects arbitrary private portrait and soundtrack URLs', () => {
+  const {documentElement, themes} = rendererThemeFixture();
+  const invalid = [
+    fixedPrivateConfig({portrait: '/private/another.webp'}),
+    fixedPrivateConfig({portrait: 'https://example.test/rei.webp'}),
+    fixedPrivateConfig({soundtrack: '/private/another.wav'}),
+    fixedPrivateConfig({extra: 'field'})
+  ];
+
+  for (const config of invalid) {
+    assert.equal(themes.applyPrivateConfig(config), false);
+    assert.equal(documentElement.style.getPropertyValue('--theme-workbench-portrait'), '');
+  }
+});
+
+test('private portrait layout stays decorative, bounded, and below all functional panels', async () => {
+  const html = await fs.readFile(path.join(projectRoot, 'renderer', 'boot', 'index.html'), 'utf8');
+  const css = await fs.readFile(path.join(projectRoot, 'renderer', 'workbench', 'workbench.css'), 'utf8');
+
+  assert.match(html, /class="workbench-portrait"[^>]*aria-hidden="true"/);
+  assert.match(css, /\.workbench-portrait\s*\{[^}]*position:\s*fixed[^}]*right:\s*0[^}]*bottom:\s*0/s);
+  assert.match(css, /\.workbench-portrait\s*\{[^}]*width:\s*min\(34vw,\s*520px\)/s);
+  assert.match(css, /\.workbench-portrait\s*\{[^}]*opacity:\s*(?:\.3[0-8]|0\.3[0-8])/s);
+  assert.match(css, /\.workbench-portrait\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(css, /html\[data-private-workbench="false"\] \.workbench-portrait[^}]*display:\s*none/s);
+  assert.match(css, /\.workbench-header,\s*\.core-workbench\s*\{[^}]*position:\s*relative[^}]*z-index:\s*[2-9]/s);
+  assert.match(css, /@media \(max-width:\s*680px\)[\s\S]*\.workbench-portrait[^}]*display:\s*none/s);
+});
 
 function stagedContentTarget(stageRoot, theme, file) {
   if (Object.values(theme.scenes).includes(file)) {

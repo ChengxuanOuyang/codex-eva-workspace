@@ -18,6 +18,7 @@
     "licenses:check": "node scripts/check-asset-licenses.cjs",
     "pack": "node scripts/pack.cjs",
     "pack:private": "node scripts/pack-private-theme.cjs",
+    "prepare:private-audio": "node scripts/prepare-private-audio.cjs",
     "dist:mac:arm64": "electron-builder --mac dmg zip --arm64",
     "dist:mac:x64": "electron-builder --mac dmg zip --x64"
   },
