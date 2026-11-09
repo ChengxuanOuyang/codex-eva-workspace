@@ -17,64 +17,53 @@ const SOUNDTRACK_EXTENSIONS = new Set(['.wav', '.m4a']);
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_SOUNDTRACK_BYTES = 32 * 1024 * 1024;
 const MAX_AUDIO_SEGMENT_MS = 30_000;
-const CONTENT_SNAPSHOTS = new WeakMap();
 
-class FrozenContents extends Map {
-  constructor(entries) {
-    super();
-    CONTENT_SNAPSHOTS.set(
-      this,
-      new Map([...entries].map(([file, bytes]) => [file, Buffer.from(bytes)]))
-    );
-    Object.freeze(this);
-  }
-
-  get size() {
-    return CONTENT_SNAPSHOTS.get(this).size;
-  }
-
-  has(file) {
-    return CONTENT_SNAPSHOTS.get(this).has(file);
-  }
-
-  get(file) {
-    const bytes = CONTENT_SNAPSHOTS.get(this).get(file);
+function createFrozenContents(entries) {
+  const snapshot = new Map(
+    [...entries].map(([file, bytes]) => [file, Buffer.from(bytes)])
+  );
+  const readOnly = () => {
+    throw new TypeError('THEME_CONTENTS_READ_ONLY');
+  };
+  const get = file => {
+    const bytes = snapshot.get(file);
     return bytes === undefined ? undefined : Buffer.from(bytes);
-  }
-
-  keys() {
-    return CONTENT_SNAPSHOTS.get(this).keys();
-  }
-
-  * values() {
-    for (const bytes of CONTENT_SNAPSHOTS.get(this).values()) yield Buffer.from(bytes);
-  }
-
-  * entries() {
-    for (const [file, bytes] of CONTENT_SNAPSHOTS.get(this)) {
-      yield [file, Buffer.from(bytes)];
+  };
+  const has = file => snapshot.has(file);
+  const keys = () => snapshot.keys();
+  const values = function* values() {
+    for (const bytes of snapshot.values()) yield Buffer.from(bytes);
+  };
+  const contentEntries = function* contentEntries() {
+    for (const [file, bytes] of snapshot) yield [file, Buffer.from(bytes)];
+  };
+  let contents;
+  const forEach = (callback, thisArgument) => {
+    for (const [file, bytes] of snapshot) {
+      callback.call(thisArgument, Buffer.from(bytes), file, contents);
     }
-  }
-
-  forEach(callback, thisArgument) {
-    for (const [file, bytes] of this) callback.call(thisArgument, bytes, file, this);
-  }
-
-  set() {
-    throw new TypeError('THEME_CONTENTS_READ_ONLY');
-  }
-
-  delete() {
-    throw new TypeError('THEME_CONTENTS_READ_ONLY');
-  }
-
-  clear() {
-    throw new TypeError('THEME_CONTENTS_READ_ONLY');
-  }
-
-  [Symbol.iterator]() {
-    return this.entries();
-  }
+  };
+  const methods = new Map([
+    ['get', get],
+    ['has', has],
+    ['keys', keys],
+    ['values', values],
+    ['entries', contentEntries],
+    ['forEach', forEach],
+    ['set', readOnly],
+    ['delete', readOnly],
+    ['clear', readOnly]
+  ]);
+  const target = new Map();
+  contents = new Proxy(target, {
+    get(map, property) {
+      if (property === 'size') return snapshot.size;
+      if (property === Symbol.iterator) return contentEntries;
+      if (methods.has(property)) return methods.get(property);
+      return Reflect.get(map, property, map);
+    }
+  });
+  return Object.freeze(contents);
 }
 
 class ThemeValidationError extends Error {
@@ -305,7 +294,7 @@ async function validateThemeDirectory(themeRoot, {
       scenes: Object.freeze({...theme.scenes}),
       boot: Object.freeze({...theme.boot}),
       files: Object.freeze([...requiredFiles]),
-      contents: new FrozenContents(contentEntries)
+      contents: createFrozenContents(contentEntries)
     });
   } finally {
     await rootHandle.close().catch(() => {});

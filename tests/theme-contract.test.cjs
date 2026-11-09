@@ -98,13 +98,56 @@ test('accepts the exact synthetic private theme contract without depending on cw
   assert.equal(result.contents instanceof Map, true);
   assert.equal(Object.isFrozen(result.contents), true);
   assert.equal(Object.isFrozen(result.files), true);
+  assert.equal(result.contents.size, requiredFiles.length);
+  assert.deepEqual([...result.contents.entries()].map(([file]) => file).sort(), requiredFiles);
 
   const returnedBytes = result.contents.get('boot-mark.webp');
   const firstByte = returnedBytes[0];
   returnedBytes[0] ^= 0xff;
   assert.equal(result.contents.get('boot-mark.webp')[0], firstByte);
-  assert.throws(() => result.contents.set('boot-mark.webp', Buffer.from('replacement')), TypeError);
+  for (const mutate of [
+    () => result.contents.set('boot-mark.webp', Buffer.from('replacement')),
+    () => result.contents.delete('boot-mark.webp'),
+    () => result.contents.clear()
+  ]) {
+    assert.throws(mutate, error =>
+      error instanceof TypeError && error.message === 'THEME_CONTENTS_READ_ONLY'
+    );
+  }
   assert.throws(() => { result.boot.mark = 'replacement.webp'; }, TypeError);
+
+  const copied = new Map(result.contents);
+  assert.deepEqual([...copied.keys()].sort(), requiredFiles);
+  copied.get('boot-mark.webp')[0] ^= 0xff;
+  assert.equal(result.contents.get('boot-mark.webp')[0], firstByte);
+
+  const visited = [];
+  result.contents.forEach((bytes, file, contents) => {
+    assert.equal(contents, result.contents);
+    assert.equal(Buffer.isBuffer(bytes), true);
+    visited.push(file);
+  });
+  assert.deepEqual(visited.sort(), requiredFiles);
+});
+
+test('borrowed native Map mutators cannot reach the private content snapshot', async t => {
+  const {themeRoot} = await isolatedTheme(t);
+  const {contents} = await validateThemeDirectory(themeRoot);
+  const expectedKeys = [...contents.keys()].sort();
+  const expectedTheme = contents.get('theme.json');
+  const mutations = [
+    () => Map.prototype.set.call(contents, 'injected', Buffer.from('untrusted')),
+    () => Map.prototype.delete.call(contents, 'theme.json'),
+    () => Map.prototype.clear.call(contents)
+  ];
+
+  for (const mutate of mutations) assert.throws(mutate, TypeError);
+
+  assert.deepEqual([...contents.keys()].sort(), expectedKeys);
+  assert.equal(contents.has('injected'), false);
+  assert.deepEqual(contents.get('theme.json'), expectedTheme);
+  assert.deepEqual([...contents].map(([file]) => file).sort(), expectedKeys);
+  assert.deepEqual([...new Map(contents).keys()].sort(), expectedKeys);
 });
 
 test('accepts an exact m4a soundtrack alternative', async t => {
