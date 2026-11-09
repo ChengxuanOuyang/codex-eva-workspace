@@ -23,6 +23,7 @@
       audio,
       startSeconds = 0,
       endSeconds = Number.POSITIVE_INFINITY,
+      endToleranceMs = 0,
       now = () => 0,
       onTick = () => {},
       onEnd = () => {},
@@ -42,6 +43,9 @@
     const maximumElapsed = Number.isFinite(endSeconds)
       ? Math.max(0, (endSeconds - safeStart) * 1000)
       : Number.POSITIVE_INFINITY;
+    const safeEndTolerance = Number.isFinite(endToleranceMs)
+      ? Math.max(0, Math.min(1, endToleranceMs))
+      : 0;
     let activeMode = 'media';
     let frameId;
     let started = false;
@@ -84,10 +88,12 @@
       frameId = undefined;
       if (destroyed || paused || ended) return;
       const current = elapsed();
-      onTick(current);
-      if (current >= maximumElapsed) {
+      const reachesEnd = maximumElapsed - current <= safeEndTolerance;
+      onTick(reachesEnd ? maximumElapsed : current);
+      if (reachesEnd) {
         ended = true;
         pause();
+        frozenElapsed = maximumElapsed;
         onEnd();
         return;
       }

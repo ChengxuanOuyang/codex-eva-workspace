@@ -376,6 +376,7 @@ test('private config accepts only fixed same-origin asset URLs and applies the f
   assert.deepEqual(view.audioLoads.map(load => load.url), ['/private/startup-reference.wav']);
   assert.equal(view.audioClock.options.startSeconds, 0.25);
   assert.equal(view.audioClock.options.endSeconds, 20.75);
+  assert.equal(view.audioClock.options.endToleranceMs, 1);
   assert.equal(
     view.document.documentElement.style.getPropertyValue('--theme-workbench-portrait'),
     'url("/private/rei-portrait.webp")'

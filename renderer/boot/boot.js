@@ -597,6 +597,7 @@
         audio: decodedTrack,
         startSeconds: theme.audioStartMs / 1000,
         endSeconds: theme.audioEndMs / 1000,
+        endToleranceMs: TRACK_DURATION_TOLERANCE_MS,
         now,
         onTick: elapsedMs => renderTimeline(elapsedMs),
         onEnd: () => completePresentation(),

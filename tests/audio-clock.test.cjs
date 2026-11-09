@@ -86,6 +86,17 @@ function fakeAudio({currentTime = 0, playError, volume = 1} = {}) {
   };
 }
 
+function cappedAudio(duration) {
+  let currentTime = 0;
+  const audio = fakeAudio();
+  Object.defineProperty(audio, 'currentTime', {
+    enumerable: true,
+    get: () => currentTime,
+    set: value => { currentTime = Math.min(duration, Math.max(0, value)); }
+  });
+  return audio;
+}
+
 test('sequence audio identifies the exact MIT code source and excludes upstream media', () => {
   const source = fs.readFileSync('renderer/boot/sequence-audio.js', 'utf8');
 
@@ -126,6 +137,35 @@ test('audio currentTime is the authoritative presentation clock', async () => {
 
   assert.equal(ticks.at(-1), 1250);
   assert.equal(clock.mode(), 'media');
+});
+
+test('one millisecond end tolerance emits the exact logical final tick once for capped media', async () => {
+  for (const duration of [20.7495, 20.75, 30]) {
+    const audio = cappedAudio(duration);
+    const raf = fakeRaf();
+    const ticks = [];
+    let endCalls = 0;
+    const clock = createAudioClock({
+      audio,
+      startSeconds: 0.25,
+      endSeconds: 20.75,
+      endToleranceMs: 1,
+      onTick: milliseconds => ticks.push(milliseconds),
+      onEnd: () => { endCalls += 1; },
+      raf
+    });
+
+    await clock.start();
+    audio.currentTime = 20.75;
+    raf.fire();
+    raf.fire();
+
+    assert.deepEqual(ticks, [20_500]);
+    assert.equal(endCalls, 1);
+    assert.equal(raf.pending(), false);
+    await clock.destroy();
+    assert.equal(audio.closeCalls, 1);
+  }
 });
 
 test('repeated start shares one in-flight audio play', async () => {
