@@ -2,8 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const {bridgeOptionsForEnvironment, configureProductUserData} = require('../app/main.cjs');
+const {installTestBridge, TEST_WINDOW_MODE_CHANNEL} = require('../app/test-bridge.cjs');
 const {InMemoryCodexBridge, createBridgeOptions} = require('./support/fake-codex.cjs');
 
 const fakeModule = path.join(__dirname, 'support', 'fake-codex.cjs');
@@ -45,6 +47,7 @@ test('test bridge requires explicit development-only module injection', () => {
   const options = bridgeOptionsForEnvironment(environment, {isPackaged: false});
   assert.equal(options.CodexBridgeClass, InMemoryCodexBridge);
   assert.equal(options.locateCodex(), 'in-memory-test-codex');
+  assert.equal(options.enableTestBridge, true);
 });
 
 test('packaged production refuses test bridge injection even with hostile environment flags', () => {
@@ -62,6 +65,49 @@ test('packaged production refuses test bridge injection even with hostile enviro
 
   assert.deepEqual(options, {});
   assert.equal(loads, 0);
+});
+
+test('renderer test bridge exposes only elapsed control and window-mode inspection', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'app', 'test-preload.cjs'), 'utf8');
+  assert.match(source, /setPresentationElapsed/);
+  assert.match(source, /readWindowMode/);
+  assert.doesNotMatch(source, /executeJavaScript|\beval\b|Function\(|readFile|writeFile|PROJECT_ZERO_TEST_BRIDGE_MODULE/);
+  assert.doesNotMatch(source, /exposeInMainWorld\([^)]*(?:path|file|script|execute)/i);
+});
+
+test('window-mode bridge reads both native and macOS simple fullscreen state', () => {
+  let handler;
+  const removed = [];
+  const ipcMain = {
+    handle(channel, callback) {
+      assert.equal(channel, TEST_WINDOW_MODE_CHANNEL);
+      handler = callback;
+    },
+    removeHandler(channel) {
+      removed.push(channel);
+    }
+  };
+  const webContents = {};
+  const state = {native: false, simple: false};
+  const window = {
+    webContents,
+    isDestroyed: () => false,
+    isFullScreen: () => state.native,
+    isSimpleFullScreen: () => state.simple
+  };
+  const cleanup = installTestBridge(ipcMain, window);
+
+  assert.equal(handler({sender: webContents}), 'windowed');
+  state.native = true;
+  assert.equal(handler({sender: webContents}), 'fullscreen');
+  state.native = false;
+  state.simple = true;
+  assert.equal(handler({sender: webContents}), 'fullscreen');
+  assert.equal(handler({sender: {}}), 'fallback');
+
+  cleanup();
+  cleanup();
+  assert.deepEqual(removed, [TEST_WINDOW_MODE_CHANNEL]);
 });
 
 test('external in-memory bridge matches official account and model response shapes', async () => {

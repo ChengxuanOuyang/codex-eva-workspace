@@ -10,6 +10,8 @@
   ]);
   const AUTHORIZATION_MS = 15_500;
   const PRESENTATION_END_MS = 20_500;
+  const TEST_PRESENTATION_ATTRIBUTE = 'data-project-zero-test-presentation-elapsed';
+  const TEST_PRESENTATION_EVENT = 'project-zero:test-presentation-elapsed';
   const TRACK_DURATION_TOLERANCE_MS = 1;
   const PRIVATE_THEME_FIELDS = Object.freeze([
     'audioEndMs',
@@ -137,6 +139,7 @@
     let readinessCode = 'INITIALIZING';
     let audioClock;
     let presentationPromise;
+    let pendingTestElapsedMs;
 
     function setText(element, value) {
       if (!destroyed && element && element.textContent !== value) element.textContent = value;
@@ -328,6 +331,30 @@
         gatePaused = true;
         audioClock?.pause();
       }
+    }
+
+    function testBridgeAvailable() {
+      return typeof eventRoot.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
+        && typeof eventRoot.ProjectZeroTestBridge?.readWindowMode === 'function';
+    }
+
+    function applyTestElapsed(elapsedMs) {
+      if (!audioClock) {
+        pendingTestElapsedMs = elapsedMs;
+        return;
+      }
+      pendingTestElapsedMs = undefined;
+      audioClock.pause();
+      audioClock.seek(elapsedMs);
+      gatePaused = !state.confirmed && elapsedMs >= AUTHORIZATION_MS;
+      renderTimeline(elapsedMs);
+      if (state.confirmed && elapsedMs >= PRESENTATION_END_MS) void completePresentation();
+    }
+
+    function onTestPresentationElapsed() {
+      const elapsedMs = Number(document.documentElement?.getAttribute?.(TEST_PRESENTATION_ATTRIBUTE));
+      if (!Number.isSafeInteger(elapsedMs) || elapsedMs < 0 || elapsedMs > PRESENTATION_END_MS) return;
+      applyTestElapsed(elapsedMs);
     }
 
     function restoreAuthorizationGate() {
@@ -575,6 +602,7 @@
       if (audioClock) void Promise.resolve(audioClock.destroy()).catch(() => {});
       unbindBootInteractions();
       elements.shellRetry.removeEventListener('click', retryInitialization);
+      eventRoot.removeEventListener(TEST_PRESENTATION_EVENT, onTestPresentationElapsed);
       eventRoot.removeEventListener('pagehide', destroy);
     }
 
@@ -630,6 +658,7 @@
         return;
       }
       await audioClock.start();
+      if (pendingTestElapsedMs !== undefined) applyTestElapsed(pendingTestElapsedMs);
     }
 
     function start() {
@@ -642,6 +671,9 @@
       elements.shellRetry.addEventListener('click', retryInitialization);
       elements.skip.addEventListener('click', skipPresentation);
       eventRoot.addEventListener('keydown', onKeydown);
+      if (testBridgeAvailable()) {
+        eventRoot.addEventListener(TEST_PRESENTATION_EVENT, onTestPresentationElapsed);
+      }
       eventRoot.addEventListener('pagehide', destroy);
       elements.skip.hidden = forceFullPlayback;
       currentSnapshot = sampleTimeline(0, {authorized: false, reducedMotion});

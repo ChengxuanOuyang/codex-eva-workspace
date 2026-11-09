@@ -157,6 +157,7 @@ class InMemoryCodexBridge extends EventEmitter {
 function createBridgeOptions() {
   const options = {
     CodexBridgeClass: InMemoryCodexBridge,
+    enableTestBridge: true,
     locateCodex: () => 'in-memory-test-codex',
     resolvePathCodex: () => null
   };

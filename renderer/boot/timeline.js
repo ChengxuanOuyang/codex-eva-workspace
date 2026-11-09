@@ -10,6 +10,10 @@
   'use strict';
 
   const MAX_UNAUTHORIZED_PROGRESS = 99.2;
+  const NODE_ICONS = Object.freeze([
+    'core', 'core', 'link', 'link', 'data', 'data',
+    'shield', 'shield', 'render', 'render', 'pilot', 'pilot'
+  ]);
   const BOOT_TIMELINE = Object.freeze([
     Object.freeze({stage: 'wake', startMs: 0, endMs: 3500, from: 0, to: 0}),
     Object.freeze({stage: 'scan', startMs: 3500, endMs: 8500, from: 0, to: 0}),
@@ -71,13 +75,18 @@
         ? MAX_UNAUTHORIZED_PROGRESS
         : animatedProgress;
     const scanPhase = stage === 'scan' ? (logicalMs - 3500) / 5000 : 0;
+    const activeNodes = Math.min(12, Math.floor((progress / MAX_UNAUTHORIZED_PROGRESS) * 12));
+    const iconStates = Object.freeze(NODE_ICONS.map((icon, index) =>
+      `${icon}:${index < activeNodes ? 'active' : 'idle'}`
+    ));
 
     return Object.freeze({
       elapsedMs: logicalMs,
       stage,
       progress: Math.min(authorized ? 100 : MAX_UNAUTHORIZED_PROGRESS, progress),
       scan: reducedMotion ? (scanPhase > 0 ? 1 : 0) : Math.sin(Math.PI * scanPhase),
-      activeNodes: Math.min(12, Math.floor((progress / MAX_UNAUTHORIZED_PROGRESS) * 12)),
+      activeNodes,
+      iconStates,
       headingKey: `boot.${stage}.heading`,
       captionKey: `boot.${stage}.caption`,
       reducedMotion: Boolean(reducedMotion)

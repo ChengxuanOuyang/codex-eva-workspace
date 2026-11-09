@@ -14,12 +14,14 @@ class WindowDirector {
   constructor(window, {
     timeoutMs = 1500,
     normalBounds = {width: 1500, height: 950},
+    platform = process.platform,
     setTimeout: scheduleTimeout = setTimeout,
     clearTimeout: cancelTimeout = clearTimeout
   } = {}) {
     this.window = window;
     this.timeoutMs = Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 1500;
     this.normalBounds = safeBounds(normalBounds);
+    this.platform = platform;
     this.scheduleTimeout = scheduleTimeout;
     this.cancelTimeout = cancelTimeout;
     this.destroyed = false;
@@ -30,6 +32,7 @@ class WindowDirector {
     this.revealFallback = false;
     this.revealStarting = false;
     this.waitObserved = false;
+    this.simpleFullScreen = false;
     this.leaveFullScreenHandler = null;
     this.timeoutHandle = null;
   }
@@ -62,7 +65,9 @@ class WindowDirector {
       return this.showPromise;
     }
 
-    if (!this.revealPromise) {
+    const useSimpleFullScreen = !this.revealPromise && this.platform === 'darwin' &&
+      typeof this.window?.setSimpleFullScreen === 'function';
+    if (!this.revealPromise && !useSimpleFullScreen) {
       try {
         this.window.setFullScreen(true);
       } catch {
@@ -74,6 +79,15 @@ class WindowDirector {
       this.window.show();
     } catch {
       fallback = true;
+    }
+
+    if (useSimpleFullScreen) {
+      try {
+        this.window.setSimpleFullScreen(true);
+        this.simpleFullScreen = true;
+      } catch {
+        fallback = true;
+      }
     }
 
     resolveShow(fallback
@@ -95,6 +109,17 @@ class WindowDirector {
     this.revealFallback = state.failed;
     if (state.destroyed) {
       this.settleReveal({fallback: true, restore: false});
+      return this.revealPromise;
+    }
+
+    if (this.simpleFullScreen) {
+      try {
+        this.window.setSimpleFullScreen(false);
+      } catch {
+        this.revealFallback = true;
+      }
+      this.simpleFullScreen = false;
+      this.settleReveal({fallback: this.revealFallback});
       return this.revealPromise;
     }
 

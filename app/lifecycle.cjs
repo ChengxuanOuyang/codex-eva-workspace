@@ -7,6 +7,7 @@ const {findCodex} = require('./codex-discovery.cjs');
 const {runtimePaths} = require('./runtime-paths.cjs');
 const {WindowDirector} = require('./window-director.cjs');
 const {windowOptions} = require('./window-options.cjs');
+const {installTestBridge, TEST_PRELOAD_PATH} = require('./test-bridge.cjs');
 const {CodexBridge} = require('../workbench/bridge.cjs');
 const {WorkbenchRuntime} = require('../workbench/runtime.cjs');
 const {createWorkbenchService} = require('../workbench/service.cjs');
@@ -397,6 +398,8 @@ async function startWorkbench({
   CodexBridgeClass = CodexBridge,
   WindowDirectorClass = WindowDirector,
   serviceFactory = createWorkbenchService,
+  enableTestBridge = false,
+  ipcMain,
   bootRoot = path.join(__dirname, '..', 'renderer', 'boot'),
   sharedRoot = path.join(__dirname, '..', 'renderer', 'shared'),
   workbenchRoot = path.join(__dirname, '..', 'renderer', 'workbench'),
@@ -451,7 +454,9 @@ async function startWorkbench({
   const address = await service.listen();
   const origin = `http://127.0.0.1:${address.port}`;
 
-  const window = new BrowserWindow(windowOptions());
+  const testBridgeEnabled = enableTestBridge === true;
+  const window = new BrowserWindow(windowOptions(testBridgeEnabled ? TEST_PRELOAD_PATH : undefined));
+  if (testBridgeEnabled) cleanups.unshift(installTestBridge(ipcMain, window));
   windowDirector = new WindowDirectorClass(window);
   cleanups.unshift(() => windowDirector.destroy());
   restrictNavigation(window.webContents, origin);
@@ -518,12 +523,12 @@ function installCleanupHandler(app, cleanups, {
   });
 }
 
-function bootstrap({app, BrowserWindow, dialog}, startOptions = {}) {
+function bootstrap({app, BrowserWindow, dialog, ipcMain}, startOptions = {}) {
   const cleanups = [];
   installCleanupHandler(app, cleanups);
   app.on('window-all-closed', () => app.quit());
 
-  startWorkbench({app, BrowserWindow, cleanups, ...startOptions}).catch(error => {
+  startWorkbench({app, BrowserWindow, ipcMain, cleanups, ...startOptions}).catch(error => {
     const message = error.code === 'CODEX_NOT_FOUND'
       ? CODEX_NOT_FOUND_MESSAGE
       : 'The workbench could not be started.';

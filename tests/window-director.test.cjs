@@ -68,6 +68,78 @@ test('boot enters fullscreen before the hidden window is shown and shares repeat
   assert.deepEqual(calls, ['setFullScreen:true', 'show']);
 });
 
+test('macOS uses stable simple fullscreen after show without entering native fullscreen', async () => {
+  const {window, calls} = windowFixture({
+    setSimpleFullScreen(enabled) {
+      calls.push(`setSimpleFullScreen:${enabled}`);
+    }
+  });
+  const {director, timers} = createDirector(window);
+
+  assert.deepEqual(await director.showBoot(), {mode: 'fullscreen'});
+  assert.deepEqual(calls, ['show', 'setSimpleFullScreen:true']);
+  const first = director.revealWorkbench();
+  const concurrent = director.revealWorkbench();
+  assert.equal(first, concurrent);
+  assert.deepEqual(await first, {mode: 'windowed'});
+  assert.deepEqual(calls.slice(-3), [
+    'setSimpleFullScreen:false',
+    'setBounds:1500x950',
+    'center'
+  ]);
+  assert.equal(window.listenerCount('leave-full-screen'), 0);
+  assert.equal(timers.size, 0);
+});
+
+test('macOS simple fullscreen exit failure restores the window once and returns fallback', async () => {
+  const {window, calls} = windowFixture({
+    setSimpleFullScreen(enabled) {
+      calls.push(`setSimpleFullScreen:${enabled}`);
+      if (!enabled) throw Error('simple fullscreen exit failed');
+    }
+  });
+  const {director} = createDirector(window);
+
+  assert.deepEqual(await director.showBoot(), {mode: 'fullscreen'});
+  const reveal = director.revealWorkbench();
+
+  assert.deepEqual(await reveal, {mode: 'fallback'});
+  assert.deepEqual(calls.slice(-3), [
+    'setSimpleFullScreen:false',
+    'setBounds:1500x950',
+    'center'
+  ]);
+});
+
+test('macOS simple fullscreen entry failure does not mix in native fullscreen', async () => {
+  const {window, calls} = windowFixture({
+    setSimpleFullScreen(enabled) {
+      calls.push(`setSimpleFullScreen:${enabled}`);
+      throw Error('simple fullscreen entry failed');
+    }
+  });
+  const {director} = createDirector(window);
+
+  assert.deepEqual(await director.showBoot(), {mode: 'fallback'});
+  assert.deepEqual(calls, ['show', 'setSimpleFullScreen:true']);
+});
+
+test('non-macOS windows keep the native fullscreen path even when a simple API exists', async () => {
+  const {window, calls} = windowFixture({
+    setSimpleFullScreen(enabled) {
+      calls.push(`setSimpleFullScreen:${enabled}`);
+    }
+  });
+  const {director} = createDirector(window, timerFixture(), {platform: 'linux'});
+
+  assert.deepEqual(await director.showBoot(), {mode: 'fullscreen'});
+  assert.deepEqual(calls, ['setFullScreen:true', 'show']);
+  const reveal = director.revealWorkbench();
+  window.emit('leave-full-screen');
+  assert.deepEqual(await reveal, {mode: 'windowed'});
+  assert.equal(calls.includes('setSimpleFullScreen:false'), false);
+});
+
 test('boot still shows a usable window when fullscreen entry throws', async () => {
   const {window, calls} = windowFixture({
     setFullScreen(enabled) {
