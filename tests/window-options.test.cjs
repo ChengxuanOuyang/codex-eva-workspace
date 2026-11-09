@@ -19,8 +19,8 @@ const {
 test('renderer is isolated from Node', () => {
   const options = windowOptions('/app/preload.cjs');
   assert.deepEqual(
-    [options.width, options.height, options.minWidth, options.minHeight, options.backgroundColor],
-    [1500, 950, 1100, 720, '#0b151a']
+    [options.width, options.height, options.minWidth, options.minHeight, options.backgroundColor, options.show],
+    [1500, 950, 1100, 720, '#0b151a', false]
   );
   assert.equal(options.webPreferences.nodeIntegration, false);
   assert.equal(options.webPreferences.contextIsolation, true);
@@ -48,8 +48,9 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
   };
 
   let window;
-  class FakeBrowserWindow {
+  class FakeBrowserWindow extends EventEmitter {
     constructor(options) {
+      super();
       calls.push('window:create');
       this.options = options;
       this.webContents = new EventEmitter();
@@ -62,6 +63,26 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
     async loadURL(url) {
       calls.push(`window:load:${url}`);
       this.url = url;
+    }
+
+    isDestroyed() {
+      return false;
+    }
+
+    setFullScreen(enabled) {
+      calls.push(`window:fullscreen:${enabled}`);
+    }
+
+    show() {
+      calls.push('window:show');
+    }
+
+    setBounds(bounds) {
+      calls.push(`window:bounds:${bounds.width}x${bounds.height}`);
+    }
+
+    center() {
+      calls.push('window:center');
     }
   }
 
@@ -142,6 +163,7 @@ function startFixture({executable = '/Applications/ChatGPT.app/Contents/Resource
         code: 'INITIALIZING'
       });
       assert.equal(typeof options.retryInitialization, 'function');
+      assert.equal(typeof options.onPresentationComplete, 'function');
       assert.equal(options.bootRoot, '/renderer/boot');
       assert.equal(options.sharedRoot, '/renderer/shared');
       return service;
@@ -194,6 +216,8 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
     'service:listen',
     'window:create',
     'window:load:http://127.0.0.1:43210/',
+    'window:fullscreen:true',
+    'window:show',
     'codex:find',
     'bridge:create:/Applications/ChatGPT.app/Contents/Resources/codex',
     'bridge:start'
@@ -207,6 +231,7 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
 
   const window = fixture.getWindow();
   assert.equal(window.options.webPreferences.preload, undefined);
+  assert.equal(window.options.show, false);
   assert.deepEqual(window.openHandler(), {action: 'deny'});
 
   let prevented = false;
@@ -221,8 +246,55 @@ test('workbench starts dependencies in lifecycle order and locks navigation to i
   assert.deepEqual(fixture.getServiceOptions().snapshot(), {ready: false, code: 'DISCONNECTED'});
   assert.doesNotMatch(JSON.stringify(fixture.getServiceOptions().snapshot()), /private|details/);
 
+  const completion = fixture.getServiceOptions().onPresentationComplete();
+  assert.equal(fixture.calls.at(-1), 'window:fullscreen:false');
+  window.emit('leave-full-screen');
+  assert.deepEqual(await completion, {mode: 'windowed'});
+  assert.deepEqual(fixture.calls.slice(-3), [
+    'window:fullscreen:false',
+    'window:bounds:1500x950',
+    'window:center'
+  ]);
+
   await Promise.all(fixture.dependencies.cleanups.map(cleanup => cleanup()));
   assert.deepEqual(fixture.calls.slice(-2), ['service:close', 'bridge:stop']);
+});
+
+test('shutdown destroys the window director before existing service and bridge cleanup', async () => {
+  const fixture = startFixture();
+  class RecordingWindowDirector {
+    showBoot() {
+      fixture.calls.push('director:show');
+      return Promise.resolve({mode: 'fullscreen'});
+    }
+    revealWorkbench() {
+      fixture.calls.push('director:reveal');
+      return Promise.resolve({mode: 'windowed'});
+    }
+    destroy() {
+      fixture.calls.push('director:destroy');
+    }
+  }
+  fixture.dependencies.WindowDirectorClass = RecordingWindowDirector;
+
+  const resources = await startWorkbench(fixture.dependencies);
+  await resources.initialization;
+  let quitCalls = 0;
+  fixture.app.quit = () => { quitCalls += 1; };
+  installCleanupHandler(fixture.app, fixture.dependencies.cleanups);
+  fixture.calls.length = 0;
+
+  let prevented = 0;
+  fixture.app.emit('before-quit', {preventDefault: () => { prevented += 1; }});
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(fixture.calls, [
+    'director:destroy',
+    'service:close',
+    'bridge:stop'
+  ]);
+  assert.equal(prevented, 1);
+  assert.equal(quitCalls, 1);
 });
 
 test('malformed readiness keeps the renderer open with a recoverable redacted state', async () => {
@@ -602,6 +674,8 @@ test('PATH discovery happens only after ready and runtime directory creation', a
     'service:listen',
     'window:create',
     'window:load:http://127.0.0.1:43210/',
+    'window:fullscreen:true',
+    'window:show',
     'codex:path',
     'codex:find:/resolved/codex'
   ]);

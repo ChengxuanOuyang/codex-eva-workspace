@@ -2,6 +2,7 @@
 
 function windowOptions(preloadPath) {
   return {
+    show: false,
     width: 1500,
     height: 950,
     minWidth: 1100,

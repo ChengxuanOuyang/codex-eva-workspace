@@ -5,6 +5,7 @@ const fsPromises = require('node:fs/promises');
 const path = require('node:path');
 const {findCodex} = require('./codex-discovery.cjs');
 const {runtimePaths} = require('./runtime-paths.cjs');
+const {WindowDirector} = require('./window-director.cjs');
 const {windowOptions} = require('./window-options.cjs');
 const {CodexBridge} = require('../workbench/bridge.cjs');
 const {WorkbenchRuntime} = require('../workbench/runtime.cjs');
@@ -394,6 +395,7 @@ async function startWorkbench({
   resolvePathCodex = executableOnPath,
   userPath = process.env.PROJECT_ZERO_CODEX_PATH,
   CodexBridgeClass = CodexBridge,
+  WindowDirectorClass = WindowDirector,
   serviceFactory = createWorkbenchService,
   bootRoot = path.join(__dirname, '..', 'renderer', 'boot'),
   sharedRoot = path.join(__dirname, '..', 'renderer', 'shared'),
@@ -433,9 +435,13 @@ async function startWorkbench({
   const runtime = new WorkbenchRuntime({coordinator, readiness, dataRoot});
   cleanups.unshift(() => runtime.close());
 
+  let windowDirector = null;
   const service = serviceFactory({
     snapshot: readiness.get,
     retryInitialization: () => runtime.retry(),
+    onPresentationComplete: () => windowDirector
+      ? windowDirector.revealWorkbench()
+      : Promise.resolve({mode: 'fallback'}),
     bootRoot,
     sharedRoot,
     workbenchRoot,
@@ -446,11 +452,23 @@ async function startWorkbench({
   const origin = `http://127.0.0.1:${address.port}`;
 
   const window = new BrowserWindow(windowOptions());
+  windowDirector = new WindowDirectorClass(window);
+  cleanups.unshift(() => windowDirector.destroy());
   restrictNavigation(window.webContents, origin);
   await window.loadURL(`${origin}/`);
+  await windowDirector.showBoot();
 
   const initialization = runtime.retry();
-  const resources = {service, window, origin, paths, initialization, retryInitialization: () => runtime.retry(), runtime};
+  const resources = {
+    service,
+    window,
+    windowDirector,
+    origin,
+    paths,
+    initialization,
+    retryInitialization: () => runtime.retry(),
+    runtime
+  };
   Object.defineProperty(resources, 'bridge', {
     enumerable: true,
     get: () => coordinator.bridge
