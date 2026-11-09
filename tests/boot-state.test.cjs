@@ -19,6 +19,15 @@ test('progress cannot pass 99.2 before backend readiness and confirmation', () =
   assert.deepEqual(state, {phase: 'completing', progress: 99.2, ready: true, confirmed: true});
 });
 
+test('READY and confirmation only change authorization state, never timeline progress', () => {
+  const atGate = {phase: 'syncing', progress: 99.2, ready: false, confirmed: false};
+  const ready = nextBootState(atGate, {type: 'ready'});
+  const confirmed = nextBootState(ready, {type: 'confirm'});
+
+  assert.deepEqual(ready, {phase: 'syncing', progress: 99.2, ready: true, confirmed: false});
+  assert.deepEqual(confirmed, {phase: 'completing', progress: 99.2, ready: true, confirmed: true});
+});
+
 test('skip atomically finishes presentation without fabricating readiness or confirmation', () => {
   const initial = {phase: 'syncing', progress: 20, ready: false, confirmed: false};
   const skipped = nextBootState(initial, {type: 'skip'});

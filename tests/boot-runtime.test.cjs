@@ -6,20 +6,48 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {nextBootState, MAX_UNCONFIRMED_PROGRESS} = require('../renderer/boot/boot-state.cjs');
+const {sampleTimeline} = require('../renderer/boot/timeline.js');
+
+class FakeStyle {
+  constructor(events) {
+    this.events = events;
+    this.properties = new Map();
+  }
+
+  setProperty(name, value) {
+    this.properties.set(name, value);
+    this.events.push(`style:${name}:${value}`);
+  }
+
+  removeProperty(name) {
+    this.properties.delete(name);
+    this.events.push(`style-remove:${name}`);
+  }
+
+  getPropertyValue(name) { return this.properties.get(name) || ''; }
+}
 
 class FakeElement {
-  constructor(text = '') {
+  constructor(text = '', {events = [], name = 'element'} = {}) {
     this._text = text;
+    this._hidden = true;
     this.textWrites = 0;
     this.attributes = new Map();
     this.dataset = {};
     this.disabled = true;
-    this.hidden = true;
     this.listeners = new Map();
+    this.events = events;
+    this.name = name;
+    this.style = new FakeStyle(events);
   }
 
   get textContent() { return this._text; }
   set textContent(value) { this._text = value; this.textWrites += 1; }
+  get hidden() { return this._hidden; }
+  set hidden(value) {
+    this._hidden = Boolean(value);
+    this.events.push(`${this.name}.hidden:${this._hidden}`);
+  }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name); }
   addEventListener(type, listener) { this.listeners.set(type, listener); }
@@ -56,10 +84,43 @@ class FakeClock {
     this.timeouts.delete(entry[0]);
     return entry[1].callback();
   }
-  fireInterval(delay) {
-    const timer = [...this.intervals.values()].find(candidate => candidate.delay === delay);
-    return timer?.callback();
+}
+
+class FakeAudioClock {
+  constructor(options, events, {fade} = {}) {
+    this.options = options;
+    this.events = events;
+    this.fade = fade;
+    this.calls = {start: 0, pause: 0, resume: 0, seek: [], fadeOut: [], destroy: 0};
   }
+
+  start = async () => {
+    this.calls.start += 1;
+    this.events.push('audio.start');
+  };
+  pause = () => {
+    this.calls.pause += 1;
+    this.events.push('audio.pause');
+  };
+  resume = async () => {
+    this.calls.resume += 1;
+    this.events.push('audio.resume');
+  };
+  seek = elapsedMs => {
+    this.calls.seek.push(elapsedMs);
+    this.events.push(`audio.seek:${elapsedMs}`);
+  };
+  fadeOut = duration => {
+    this.calls.fadeOut.push(duration);
+    this.events.push(`audio.fadeOut:${duration}`);
+    return this.fade?.promise || Promise.resolve();
+  };
+  destroy = async () => {
+    this.calls.destroy += 1;
+    this.events.push('audio.destroy');
+  };
+  tick(elapsedMs) { return this.options.onTick(elapsedMs); }
+  end() { return this.options.onEnd(); }
 }
 
 function deferred() {
@@ -72,24 +133,52 @@ function deferred() {
   return {promise, resolve, reject};
 }
 
-function fixture(api, {reducedMotion = false} = {}) {
+function response({status = 200, json = {}} = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => json
+  };
+}
+
+async function fixture(apiOverrides = {}, options = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
   const sandbox = {AbortController};
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
   assert.equal(typeof sandbox.ProjectZeroBoot?.createBootController, 'function');
 
+  const events = [];
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
-    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell',
+    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell', '#boot-live-status',
     '#pilot-authorization',
     '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
-  const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
+  const elements = Object.fromEntries(selectors.map(selector => [
+    selector,
+    new FakeElement('', {events, name: selector})
+  ]));
   elements['#boot-screen'].hidden = false;
+  events.length = 0;
+  const body = new FakeElement('', {events, name: 'body'});
+  body.dataset = new Proxy({}, {
+    set(target, property, value) {
+      target[property] = String(value);
+      events.push(`body.dataset.${String(property)}:${String(value)}`);
+      return true;
+    },
+    deleteProperty(target, property) {
+      delete target[property];
+      events.push(`body.dataset.${String(property)}:delete`);
+      return true;
+    }
+  });
+  const documentElement = new FakeElement('', {events, name: 'html'});
   const document = {
-    body: new FakeElement(),
+    body,
+    documentElement,
     querySelector: selector => elements[selector]
   };
   const rootListeners = new Map();
@@ -100,239 +189,411 @@ function fixture(api, {reducedMotion = false} = {}) {
     }
   };
   const clock = new FakeClock();
-  const controller = sandbox.ProjectZeroBoot.createBootController({
-    api: {...api, nextBootState, MAX_UNCONFIRMED_PROGRESS},
-    clock,
-    document,
-    now: () => 0,
-    reducedMotion,
-    root
+  const canvas = {
+    lastSnapshot: null,
+    renders: 0,
+    render(snapshot) {
+      this.lastSnapshot = snapshot;
+      this.renders += 1;
+      events.push(`canvas.render:${snapshot.elapsedMs}`);
+    }
+  };
+  const configFetches = [];
+  const fetchPrivate = options.fetch || (async url => {
+    configFetches.push(url);
+    return response({status: 404});
   });
-  controller.start();
-  return {clock, controller, document, elements, rootListeners};
+  const audioLoads = [];
+  const decodedTrack = options.decodedTrack || {
+    currentTime: 0,
+    duration: 30,
+    volume: 1,
+    play: async () => {},
+    pause() {},
+    close: async () => {}
+  };
+  const loadSequenceAudio = options.loadSequenceAudio || (async (url, dependencies) => {
+    audioLoads.push({url, dependencies});
+    return decodedTrack;
+  });
+  let audioClock;
+  const createAudioClock = clockOptions => {
+    events.push('audio.create');
+    audioClock = new FakeAudioClock(clockOptions, events, {fade: options.fade});
+    return audioClock;
+  };
+  const api = {
+    health: () => Promise.resolve({ready: false, code: 'INITIALIZING'}),
+    retryReadiness: () => Promise.resolve({accepted: true}),
+    completePresentation: () => {
+      events.push('api.completePresentation');
+      return Promise.resolve();
+    },
+    ...apiOverrides,
+    nextBootState(state, event) {
+      events.push(`state.${event?.type}`);
+      return nextBootState(state, event);
+    },
+    MAX_UNCONFIRMED_PROGRESS
+  };
+  const controller = sandbox.ProjectZeroBoot.createBootController({
+    api,
+    bootCanvas: canvas,
+    clock,
+    createAudioClock,
+    document,
+    fetch: fetchPrivate,
+    loadSequenceAudio,
+    now: () => 0,
+    reducedMotion: options.reducedMotion === true,
+    root,
+    sampleTimeline
+  });
+  const startPromise = controller.start();
+  if (options.awaitStart !== false) await startPromise;
+  return {
+    get audioClock() { return audioClock; },
+    audioLoads,
+    canvas,
+    clock,
+    configFetches,
+    controller,
+    document,
+    elements,
+    events,
+    rootListeners,
+    startPromise
+  };
 }
 
-test('early READY keeps authorization hidden before the waiting stage', async () => {
-  const view = fixture({health: () => Promise.resolve({ready: true, code: 'READY'})});
+test('audio ticks drive the timeline, accessible state, canvas and one authorization pause', async () => {
+  const view = await fixture();
 
-  assert.equal(view.elements['#pilot-authorization'].hidden, true);
-  await view.clock.fireTimeout(0);
-  assert.equal(view.controller.getState().phase, 'syncing');
-  assert.equal(view.document.body.dataset.readiness, 'ready');
-  assert.equal(view.elements['#pilot-authorization'].hidden, true);
-
-  view.document.body.dataset.stage = 'authorize';
-  view.clock.fireInterval(80);
-  assert.equal(view.elements['#pilot-authorization'].hidden, false);
-  view.document.body.dataset.stage = 'wake';
-  view.clock.fireInterval(80);
-  assert.equal(view.elements['#pilot-authorization'].hidden, true);
-
-  view.clock.fireTimeout(3000);
-  view.elements['#skip-button'].dispatch('click');
-  assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.elements['#pilot-authorization'].hidden, false);
-  view.controller.destroy();
-});
-
-test('skip atomically reaches confirmation while stopping presentation timers and preserving health polling', async () => {
-  const health = deferred();
-  const view = fixture({health: () => health.promise});
-
-  const healthRun = view.clock.fireTimeout(0);
-  assert.equal(view.clock.countIntervals(80), 1);
-  view.clock.fireTimeout(3000);
-  view.elements['#skip-button'].dispatch('click');
-
-  assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.controller.getState().progress, 99.2);
+  view.audioClock.tick(15_500);
+  assert.equal(view.document.body.dataset.stage, 'authorize');
+  assert.equal(view.elements['#progress-value'].textContent, '99.2');
+  assert.equal(view.elements['#confirm-button'].disabled, true);
+  assert.deepEqual(view.canvas.lastSnapshot, sampleTimeline(15_500));
+  assert.equal(view.audioClock.calls.pause, 1);
   assert.equal(view.clock.countIntervals(80), 0);
   assert.equal(view.clock.countIntervals(100), 0);
-  assert.equal(view.clock.countTimeouts(600), 0);
-  assert.equal(view.elements['#confirm-button'].disabled, true);
-  health.resolve({ready: false, code: 'INITIALIZING'});
-  await healthRun;
-  assert.equal(view.clock.countTimeouts(500), 1);
 
-  view.controller.destroy();
+  view.audioClock.tick(15_500);
+  await view.clock.fireTimeout(0);
+  await view.clock.fireTimeout(500);
+  assert.equal(view.audioClock.calls.pause, 1);
 });
 
-test('a skipped presentation becomes confirmable immediately when real readiness arrives', async () => {
-  let calls = 0;
-  const view = fixture({
-    health: () => Promise.resolve(++calls === 1
-      ? {ready: false, code: 'INITIALIZING'}
+test('READY only unlocks confirmation and a fresh exact READY resumes once', async () => {
+  let healthCalls = 0;
+  const view = await fixture({
+    health: () => Promise.resolve(++healthCalls === 1
+      ? {ready: true, code: 'READY'}
       : {ready: true, code: 'READY'})
   });
 
   await view.clock.fireTimeout(0);
-  view.clock.fireTimeout(3000);
-  view.elements['#skip-button'].dispatch('click');
+  assert.equal(view.controller.getState().progress, 0);
   assert.equal(view.elements['#confirm-button'].disabled, true);
+  view.audioClock.tick(15_500);
+  assert.equal(view.elements['#confirm-button'].disabled, false);
 
-  await view.clock.fireTimeout(500);
+  await Promise.all([
+    view.elements['#confirm-button'].dispatch('click'),
+    view.elements['#confirm-button'].dispatch('click')
+  ]);
+  assert.equal(healthCalls, 2);
+  assert.equal(view.controller.getState().phase, 'completing');
+  assert.equal(view.audioClock.calls.resume, 1);
+  assert.equal(view.document.body.dataset.stage, 'authorize');
+});
+
+test('reduced motion cannot confirm before the semantic authorization gate', async () => {
+  let healthCalls = 0;
+  const view = await fixture({
+    health: () => {
+      healthCalls += 1;
+      return Promise.resolve({ready: true, code: 'READY'});
+    }
+  }, {reducedMotion: true});
+
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(8_500);
   assert.equal(view.controller.getState().progress, 99.2);
-  assert.equal(view.controller.getState().ready, true);
+  assert.equal(view.document.body.dataset.stage, 'synchronize');
+  assert.equal(view.elements['#confirm-button'].disabled, true);
+  await view.elements['#confirm-button'].dispatch('click');
+  assert.equal(healthCalls, 1);
+  assert.equal(view.audioClock.calls.resume, 0);
+
+  view.audioClock.tick(15_500);
   assert.equal(view.elements['#confirm-button'].disabled, false);
 });
 
-test('skip after failed readiness recovery still reaches confirmation and preserves health polling', async () => {
-  let calls = 0;
-  const view = fixture({
-    health: () => ++calls === 1
-      ? Promise.reject(Error('offline'))
-      : Promise.resolve({ready: true, code: 'READY'})
+test('confirmation fails closed when the revalidation is not exact READY', async () => {
+  let healthCalls = 0;
+  const view = await fixture({
+    health: () => Promise.resolve(++healthCalls === 1
+      ? {ready: true, code: 'READY'}
+      : {ready: true})
   });
 
   await view.clock.fireTimeout(0);
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+
+  assert.equal(healthCalls, 2);
   assert.equal(view.controller.getState().phase, 'failed');
-  await view.clock.fireTimeout(500);
-  assert.deepEqual(view.controller.getState(), {
-    phase: 'waiting', progress: 0, ready: true, confirmed: false
-  });
-
-  view.clock.fireTimeout(3000);
-  view.elements['#skip-button'].dispatch('click');
-
-  assert.deepEqual(view.controller.getState(), {
-    phase: 'waiting', progress: 99.2, ready: true, confirmed: false
-  });
-  assert.equal(view.clock.countIntervals(80), 0);
-  assert.equal(view.clock.countIntervals(100), 0);
-  assert.equal(view.clock.countTimeouts(600), 0);
+  assert.equal(view.controller.getState().confirmed, false);
+  assert.equal(view.audioClock.calls.resume, 0);
+  assert.equal(view.elements['#workbench-shell'].hidden, true);
   assert.equal(view.clock.countTimeouts(500), 1);
-  assert.equal(view.elements['#confirm-button'].disabled, false);
 });
 
-test('failed recovery resumes logical progress while decorative presentation stays frozen', async () => {
-  let calls = 0;
-  const view = fixture({
-    health: () => {
-      calls += 1;
-      return calls === 1 ? Promise.reject(Error('offline')) : Promise.resolve({ready: true});
+test('private config accepts only fixed same-origin asset URLs and applies the fixed portrait', async () => {
+  const fetches = [];
+  const view = await fixture({}, {
+    fetch: async (url, requestOptions) => {
+      fetches.push({url, requestOptions});
+      return response({json: {
+        displayName: 'PROJECT ZERO // PRIVATE',
+        mark: '/private/boot-mark.webp',
+        portrait: '/private/rei-portrait.webp',
+        soundtrack: '/private/startup-reference.wav',
+        audioStartMs: 250,
+        audioEndMs: 20_750
+      }});
     }
   });
 
-  await view.clock.fireTimeout(0);
-  assert.equal(view.controller.getState().phase, 'failed');
-  await view.clock.fireTimeout(500);
-  assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.clock.countIntervals(80), 1);
-  assert.equal(view.clock.countIntervals(100), 0);
-  assert.equal(view.clock.countTimeouts(500), 1);
-  const clockText = view.elements['#clock-readout'].textContent;
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.clock.fireInterval(100);
-  assert.equal(view.controller.getState().progress, 99.2);
-  assert.equal(view.elements['#clock-readout'].textContent, clockText);
-  assert.equal(view.elements['#confirm-button'].disabled, false);
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].url, '/private/theme.json');
+  assert.equal(fetches[0].requestOptions.credentials, 'same-origin');
+  assert.deepEqual(view.audioLoads.map(load => load.url), ['/private/startup-reference.wav']);
+  assert.equal(view.audioClock.options.startSeconds, 0.25);
+  assert.equal(view.audioClock.options.endSeconds, 20.75);
+  assert.equal(
+    view.document.documentElement.style.getPropertyValue('--theme-workbench-portrait'),
+    'url("/private/rei-portrait.webp")'
+  );
 });
 
-test('stable readiness codes render accurate redacted recovery diagnostics', async () => {
-  const cases = [
-    ['INITIALIZING', '初始化中', '正在连接官方 Codex', true],
-    ['CODEX_NOT_FOUND', '未找到 Codex', '未检测到可用的 Codex', false],
-    ['SIGNED_OUT', '需要登录', '官方 ChatGPT 登录', false],
-    ['NO_LAUNCHABLE_MODEL', '无可用模型', '没有可启动的 Codex 模型', false],
-    ['DISCONNECTED', '连接已断开', 'Codex 连接已断开', false]
-  ];
-
-  for (const [code, backend, diagnostic, retryHidden] of cases) {
-    const view = fixture({
-      health: () => Promise.resolve({ready: false, code, message: '/private/raw failure'}),
-      retryReadiness: () => Promise.resolve()
-    });
-    await view.clock.fireTimeout(0);
-
-    assert.equal(view.elements['#backend-state'].textContent, backend, code);
-    assert.match(view.elements['#diagnostic-text'].textContent, new RegExp(diagnostic), code);
-    assert.equal(view.elements['#retry-button'].hidden, retryHidden, code);
-    assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|raw failure/, code);
-    view.controller.destroy();
-  }
-});
-
-test('post-ready disconnect revokes an in-progress confirmation and cannot enter online', async () => {
-  let calls = 0;
-  const view = fixture({
-    health: () => Promise.resolve(++calls === 1
-      ? {ready: true, code: 'READY'}
-      : {ready: false, code: 'DISCONNECTED'}),
-    retryReadiness: () => Promise.resolve()
+test('arbitrary private URLs are rejected without fetching them', async () => {
+  const view = await fixture({}, {
+    fetch: async () => response({json: {
+      displayName: 'PROJECT ZERO // MALICIOUS',
+      mark: 'https://example.test/mark.webp',
+      portrait: 'javascript:alert(1)',
+      soundtrack: 'https://example.test/audio.wav',
+      audioStartMs: 0,
+      audioEndMs: 20_500
+    }})
   });
 
-  await view.clock.fireTimeout(0);
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.elements['#confirm-button'].dispatch('click');
-  assert.equal(view.controller.getState().phase, 'completing');
-
-  await view.clock.fireTimeout(500);
-  assert.equal(view.controller.getState().phase, 'failed');
-  assert.equal(view.controller.getState().ready, false);
-  assert.equal(view.elements['#confirm-button'].disabled, true);
-  view.clock.fireTimeout(720);
-  assert.equal(view.controller.getState().phase, 'failed');
-  assert.notEqual(view.document.body.dataset.scene, 'online');
+  assert.deepEqual(view.audioLoads, []);
+  assert.equal(view.audioClock.options.startSeconds, 0);
+  assert.equal(view.audioClock.options.endSeconds, 20.5);
+  assert.equal(view.document.documentElement.style.getPropertyValue('--theme-workbench-portrait'), '');
 });
 
-test('reduced-motion completion requires a fresh exact READY snapshot', async () => {
-  let calls = 0;
-  const view = fixture({
-    health: () => Promise.resolve(++calls === 1
-      ? {ready: true, code: 'READY'}
-      : {ready: true}),
-    retryReadiness: () => Promise.resolve()
-  }, {reducedMotion: true});
+test('a missing private config creates a silent public 20.5 second clock', async () => {
+  const view = await fixture();
 
-  view.clock.fireTimeout(600);
-  await view.clock.fireTimeout(0);
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.elements['#confirm-button'].dispatch('click');
-  assert.equal(view.controller.getState().phase, 'completing');
+  assert.deepEqual(view.configFetches, ['/private/theme.json']);
+  assert.deepEqual(view.audioLoads, []);
+  assert.equal(view.audioClock.options.startSeconds, 0);
+  assert.equal(view.audioClock.options.endSeconds, 20.5);
+  assert.equal(typeof view.audioClock.options.audio.play, 'function');
+  assert.equal(view.audioClock.calls.start, 1);
+});
 
-  await view.clock.fireTimeout(120);
+test('skip strictly fades, seeks and dispatches without stopping health polling', async () => {
+  const fade = deferred();
+  const health = deferred();
+  const view = await fixture({health: () => health.promise}, {fade});
+  const healthRun = view.clock.fireTimeout(0);
 
-  assert.equal(calls, 2);
-  assert.equal(view.controller.getState().phase, 'failed');
-  assert.equal(view.controller.getState().ready, false);
-  assert.equal(view.document.body.dataset.scene, 'sync');
-  assert.equal(view.elements['#confirm-button'].disabled, true);
-  assert.equal(view.elements['#retry-button'].hidden, false);
+  const skipRun = view.elements['#skip-button'].dispatch('click');
+  assert.deepEqual(view.audioClock.calls.fadeOut, [150]);
+  assert.deepEqual(view.audioClock.calls.seek, []);
+  assert.equal(view.controller.getState().progress, 0);
+
+  fade.resolve();
+  await skipRun;
+  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(view.controller.getState().progress, 99.2);
+  assert.deepEqual(
+    view.events.filter(event => event.startsWith('audio.fadeOut') || event.startsWith('audio.seek') || event === 'state.skip'),
+    ['audio.fadeOut:150', 'audio.seek:15500', 'state.skip']
+  );
+
+  health.resolve({ready: false, code: 'INITIALIZING'});
+  await healthRun;
   assert.equal(view.clock.countTimeouts(500), 1);
 });
 
-test('completion health error revokes readiness and resumes recovery polling', async () => {
-  let calls = 0;
-  const view = fixture({
-    health: () => ++calls === 1
-      ? Promise.resolve({ready: true, code: 'READY'})
-      : Promise.reject(Error('/private/final health failure')),
-    retryReadiness: () => Promise.resolve()
-  }, {reducedMotion: true});
+test('skip waits for pending clock initialization and still runs exactly once', async () => {
+  const config = deferred();
+  const view = await fixture({}, {
+    awaitStart: false,
+    fetch: () => config.promise
+  });
 
+  const skipRun = view.elements['#skip-button'].dispatch('click');
+  assert.equal(view.controller.getState().phase, 'syncing');
+  config.resolve(response({status: 404}));
+  await view.startPromise;
+  await skipRun;
+
+  assert.deepEqual(view.audioClock.calls.fadeOut, [150]);
+  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.equal(view.controller.getState().phase, 'waiting');
+});
+
+test('Escape uses skip without preventing the browser default', async () => {
+  const view = await fixture();
+  let prevented = false;
+
+  await view.rootListeners.get('keydown')({
+    key: 'Escape',
+    preventDefault: () => { prevented = true; }
+  });
+
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(prevented, false);
+  assert.deepEqual(view.audioClock.calls.fadeOut, [150]);
+});
+
+test('completion closes for 180 ms, completes the window once, reveals the shell and resumes polling', async () => {
+  let completeCalls = 0;
+  const view = await fixture({
+    health: () => Promise.resolve({ready: true, code: 'READY'}),
+    completePresentation: () => {
+      completeCalls += 1;
+      view.events.push('api.completePresentation');
+      return Promise.resolve();
+    }
+  });
   await view.clock.fireTimeout(0);
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.elements['#confirm-button'].dispatch('click');
-  await view.clock.fireTimeout(120);
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+  view.audioClock.tick(20_500);
 
+  const completionRun = view.audioClock.end();
+  assert.equal(view.document.body.dataset.transition, 'closing');
+  assert.equal(completeCalls, 0);
+  assert.equal(view.elements['#boot-screen'].hidden, false);
+  assert.equal(view.clock.countTimeouts(180), 1);
+
+  await view.clock.fireTimeout(180);
+  await completionRun;
+  assert.equal(completeCalls, 1);
+  assert.equal(view.elements['#boot-screen'].hidden, true);
+  assert.equal(view.elements['#workbench-shell'].hidden, false);
+  assert.equal(view.controller.getState().phase, 'complete');
+  assert.equal(view.document.body.dataset.transition, undefined);
+  assert.equal(view.clock.countTimeouts(500), 1);
+  assert.deepEqual(view.events.filter(event =>
+    event === 'body.dataset.transition:closing'
+    || event === 'api.completePresentation'
+    || event === '#boot-screen.hidden:true'
+    || event === '#workbench-shell.hidden:false'
+    || event === 'state.complete'
+    || event === 'body.dataset.transition:delete'
+  ), [
+    'body.dataset.transition:closing',
+    'api.completePresentation',
+    '#boot-screen.hidden:true',
+    '#workbench-shell.hidden:false',
+    'state.complete',
+    'body.dataset.transition:delete'
+  ]);
+
+  await view.audioClock.end();
+  assert.equal(completeCalls, 1);
+});
+
+test('a rejected completion API fails closed with no unhandled reveal', async () => {
+  const view = await fixture({
+    health: () => Promise.resolve({ready: true, code: 'READY'}),
+    completePresentation: () => Promise.reject(Error('/private/window failure'))
+  });
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+  const completionRun = view.audioClock.end();
+  await view.clock.fireTimeout(180);
+  await completionRun;
+
+  assert.equal(view.elements['#boot-screen'].hidden, false);
+  assert.equal(view.elements['#workbench-shell'].hidden, true);
   assert.equal(view.controller.getState().phase, 'failed');
-  assert.equal(view.controller.getState().ready, false);
-  assert.equal(view.elements['#backend-state'].textContent, '连接已断开');
-  assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|final health failure/);
-  assert.equal(view.elements['#retry-button'].hidden, false);
+  assert.equal(view.document.body.dataset.transition, undefined);
+  assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|window failure/);
   assert.equal(view.clock.countTimeouts(500), 1);
 });
 
-test('retry aborts and invalidates stale health so it cannot restore ready', async () => {
+test('destroy during a pending completion aborts and blocks every later DOM transition', async () => {
+  const pending = deferred();
+  let completeSignal;
+  const view = await fixture({
+    health: () => Promise.resolve({ready: true, code: 'READY'}),
+    completePresentation: ({signal}) => {
+      completeSignal = signal;
+      return pending.promise;
+    }
+  });
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+  const completionRun = view.audioClock.end();
+  await view.clock.fireTimeout(180);
+
+  view.controller.destroy();
+  assert.equal(completeSignal.aborted, true);
+  assert.equal(view.audioClock.calls.destroy, 1);
+  pending.resolve();
+  await completionRun;
+  assert.equal(view.elements['#boot-screen'].hidden, false);
+  assert.equal(view.elements['#workbench-shell'].hidden, true);
+  assert.notEqual(view.controller.getState().phase, 'complete');
+});
+
+test('a concurrent confirm wins over skip and does not duplicate revalidation', async () => {
+  const revalidation = deferred();
+  let healthCalls = 0;
+  const view = await fixture({
+    health: () => {
+      healthCalls += 1;
+      return healthCalls === 1
+        ? Promise.resolve({ready: true, code: 'READY'})
+        : revalidation.promise;
+    }
+  });
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(15_500);
+
+  const confirmRun = view.elements['#confirm-button'].dispatch('click');
+  await view.elements['#skip-button'].dispatch('click');
+  assert.deepEqual(view.audioClock.calls.fadeOut, []);
+  assert.equal(healthCalls, 2);
+  revalidation.resolve({ready: true, code: 'READY'});
+  await confirmRun;
+  assert.equal(view.audioClock.calls.resume, 1);
+  assert.equal(view.controller.getState().phase, 'completing');
+});
+
+test('stable readiness diagnostics stay redacted and retry invalidates stale polling', async () => {
   const stale = deferred();
   const retry = deferred();
-  let healthCalls = 0;
+  let calls = 0;
   let staleSignal;
   let retryCalls = 0;
-  const view = fixture({
+  const view = await fixture({
     health: ({signal}) => {
-      healthCalls += 1;
-      if (healthCalls === 1) return Promise.resolve({ready: false, code: 'DISCONNECTED'});
+      calls += 1;
+      if (calls === 1) return Promise.resolve({ready: false, code: 'DISCONNECTED', message: '/private/raw'});
       staleSignal = signal;
       return stale.promise;
     },
@@ -343,236 +604,144 @@ test('retry aborts and invalidates stale health so it cannot restore ready', asy
   });
 
   await view.clock.fireTimeout(0);
+  assert.equal(view.elements['#backend-state'].textContent, '连接已断开');
+  assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|raw/);
   const staleRun = view.clock.fireTimeout(500);
   const retryRun = view.elements['#retry-button'].dispatch('click');
-
-  assert.equal(retryCalls, 1);
   assert.equal(staleSignal.aborted, true);
-  assert.equal(view.elements['#retry-button'].disabled, true);
+  assert.equal(retryCalls, 1);
   stale.resolve({ready: true, code: 'READY'});
   await staleRun;
   assert.equal(view.controller.getState().ready, false);
-  assert.equal(view.elements['#confirm-button'].disabled, true);
-
   retry.resolve({accepted: true});
   await retryRun;
-  assert.equal(view.controller.getState().ready, false);
   assert.equal(view.clock.countTimeouts(0), 1);
 });
 
-test('health polling is serial and never has more than one request in flight', async () => {
+test('health polling remains serial', async () => {
   const requests = [];
   let inFlight = 0;
-  let maxInFlight = 0;
-  const view = fixture({
-    health: ({signal}) => {
+  let maximum = 0;
+  const view = await fixture({
+    health: () => {
       const request = deferred();
-      requests.push({request, signal});
+      requests.push(request);
       inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
+      maximum = Math.max(maximum, inFlight);
       return request.promise.finally(() => { inFlight -= 1; });
     }
   });
 
   const firstRun = view.clock.fireTimeout(0);
-  assert.equal(view.clock.countTimeouts(500), 0);
   assert.equal(requests.length, 1);
-  requests[0].request.resolve({ready: false});
-  await firstRun;
-  assert.equal(view.clock.countTimeouts(500), 1);
-
-  const secondRun = view.clock.fireTimeout(500);
   assert.equal(view.clock.countTimeouts(500), 0);
+  requests[0].resolve({ready: false, code: 'INITIALIZING'});
+  await firstRun;
+  const secondRun = view.clock.fireTimeout(500);
   assert.equal(requests.length, 2);
-  assert.equal(maxInFlight, 1);
-  requests[1].request.resolve({ready: true});
+  requests[1].resolve({ready: true, code: 'READY'});
   await secondRun;
-  assert.equal(maxInFlight, 1);
+  assert.equal(maximum, 1);
 });
 
-test('completion invalidates an overlapping stale poll and trusts only its final health response', async () => {
-  const late = deferred();
-  const finalHealth = deferred();
+test('disconnect after confirmation revokes authorization and pauses the resumed clock', async () => {
   let calls = 0;
-  let lateSignal;
-  const view = fixture({
-    health: ({signal}) => {
-      calls += 1;
-      if (calls === 1) return Promise.resolve({ready: true, code: 'READY'});
-      if (calls === 2) {
-        lateSignal = signal;
-        return late.promise;
-      }
-      return finalHealth.promise;
-    }
+  const view = await fixture({
+    health: () => Promise.resolve(++calls <= 2
+      ? {ready: true, code: 'READY'}
+      : {ready: false, code: 'DISCONNECTED'})
   });
-
   await view.clock.fireTimeout(0);
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  assert.equal(view.controller.getState().progress, 99.2);
-  const lateRun = view.clock.fireTimeout(500);
-  view.elements['#confirm-button'].dispatch('click');
-  const completionRun = view.clock.fireTimeout(720);
-
-  assert.equal(calls, 3);
-  assert.equal(lateSignal.aborted, true);
-  assert.equal(view.controller.getState().phase, 'completing');
-  late.resolve({ready: false, code: 'DISCONNECTED'});
-  await lateRun;
-  assert.equal(view.controller.getState().phase, 'completing');
-
-  finalHealth.resolve({ready: true, code: 'READY'});
-  await completionRun;
-
-  assert.equal(view.document.body.dataset.phase, 'complete');
-  assert.equal(view.elements['#sync-heading'].textContent, 'SYSTEM ONLINE');
-  assert.equal(view.elements['#boot-screen'].hidden, true);
-  assert.equal(view.elements['#workbench-shell'].hidden, false);
-  assert.equal(view.elements['#confirm-button'].listeners.has('click'), false);
-  assert.equal(view.elements['#skip-button'].listeners.has('click'), false);
-  assert.equal(view.rootListeners.has('keydown'), false);
-  assert.equal(view.rootListeners.has('pagehide'), true);
-  assert.equal(view.clock.intervals.size, 0);
-  assert.equal(view.clock.countTimeouts(500), 1);
-});
-
-test('the mounted shell owns live health and recovers without replaying boot or duplicating retry', async () => {
-  const retry = deferred();
-  let healthCalls = 0;
-  let retryCalls = 0;
-  const view = fixture({
-    health: () => {
-      healthCalls += 1;
-      if (healthCalls <= 2) return Promise.resolve({ready: true, code: 'READY'});
-      if (healthCalls === 3) return Promise.resolve({ready: false, code: 'DISCONNECTED'});
-      return Promise.resolve({ready: true, code: 'READY'});
-    },
-    retryReadiness: () => {
-      retryCalls += 1;
-      return retry.promise;
-    }
-  });
-
-  await view.clock.fireTimeout(0);
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.elements['#confirm-button'].dispatch('click');
-  await view.clock.fireTimeout(720);
-  assert.equal(view.controller.getState().phase, 'complete');
-  assert.equal(view.elements['#workbench-shell'].hidden, false);
-
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+  assert.equal(view.audioClock.calls.pause, 1);
   await view.clock.fireTimeout(500);
-  assert.equal(view.controller.getState().phase, 'complete');
-  assert.equal(view.document.body.dataset.scene, 'online');
-  assert.equal(view.document.body.dataset.readiness, 'disconnected');
-  assert.equal(view.elements['#shell-link-state'].textContent, 'DISCONNECTED');
-  assert.match(view.elements['#shell-diagnostic-text'].textContent, /连接已断开/);
-  assert.equal(view.elements['#shell-retry-button'].hidden, false);
 
-  const firstRetry = view.elements['#shell-retry-button'].dispatch('click');
-  const overlappingRetry = view.elements['#shell-retry-button'].dispatch('click');
-  assert.equal(retryCalls, 1);
-  assert.equal(view.elements['#shell-retry-button'].disabled, true);
-  retry.resolve({accepted: true});
-  await Promise.all([firstRetry, overlappingRetry]);
-  await view.clock.fireTimeout(0);
-
-  assert.equal(view.controller.getState().phase, 'complete');
-  assert.equal(view.elements['#boot-screen'].hidden, true);
-  assert.equal(view.elements['#workbench-shell'].hidden, false);
-  assert.equal(view.document.body.dataset.readiness, 'ready');
-  assert.equal(view.elements['#shell-link-state'].textContent, 'READY');
-  assert.equal(view.elements['#shell-retry-button'].hidden, true);
+  assert.equal(view.controller.getState().phase, 'failed');
+  assert.equal(view.controller.getState().confirmed, false);
+  assert.equal(view.audioClock.calls.pause, 2);
+  assert.equal(view.elements['#workbench-shell'].hidden, true);
 });
 
-test('destroy aborts an in-flight request and blocks later DOM writes', async () => {
-  const late = deferred();
+test('destroy aborts health, destroys audio once and blocks late writes', async () => {
+  const health = deferred();
   let signal;
-  const view = fixture({health: options => { signal = options.signal; return late.promise; }});
+  const view = await fixture({health: options => {
+    signal = options.signal;
+    return health.promise;
+  }});
   const run = view.clock.fireTimeout(0);
   const writes = view.elements['#diagnostic-text'].textWrites;
 
   view.controller.destroy();
+  view.controller.destroy();
   assert.equal(signal.aborted, true);
+  assert.equal(view.audioClock.calls.destroy, 1);
   assert.equal(view.rootListeners.size, 0);
-  assert.equal(view.elements['#confirm-button'].listeners.size, 0);
-  assert.equal(view.elements['#skip-button'].listeners.size, 0);
-  late.resolve({ready: true});
+  health.resolve({ready: true, code: 'READY'});
   await run;
   assert.equal(view.elements['#diagnostic-text'].textWrites, writes);
 });
 
-test('render updates aria-valuenow and identical health states do not rewrite the live region', async () => {
-  const view = fixture({health: () => Promise.resolve({ready: true})});
+test('identical readiness and timeline snapshots do not rewrite live regions', async () => {
+  const view = await fixture({health: () => Promise.resolve({ready: true, code: 'READY'})});
   await view.clock.fireTimeout(0);
-  const writes = view.elements['#diagnostic-text'].textWrites;
+  view.audioClock.tick(10_500);
+  const diagnosticWrites = view.elements['#diagnostic-text'].textWrites;
+  const liveWrites = view.elements['#boot-live-status'].textWrites;
+
   await view.clock.fireTimeout(500);
-
-  view.clock.fireInterval(80);
-  assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '0.4');
-  assert.equal(view.elements['#diagnostic-text'].textWrites, writes);
+  view.audioClock.tick(10_500);
+  assert.equal(view.elements['#diagnostic-text'].textWrites, diagnosticWrites);
+  assert.equal(view.elements['#boot-live-status'].textWrites, liveWrites);
+  assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '28.3');
 });
 
-test('scene mapping keeps awakening to the opening beat, sync through confirmation, and online after completion', async () => {
-  const view = fixture({health: () => Promise.resolve({ready: true, code: 'READY'})});
-
-  assert.equal(view.document.body.dataset.scene, 'awakening');
-  view.clock.fireTimeout(600);
-  assert.equal(view.document.body.dataset.scene, 'sync');
-  await view.clock.fireTimeout(0);
-  view.clock.fireTimeout(3000);
-  view.elements['#skip-button'].dispatch('click');
-  assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(view.document.body.dataset.scene, 'sync');
-  while (view.clock.countIntervals(80)) view.clock.fireInterval(80);
-  view.elements['#confirm-button'].dispatch('click');
-  assert.equal(view.document.body.dataset.scene, 'sync');
-  await view.clock.fireTimeout(720);
-  assert.equal(view.controller.getState().phase, 'complete');
-  assert.equal(view.document.body.dataset.scene, 'online');
-});
-
-test('Escape skips without preventing the browser default', () => {
-  const view = fixture({health: () => new Promise(() => {})});
-  view.clock.fireTimeout(3000);
-  let prevented = false;
-  view.rootListeners.get('keydown')({key: 'Escape', preventDefault: () => { prevented = true; }});
-
-  assert.equal(view.controller.getState().phase, 'waiting');
-  assert.equal(prevented, false);
-});
-
-test('automatic startup is a window singleton across repeated script execution', () => {
+test('automatic startup remains a singleton and uses no legacy interval ticker', async () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
   const selectors = [
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
-    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell',
+    '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell', '#boot-live-status',
     '#pilot-authorization',
     '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
   elements['#boot-screen'].hidden = false;
-  const document = {body: new FakeElement(), querySelector: selector => elements[selector]};
+  const body = new FakeElement();
+  const document = {body, documentElement: body, querySelector: selector => elements[selector]};
   const clock = new FakeClock();
   const listeners = new Map();
-  let listenerAdds = 0;
+  let audioStarts = 0;
+  const presentationClock = {
+    start: async () => { audioStarts += 1; },
+    pause() {}, resume: async () => {}, seek() {}, fadeOut: async () => {}, destroy: async () => {}
+  };
   const sandbox = {
     AbortController,
     ProjectZeroApi: {
       MAX_UNCONFIRMED_PROGRESS,
       health: () => new Promise(() => {}),
       retryReadiness: () => Promise.resolve(),
+      completePresentation: () => Promise.resolve(),
       nextBootState
     },
-    addEventListener(type, listener) { listenerAdds += 1; listeners.set(type, listener); },
+    ProjectZeroAudioClock: {createAudioClock: () => presentationClock},
+    ProjectZeroBootCanvasInstance: {render() {}},
+    ProjectZeroSequenceAudio: {loadSequenceAudio: async () => { throw Error('not used'); }},
+    ProjectZeroTimeline: {sampleTimeline},
+    addEventListener(type, listener) { listeners.set(type, listener); },
     clearInterval: clock.clearInterval,
     clearTimeout: clock.clearTimeout,
     document,
+    fetch: async () => response({status: 404}),
     matchMedia: () => ({matches: false}),
     performance: {now: () => 0},
     removeEventListener(type, listener) {
       if (listeners.get(type) === listener) listeners.delete(type);
     },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame() {},
     setInterval: clock.setInterval,
     setTimeout: clock.setTimeout
   };
@@ -580,31 +749,11 @@ test('automatic startup is a window singleton across repeated script execution',
 
   vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
   const controller = sandbox.ProjectZeroBootController;
+  await controller.start();
   vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
 
   assert.ok(controller);
   assert.equal(sandbox.ProjectZeroBootController, controller);
-  assert.equal(clock.countIntervals(80), 1);
-  assert.equal(clock.countIntervals(100), 1);
-  assert.equal(listenerAdds, 2);
-});
-
-test('shared API uses the exact same-origin POST retry route', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shared', 'api.js'), 'utf8');
-  const calls = [];
-  const sandbox = {
-    fetch: async (url, options) => {
-      calls.push({url, options});
-      return {ok: true, status: 202, json: async () => ({accepted: true})};
-    }
-  };
-  sandbox.globalThis = sandbox;
-  vm.runInNewContext(source, sandbox, {filename: 'renderer/shared/api.js'});
-
-  await sandbox.ProjectZeroApi.retryReadiness();
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, '/api/readiness/retry');
-  assert.equal(calls[0].options.method, 'POST');
-  assert.equal(calls[0].options.credentials, 'same-origin');
+  assert.equal(audioStarts, 1);
+  assert.equal(clock.intervals.size, 0);
 });

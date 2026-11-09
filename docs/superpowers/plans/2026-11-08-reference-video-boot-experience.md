@@ -576,7 +576,7 @@ git commit -m "feat: recreate the NERV boot presentation"
 覆盖以下精确行为：
 
 ```js
-assert.equal(view.document.body.dataset.stage, 'synchronize');
+assert.equal(view.document.body.dataset.stage, 'authorize');
 assert.equal(view.elements['#progress-value'].textContent, '99.2');
 assert.equal(view.elements['#confirm-button'].disabled, true);
 assert.deepEqual(view.canvas.lastSnapshot, sampleTimeline(15_500));

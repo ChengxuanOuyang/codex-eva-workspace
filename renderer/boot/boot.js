@@ -1,6 +1,56 @@
 'use strict';
 
 (function installProjectZeroBoot(root) {
+  const PRIVATE_THEME_URL = '/private/theme.json';
+  const PRIVATE_MARK_URL = '/private/boot-mark.webp';
+  const PRIVATE_PORTRAIT_URL = '/private/rei-portrait.webp';
+  const PRIVATE_SOUNDTRACK_URLS = new Set([
+    '/private/startup-reference.wav',
+    '/private/startup-reference.m4a'
+  ]);
+  const AUTHORIZATION_MS = 15_500;
+  const PRESENTATION_END_MS = 20_500;
+  const PRIVATE_THEME_FIELDS = Object.freeze([
+    'audioEndMs',
+    'audioStartMs',
+    'displayName',
+    'mark',
+    'portrait',
+    'soundtrack'
+  ]);
+  const PUBLIC_PRESENTATION = Object.freeze({
+    audio: null,
+    audioStartMs: 0,
+    audioEndMs: PRESENTATION_END_MS,
+    portrait: null
+  });
+  const STAGE_TEXT = Object.freeze({
+    wake: Object.freeze({
+      heading: '系统唤醒',
+      caption: '正在初始化本地启动序列',
+      live: '系统唤醒阶段。'
+    }),
+    scan: Object.freeze({
+      heading: '系统扫描',
+      caption: '正在检查本地工作台组件',
+      live: '系统扫描阶段。'
+    }),
+    synchronize: Object.freeze({
+      heading: '系统同步中',
+      caption: '正在建立本地工作台链路',
+      live: '同步进度正在推进。'
+    }),
+    authorize: Object.freeze({
+      heading: '等待用户确认',
+      caption: '同步锁定在 99.2%',
+      live: '同步已到达 99.2%，等待后端就绪和用户确认。'
+    }),
+    connect: Object.freeze({
+      heading: '正在完成同步',
+      caption: '正在连接本地工作台',
+      live: '用户确认已记录，正在完成连接。'
+    })
+  });
   const READINESS_DETAILS = Object.freeze({
     INITIALIZING: Object.freeze({
       backend: '初始化中',
@@ -30,9 +80,22 @@
     READY: Object.freeze({backend: '已就绪', retry: false})
   });
 
-  function createBootController({api, clock, document, now, reducedMotion, forceFullPlayback = false, volume = 0.65, root: eventRoot}) {
+  function createBootController({
+    api,
+    bootCanvas = root.ProjectZeroBootCanvasInstance,
+    clock,
+    createAudioClock = root.ProjectZeroAudioClock?.createAudioClock,
+    document,
+    fetch: fetchPrivate = typeof root.fetch === 'function' ? root.fetch.bind(root) : undefined,
+    loadSequenceAudio = root.ProjectZeroSequenceAudio?.loadSequenceAudio,
+    now,
+    reducedMotion,
+    sampleTimeline = root.ProjectZeroTimeline?.sampleTimeline,
+    forceFullPlayback = false,
+    volume = 0.65,
+    root: eventRoot
+  }) {
     const circumference = 2 * Math.PI * 132;
-    const startedAt = now();
     const elements = {
       backend: document.querySelector('#backend-state'),
       authorization: document.querySelector('#pilot-authorization'),
@@ -41,6 +104,7 @@
       confirm: document.querySelector('#confirm-button'),
       diagnostic: document.querySelector('#diagnostic-text'),
       heading: document.querySelector('#sync-heading'),
+      live: document.querySelector('#boot-live-status'),
       progress: document.querySelector('#progress-value'),
       progressbar: document.querySelector('#ring-progress'),
       retry: document.querySelector('#retry-button'),
@@ -54,119 +118,200 @@
       shellRetry: document.querySelector('#shell-retry-button')
     };
     let state = {phase: 'syncing', progress: 0, ready: false, confirmed: false};
+    let currentSnapshot;
     let started = false;
     let destroyed = false;
-    let skipAvailable = false;
     let healthGeneration = 0;
     let healthController;
     let retryController;
+    let completionController;
     let retryInFlight = false;
+    let confirmationInFlight = false;
+    let skipInFlight = false;
+    let completionInFlight = false;
+    let gatePaused = false;
     let healthTimer;
-    let tickTimer;
-    let clockTimer;
-    let skipTimer;
-    let completeTimer;
-    let awakeningTimer;
-    let opening = true;
+    let transitionTimer;
+    let transitionResolve;
     let readinessCode = 'INITIALIZING';
-    let previousScene;
-
-    function playCue(name) {
-      if (typeof eventRoot.Audio !== 'function' || volume <= 0) return;
-      try {
-        const audio = new eventRoot.Audio(`/audio/${name}.wav`);
-        audio.volume = Math.max(0, Math.min(1, volume));
-        void audio.play().catch(() => {});
-      } catch {}
-    }
+    let audioClock;
+    let presentationPromise;
 
     function setText(element, value) {
-      if (!destroyed && element.textContent !== value) element.textContent = value;
+      if (!destroyed && element && element.textContent !== value) element.textContent = value;
     }
 
-    function stopTicker() {
-      if (tickTimer === undefined) return;
-      clock.clearInterval(tickTimer);
-      tickTimer = undefined;
+    function normalizedVolume() {
+      const numeric = Number(volume);
+      return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : 0.65;
     }
 
-    function freezePresentation() {
-      if (clockTimer !== undefined) clock.clearInterval(clockTimer);
-      clockTimer = undefined;
+    function silentTrack() {
+      let currentTime = 0;
+      let trackVolume = normalizedVolume();
+      const track = {
+        play: () => Promise.reject(new Error('SILENT_PRESENTATION_CLOCK')),
+        pause() {},
+        close: () => Promise.resolve()
+      };
+      Object.defineProperties(track, {
+        currentTime: {
+          enumerable: true,
+          get: () => currentTime,
+          set: value => { currentTime = Number.isFinite(value) ? Math.max(0, value) : 0; }
+        },
+        volume: {
+          enumerable: true,
+          get: () => trackVolume,
+          set: value => {
+            trackVolume = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : trackVolume;
+          }
+        }
+      });
+      return track;
     }
 
-    function stopPresentation() {
-      stopTicker();
-      freezePresentation();
-      if (skipTimer !== undefined) clock.clearTimeout(skipTimer);
-      skipTimer = undefined;
-      if (awakeningTimer !== undefined) clock.clearTimeout(awakeningTimer);
-      awakeningTimer = undefined;
-    }
-
-    function stopHealth() {
-      healthGeneration += 1;
-      if (healthTimer !== undefined) clock.clearTimeout(healthTimer);
-      healthTimer = undefined;
-      healthController?.abort();
-      healthController = undefined;
-    }
-
-    function render() {
-      if (destroyed) return;
-      const progress = Math.max(0, Math.min(100, state.progress));
-      document.body.dataset.phase = state.phase;
-      elements.authorization.hidden = !(state.phase === 'waiting'
-        || (state.phase === 'syncing' && document.body.dataset.stage === 'authorize'));
-      const scene = state.phase === 'complete' ? 'online' : opening ? 'awakening' : 'sync';
-      document.body.dataset.scene = scene;
-      if (scene !== previousScene) {
-        previousScene = scene;
-        playCue(scene === 'awakening' ? 'system-awake' : scene === 'sync' ? 'sync-start' : 'system-online');
+    function normalizePrivateTheme(theme) {
+      if (!theme || typeof theme !== 'object' || Array.isArray(theme)) return PUBLIC_PRESENTATION;
+      const fields = Object.keys(theme).sort();
+      if (fields.length !== PRIVATE_THEME_FIELDS.length
+        || fields.some((field, index) => field !== PRIVATE_THEME_FIELDS[index])) {
+        return PUBLIC_PRESENTATION;
       }
-      setText(elements.progress, progress.toFixed(1).padStart(4, '0'));
+      if (typeof theme.displayName !== 'string'
+        || theme.mark !== PRIVATE_MARK_URL
+        || theme.portrait !== PRIVATE_PORTRAIT_URL
+        || !PRIVATE_SOUNDTRACK_URLS.has(theme.soundtrack)
+        || !Number.isSafeInteger(theme.audioStartMs)
+        || !Number.isSafeInteger(theme.audioEndMs)
+        || theme.audioStartMs < 0
+        || theme.audioEndMs - theme.audioStartMs !== PRESENTATION_END_MS) {
+        return PUBLIC_PRESENTATION;
+      }
+      return Object.freeze({
+        audio: theme.soundtrack,
+        audioStartMs: theme.audioStartMs,
+        audioEndMs: theme.audioEndMs,
+        portrait: PRIVATE_PORTRAIT_URL
+      });
+    }
+
+    async function loadPresentationTheme() {
+      if (typeof fetchPrivate !== 'function') return PUBLIC_PRESENTATION;
+      try {
+        const response = await fetchPrivate(PRIVATE_THEME_URL, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: {Accept: 'application/json'}
+        });
+        if (!response?.ok) return PUBLIC_PRESENTATION;
+        return normalizePrivateTheme(await response.json());
+      } catch {
+        return PUBLIC_PRESENTATION;
+      }
+    }
+
+    function applyPrivatePresentation(theme) {
+      const style = document.documentElement?.style;
+      if (!style) return;
+      if (theme.portrait === PRIVATE_PORTRAIT_URL) {
+        style.setProperty('--theme-workbench-portrait', `url("${PRIVATE_PORTRAIT_URL}")`);
+      } else {
+        style.removeProperty('--theme-workbench-portrait');
+      }
+    }
+
+    function stageText(snapshot) {
+      return STAGE_TEXT[snapshot?.stage] || STAGE_TEXT.wake;
+    }
+
+    function renderAccessibleState(snapshot) {
+      const progress = Math.max(0, Math.min(100, snapshot.progress));
+      const text = stageText(snapshot);
+      document.body.dataset.stage = snapshot.stage;
+      setText(elements.progress, progress.toFixed(1));
+      setText(elements.clock, `T+${(snapshot.elapsedMs / 1000).toFixed(1).padStart(5, '0')}`);
       elements.ring.setAttribute('stroke-dashoffset', String(circumference * (1 - progress / 100)));
       elements.progressbar.setAttribute('aria-valuenow', progress.toFixed(1));
-      elements.confirm.disabled = !(progress === api.MAX_UNCONFIRMED_PROGRESS && state.ready && !state.confirmed);
+      elements.authorization.hidden = snapshot.stage !== 'authorize' || state.confirmed;
+      elements.confirm.disabled = confirmationInFlight
+        || !(snapshot.stage === 'authorize'
+          && state.progress === api.MAX_UNCONFIRMED_PROGRESS
+          && state.ready
+          && !state.confirmed);
 
       if (state.phase === 'complete') {
         setText(elements.heading, 'SYSTEM ONLINE');
         setText(elements.caption, '本地工作台已就绪');
-        setText(elements.diagnostic, '同步已由用户确认，正在进入工作台。');
-        setText(elements.backend, '已就绪');
+        setText(elements.live, '本地工作台已就绪。');
       } else if (state.phase === 'completing') {
         setText(elements.heading, '正在完成同步');
         setText(elements.caption, '用户确认已记录');
-        setText(elements.diagnostic, '正在安全切换至工作台界面。');
+        setText(elements.live, text.live);
       } else if (state.phase === 'failed') {
         setText(elements.heading, '等待服务响应');
         setText(elements.caption, '动态演示不会绕过连接检查');
-      } else if (state.phase === 'waiting') {
-        setText(elements.heading, progress === api.MAX_UNCONFIRMED_PROGRESS ? '等待用户确认' : '等待安全条件');
-        setText(elements.caption, '演示已简化，后台检查仍在继续');
-      } else if (progress === api.MAX_UNCONFIRMED_PROGRESS) {
+        setText(elements.live, snapshot.stage === 'authorize'
+          ? '同步已到达 99.2%，等待后端恢复。'
+          : text.live);
+      } else if (snapshot.stage === 'authorize' || state.phase === 'waiting') {
         setText(elements.heading, state.ready ? '等待用户确认' : '等待后端就绪');
         setText(elements.caption, '同步锁定在 99.2%');
+        setText(elements.live, text.live);
+      } else {
+        setText(elements.heading, text.heading);
+        setText(elements.caption, text.caption);
+        setText(elements.live, text.live);
+      }
+    }
+
+    function render() {
+      if (destroyed || !currentSnapshot) return;
+      document.body.dataset.phase = state.phase;
+      document.body.dataset.scene = state.phase === 'complete' ? 'online' : 'sync';
+      renderAccessibleState(currentSnapshot);
+      if (state.phase === 'complete') {
+        setText(elements.diagnostic, '同步已由用户确认，正在进入工作台。');
+        setText(elements.backend, '已就绪');
+      } else if (state.phase === 'completing') {
+        setText(elements.diagnostic, '正在安全切换至工作台界面。');
       }
     }
 
     function dispatch(event) {
       if (destroyed) return false;
+      const wasConfirmed = state.confirmed;
       const next = api.nextBootState(state, event);
-      if (event.type === 'failed' && completeTimer !== undefined) {
-        clock.clearTimeout(completeTimer);
-        completeTimer = undefined;
-      }
       if (next === state) {
-        if (state.phase === 'waiting') freezePresentation();
+        render();
         return false;
       }
       state = next;
+      if (event.type === 'failed' && wasConfirmed && !gatePaused) {
+        audioClock?.pause();
+        gatePaused = true;
+      }
       render();
-      if (state.phase === 'waiting') freezePresentation();
-      if (state.progress === api.MAX_UNCONFIRMED_PROGRESS) stopTicker();
       if (state.phase === 'complete') unbindBootInteractions();
       return true;
+    }
+
+    function renderTimeline(elapsedMs) {
+      if (destroyed || typeof sampleTimeline !== 'function') return;
+      const snapshot = sampleTimeline(elapsedMs, {
+        authorized: state.confirmed,
+        reducedMotion
+      });
+      currentSnapshot = snapshot;
+      document.body.dataset.stage = snapshot.stage;
+      bootCanvas?.render?.(snapshot);
+      const delta = snapshot.progress - state.progress;
+      if (delta > 0) dispatch({type: 'tick', delta});
+      else render();
+      if (!state.confirmed && snapshot.elapsedMs >= AUTHORIZATION_MS && !gatePaused) {
+        gatePaused = true;
+        audioClock?.pause();
+      }
     }
 
     function normalizeReadiness(health) {
@@ -209,15 +354,16 @@
     }
 
     function scheduleHealth(delay) {
-      if (destroyed) return;
+      if (destroyed || healthTimer !== undefined) return;
       healthTimer = clock.setTimeout(pollHealth, delay);
     }
 
-    function completionFailure(health) {
-      const code = normalizeReadiness(health);
-      return code === 'READY' || code === 'INITIALIZING'
-        ? {ready: false, code: 'DISCONNECTED'}
-        : {ready: false, code};
+    function stopHealth() {
+      healthGeneration += 1;
+      if (healthTimer !== undefined) clock.clearTimeout(healthTimer);
+      healthTimer = undefined;
+      healthController?.abort();
+      healthController = undefined;
     }
 
     async function pollHealth() {
@@ -244,7 +390,8 @@
 
     async function retryInitialization() {
       const activeRetry = state.phase === 'complete' ? elements.shellRetry : elements.retry;
-      if (destroyed || retryInFlight || activeRetry.hidden || !READINESS_DETAILS[readinessCode].retry) return;
+      if (destroyed || retryInFlight || activeRetry.hidden
+        || !READINESS_DETAILS[readinessCode].retry) return;
       retryInFlight = true;
       stopHealth();
       applyReadiness({ready: false, code: 'INITIALIZING'}, {retrying: true});
@@ -264,57 +411,105 @@
       }
     }
 
-    async function revalidateCompletion() {
-      if (destroyed || state.phase !== 'completing') return;
+    async function confirm() {
+      if (destroyed || confirmationInFlight || skipInFlight || completionInFlight
+        || state.confirmed || state.ready !== true
+        || state.progress !== api.MAX_UNCONFIRMED_PROGRESS
+        || currentSnapshot?.stage !== 'authorize') return;
+      confirmationInFlight = true;
+      render();
       stopHealth();
       const generation = ++healthGeneration;
       const controller = new root.AbortController();
       healthController = controller;
-
       try {
         const health = await api.health({signal: controller.signal});
-        if (destroyed || generation !== healthGeneration || state.phase !== 'completing') return;
+        if (destroyed || generation !== healthGeneration || controller.signal.aborted) return;
         if (health?.ready !== true || health.code !== 'READY') {
-          applyReadiness(completionFailure(health));
+          applyReadiness({ready: false, code: 'DISCONNECTED'});
           return;
         }
-        dispatch({type: 'complete'});
-        stopHealth();
-        stopPresentation();
-        elements.bootScreen.hidden = true;
-        elements.workbench.hidden = false;
         applyReadiness(health);
-        scheduleHealth(500);
+        if (!dispatch({type: 'confirm'})) return;
+        gatePaused = false;
+        await audioClock?.resume();
+        if (destroyed || generation !== healthGeneration) return;
       } catch {
         if (destroyed || generation !== healthGeneration || controller.signal.aborted) return;
         applyReadiness({ready: false, code: 'DISCONNECTED'});
       } finally {
-        if (generation === healthGeneration) {
-          healthController = undefined;
-          scheduleHealth(500);
-        }
+        if (healthController === controller) healthController = undefined;
+        if (!destroyed && generation === healthGeneration) scheduleHealth(500);
+        confirmationInFlight = false;
+        render();
       }
     }
 
-    function skipPresentation() {
-      if (!skipAvailable) return;
-      opening = false;
-      dispatch({type: 'skip'});
-      stopPresentation();
+    async function skipPresentation() {
+      if (destroyed || forceFullPlayback || skipInFlight
+        || confirmationInFlight || completionInFlight
+        || state.phase === 'completing' || state.phase === 'complete') return;
+      skipInFlight = true;
+      try {
+        if (!audioClock) await presentationPromise;
+        if (destroyed || !audioClock) return;
+        await audioClock.fadeOut(150);
+        if (destroyed) return;
+        audioClock.seek(AUTHORIZATION_MS);
+        if (destroyed) return;
+        if (!dispatch({type: 'skip'})) return;
+        gatePaused = true;
+        renderTimeline(AUTHORIZATION_MS);
+      } catch {
+        if (!destroyed) applyReadiness({ready: false, code: 'DISCONNECTED'});
+      } finally {
+        skipInFlight = false;
+        render();
+      }
     }
 
-    function confirm() {
-      if (!dispatch({type: 'confirm'})) return;
-      playCue('pilot-confirm');
-      completeTimer = clock.setTimeout(() => {
-        completeTimer = undefined;
-        return revalidateCompletion();
-      }, reducedMotion ? 120 : 720);
+    function waitForCurtain() {
+      return new Promise(resolve => {
+        transitionResolve = resolve;
+        transitionTimer = clock.setTimeout(() => {
+          transitionTimer = undefined;
+          transitionResolve = undefined;
+          resolve(true);
+        }, 180);
+      });
+    }
+
+    async function completePresentation() {
+      if (destroyed || completionInFlight || state.phase !== 'completing') return;
+      completionInFlight = true;
+      stopHealth();
+      document.body.dataset.transition = 'closing';
+      try {
+        if (!await waitForCurtain() || destroyed) return;
+        const controller = new root.AbortController();
+        completionController = controller;
+        await api.completePresentation({signal: controller.signal});
+        if (destroyed || controller.signal.aborted || state.phase !== 'completing') return;
+        elements.bootScreen.hidden = true;
+        elements.workbench.hidden = false;
+        dispatch({type: 'complete'});
+        delete document.body.dataset.transition;
+        applyReadiness({ready: true, code: 'READY'});
+        scheduleHealth(500);
+      } catch {
+        if (destroyed || completionController?.signal.aborted) return;
+        delete document.body.dataset.transition;
+        applyReadiness({ready: false, code: 'DISCONNECTED'});
+        scheduleHealth(500);
+      } finally {
+        completionController = undefined;
+        completionInFlight = false;
+      }
     }
 
     function onKeydown(event) {
       if (event.key !== 'Escape') return;
-      skipPresentation();
+      return skipPresentation();
     }
 
     function unbindBootInteractions() {
@@ -327,19 +522,68 @@
     function destroy() {
       if (destroyed) return;
       destroyed = true;
-      stopPresentation();
       stopHealth();
       retryController?.abort();
       retryController = undefined;
-      if (completeTimer !== undefined) clock.clearTimeout(completeTimer);
-      completeTimer = undefined;
+      completionController?.abort();
+      completionController = undefined;
+      if (transitionTimer !== undefined) clock.clearTimeout(transitionTimer);
+      transitionTimer = undefined;
+      const resolveTransition = transitionResolve;
+      transitionResolve = undefined;
+      resolveTransition?.(false);
+      if (audioClock) void Promise.resolve(audioClock.destroy()).catch(() => {});
       unbindBootInteractions();
       elements.shellRetry.removeEventListener('click', retryInitialization);
       eventRoot.removeEventListener('pagehide', destroy);
     }
 
+    async function initializePresentation() {
+      const theme = await loadPresentationTheme();
+      if (destroyed) return;
+      applyPrivatePresentation(theme);
+      let decodedTrack = silentTrack();
+      if (theme.audio && typeof loadSequenceAudio === 'function') {
+        try {
+          decodedTrack = await loadSequenceAudio(theme.audio, {
+            fetch: fetchPrivate,
+            AudioContext: root.AudioContext || root.webkitAudioContext
+          });
+        } catch {
+          decodedTrack = silentTrack();
+        }
+      }
+      if (destroyed) {
+        await Promise.resolve(decodedTrack.close?.()).catch(() => {});
+        return;
+      }
+      decodedTrack.volume = normalizedVolume();
+      if (typeof createAudioClock !== 'function') return;
+      audioClock = createAudioClock({
+        audio: decodedTrack,
+        startSeconds: theme.audioStartMs / 1000,
+        endSeconds: theme.audioEndMs / 1000,
+        now,
+        onTick: elapsedMs => renderTimeline(elapsedMs),
+        onEnd: () => completePresentation(),
+        requestAnimationFrame: typeof eventRoot.requestAnimationFrame === 'function'
+          ? eventRoot.requestAnimationFrame.bind(eventRoot)
+          : undefined,
+        cancelAnimationFrame: typeof eventRoot.cancelAnimationFrame === 'function'
+          ? eventRoot.cancelAnimationFrame.bind(eventRoot)
+          : undefined,
+        setTimeout: clock.setTimeout.bind(clock),
+        clearTimeout: clock.clearTimeout.bind(clock)
+      });
+      if (destroyed) {
+        await Promise.resolve(audioClock.destroy()).catch(() => {});
+        return;
+      }
+      await audioClock.start();
+    }
+
     function start() {
-      if (started || destroyed) return;
+      if (started || destroyed) return presentationPromise || Promise.resolve();
       started = true;
       document.body.dataset.motion = reducedMotion ? 'reduced' : 'full';
       elements.ring.setAttribute('stroke-dasharray', String(circumference));
@@ -349,30 +593,15 @@
       elements.skip.addEventListener('click', skipPresentation);
       eventRoot.addEventListener('keydown', onKeydown);
       eventRoot.addEventListener('pagehide', destroy);
-      if (!forceFullPlayback) {
-        skipTimer = clock.setTimeout(() => {
-          skipTimer = undefined;
-          if (destroyed) return;
-          skipAvailable = true;
-          elements.skip.hidden = false;
-        }, 3000);
-      }
-      awakeningTimer = clock.setTimeout(() => {
-        awakeningTimer = undefined;
-        if (destroyed || state.phase === 'complete') return;
-        opening = false;
-        render();
-      }, 600);
-      tickTimer = clock.setInterval(() => dispatch({
-        type: 'tick',
-        delta: reducedMotion ? 1.2 : 0.42
-      }), 80);
-      clockTimer = clock.setInterval(() => {
-        const elapsed = (now() - startedAt) / 1000;
-        setText(elements.clock, `T+${elapsed.toFixed(1).padStart(5, '0')}`);
-      }, 100);
+      elements.skip.hidden = forceFullPlayback;
+      currentSnapshot = sampleTimeline(0, {authorized: false, reducedMotion});
+      bootCanvas?.render?.(currentSnapshot);
       render();
       scheduleHealth(0);
+      presentationPromise = initializePresentation().catch(() => {
+        if (!destroyed) applyReadiness({ready: false, code: 'DISCONNECTED'});
+      });
+      return presentationPromise;
     }
 
     return {destroy, getState: () => state, start};
@@ -382,17 +611,18 @@
 
   if (root.document && root.ProjectZeroApi && !root.ProjectZeroBootController) {
     let bootSettings = {};
-    try { bootSettings = JSON.parse(root.localStorage.getItem('project-zero.settings.v1') || '{}'); } catch {}
+    try { bootSettings = JSON.parse(root.localStorage?.getItem('project-zero.settings.v1') || '{}'); } catch {}
     root.ProjectZeroBootController = createBootController({
       api: root.ProjectZeroApi,
       clock: root,
       document: root.document,
       now: () => root.performance.now(),
-      reducedMotion: bootSettings.reducedMotion === true || root.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      reducedMotion: bootSettings.reducedMotion === true
+        || root.matchMedia('(prefers-reduced-motion: reduce)').matches,
       forceFullPlayback: bootSettings.forceFullPlayback === true,
       volume: Number.isFinite(Number(bootSettings.volume)) ? Number(bootSettings.volume) : 0.65,
       root
     });
-    root.ProjectZeroBootController.start();
+    void root.ProjectZeroBootController.start();
   }
 }(globalThis));
