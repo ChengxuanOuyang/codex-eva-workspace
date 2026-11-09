@@ -127,12 +127,15 @@ async function privateAudioFixture(t) {
 }
 
 async function expectStableAudioFailure(operation, forbidden = []) {
+  let captured;
   await assert.rejects(operation, error => {
     assert.equal(error.code, 'PRIVATE_AUDIO_PREP_FAILED');
     assert.equal(error.message, 'PRIVATE_AUDIO_PREP_FAILED');
     for (const value of forbidden) assert.equal(error.message.includes(value), false);
+    captured = error;
     return true;
   });
+  return captured;
 }
 
 test('prepares private audio with the exact afconvert argument array and redacted summary', async t => {
@@ -224,18 +227,11 @@ test('private audio preparation detects output-parent replacement around convers
     },
     log: () => assert.fail('failure must not log')
   }), [input, output]);
+  assert.deepEqual(await fs.readFile(output), syntheticM4a());
 });
 
-test('private audio preparation validates the generated regular file, size, and M4A duration', async t => {
+test('private audio preparation removes invalid generated files and the same path can retry', async t => {
   const cases = [
-    {
-      name: 'linked output',
-      write: async ({output, root}) => {
-        const outside = path.join(root, 'outside.m4a');
-        await fs.writeFile(outside, syntheticM4a());
-        await fs.symlink(outside, output);
-      }
-    },
     {
       name: 'oversize output',
       write: async ({output}) => {
@@ -262,8 +258,138 @@ test('private audio preparation validates the generated regular file, size, and 
         execFile: async () => scenario.write(fixture),
         log: () => assert.fail('failure must not log')
       }), [fixture.input, fixture.output]);
+      await assertMissing(fixture.output);
+
+      const retry = await preparePrivateAudio({
+        argv: ['--input', fixture.input, '--output', fixture.output],
+        execFile: async () => fs.writeFile(fixture.output, syntheticM4a()),
+        log: () => {}
+      });
+      assert.equal(retry.durationMs, 20_500);
     });
   }
+});
+
+test('private audio preparation removes output after post-conversion input identity failure', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const movedInput = `${input}.moved`;
+
+  await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => {
+      await fs.writeFile(output, syntheticM4a());
+      await fs.rename(input, movedInput);
+      await fs.writeFile(input, 'replacement input');
+    },
+    log: () => assert.fail('failure must not log')
+  }), [input, output]);
+  await assertMissing(output);
+
+  const retry = await preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => fs.writeFile(output, syntheticM4a()),
+    log: () => {}
+  });
+  assert.equal(retry.durationMs, 20_500);
+});
+
+test('private audio cleanup preserves a replacement path and scrubs the held original inode', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const movedOutput = `${output}.moved`;
+  const replacement = Buffer.from('replacement must survive');
+  let replaced = false;
+  let outputCloseCalls = 0;
+  const fsModule = {
+    ...fs,
+    async open(target, ...arguments_) {
+      const handle = await fs.open(target, ...arguments_);
+      if (target !== output) return handle;
+      return {
+        stat: (...statArguments) => handle.stat(...statArguments),
+        truncate: (...truncateArguments) => handle.truncate(...truncateArguments),
+        sync: (...syncArguments) => handle.sync(...syncArguments),
+        async readFile(...readArguments) {
+          const bytes = await handle.readFile(...readArguments);
+          if (!replaced) {
+            replaced = true;
+            await fs.rename(output, movedOutput);
+            await fs.writeFile(output, replacement);
+          }
+          return bytes;
+        },
+        async close() {
+          outputCloseCalls += 1;
+          return handle.close();
+        }
+      };
+    }
+  };
+
+  await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => fs.writeFile(output, syntheticM4a()),
+    fsModule,
+    log: () => assert.fail('failure must not log')
+  }), [input, output]);
+
+  assert.equal(replaced, true);
+  assert.equal(outputCloseCalls, 1);
+  assert.deepEqual(await fs.readFile(output), replacement);
+  assert.equal((await fs.stat(movedOutput)).size, 0);
+});
+
+test('private audio cleanup failures remain redacted and do not prevent safe unlink or close', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  let truncateCalls = 0;
+  let closeCalls = 0;
+  const fsModule = {
+    ...fs,
+    async open(target, ...arguments_) {
+      const handle = await fs.open(target, ...arguments_);
+      if (target !== output) return handle;
+      return {
+        stat: (...statArguments) => handle.stat(...statArguments),
+        readFile: (...readArguments) => handle.readFile(...readArguments),
+        sync: (...syncArguments) => handle.sync(...syncArguments),
+        async truncate() {
+          truncateCalls += 1;
+          throw Error(`cleanup truncate leaked ${output}`);
+        },
+        async close() {
+          closeCalls += 1;
+          await handle.close();
+          throw Error(`cleanup close leaked ${input}`);
+        }
+      };
+    }
+  };
+
+  const error = await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => fs.writeFile(output, 'invalid container'),
+    fsModule,
+    log: () => assert.fail('failure must not log')
+  }), [input, output, 'cleanup truncate leaked', 'cleanup close leaked']);
+
+  assert.equal(error.message, 'PRIVATE_AUDIO_PREP_FAILED');
+  assert.equal(truncateCalls, 1);
+  assert.equal(closeCalls, 1);
+  await assertMissing(output);
+});
+
+test('private audio preparation does not unlink a generated output symlink', async t => {
+  const fixture = await privateAudioFixture(t);
+  const outside = path.join(fixture.root, 'outside.m4a');
+  await fs.writeFile(outside, syntheticM4a());
+
+  await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', fixture.input, '--output', fixture.output],
+    execFile: async () => fs.symlink(outside, fixture.output),
+    log: () => assert.fail('failure must not log')
+  }), [fixture.input, fixture.output]);
+
+  assert.equal((await fs.lstat(fixture.output)).isSymbolicLink(), true);
+  assert.deepEqual(await fs.readFile(outside), syntheticM4a());
 });
 
 test('private audio preparation never exposes converter stderr or paths on failure', async t => {

@@ -148,29 +148,84 @@ function m4aDurationMs(bytes) {
   return milliseconds;
 }
 
-async function readVerifiedOutput(target, parent, fsModule) {
-  const handle = await fsModule.open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+function combined(failures) {
+  if (failures.length === 0) return null;
+  return failures.length === 1
+    ? failures[0]
+    : new AggregateError(failures, 'PRIVATE_AUDIO_CLEANUP_FAILED');
+}
+
+async function openGeneratedOutput(target, parent, fsModule) {
+  if (!await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT_PARENT');
+  const handle = await fsModule.open(target, constants.O_RDWR | constants.O_NOFOLLOW);
   try {
     const identity = await handle.stat();
     const current = await fsModule.lstat(target);
     if (!identity.isFile() || current.isSymbolicLink() || !current.isFile() ||
-        !sameIdentity(identity, current) || identity.size <= 0 ||
-        identity.size > MAX_OUTPUT_BYTES) throw Error('AUDIO_OUTPUT');
-    const bytes = await handle.readFile();
-    if (bytes.length !== identity.size || bytes.length > MAX_OUTPUT_BYTES) {
-      throw Error('AUDIO_OUTPUT');
-    }
-    const after = await fsModule.lstat(target);
-    if (after.isSymbolicLink() || !after.isFile() || !sameIdentity(identity, after) ||
+        !sameIdentity(identity, current) ||
         !await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT');
-    return {
-      bytes: bytes.length,
-      durationMs: m4aDurationMs(bytes),
-      sha256: crypto.createHash('sha256').update(bytes).digest('hex')
-    };
-  } finally {
+    return {handle, identity, target};
+  } catch (error) {
     await handle.close().catch(() => {});
+    throw error;
   }
+}
+
+async function readVerifiedOutput(output, parent, fsModule) {
+  const identity = await output.handle.stat();
+  const current = await fsModule.lstat(output.target);
+  if (!identity.isFile() || !sameIdentity(identity, output.identity) ||
+      current.isSymbolicLink() || !current.isFile() ||
+      !sameIdentity(identity, current) || identity.size <= 0 ||
+      identity.size > MAX_OUTPUT_BYTES) throw Error('AUDIO_OUTPUT');
+  const bytes = await output.handle.readFile();
+  if (bytes.length !== identity.size || bytes.length > MAX_OUTPUT_BYTES) {
+    throw Error('AUDIO_OUTPUT');
+  }
+  const after = await fsModule.lstat(output.target);
+  if (after.isSymbolicLink() || !after.isFile() || !sameIdentity(identity, after) ||
+      !await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT');
+  return {
+    bytes: bytes.length,
+    durationMs: m4aDurationMs(bytes),
+    sha256: crypto.createHash('sha256').update(bytes).digest('hex')
+  };
+}
+
+async function cleanupGeneratedOutput(output, parent, fsModule) {
+  const failures = [];
+  try {
+    await output.handle.truncate(0);
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    await output.handle.sync();
+  } catch (error) {
+    failures.push(error);
+  }
+
+  try {
+    const held = await output.handle.stat();
+    const current = await fsModule.lstat(output.target);
+    const safe = held.isFile() && sameIdentity(held, output.identity) &&
+      current.isFile() && !current.isSymbolicLink() &&
+      sameIdentity(current, output.identity) &&
+      await directoryMatches(parent, fsModule);
+    if (safe) {
+      const finalCurrent = await fsModule.lstat(output.target);
+      const finalHeld = await output.handle.stat();
+      if (finalCurrent.isFile() && !finalCurrent.isSymbolicLink() &&
+          finalHeld.isFile() && sameIdentity(finalHeld, output.identity) &&
+          sameIdentity(finalCurrent, output.identity) &&
+          await directoryMatches(parent, fsModule)) {
+        await fsModule.unlink(output.target);
+      }
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') failures.push(error);
+  }
+  return combined(failures);
 }
 
 async function preparePrivateAudio({
@@ -181,8 +236,12 @@ async function preparePrivateAudio({
 } = {}) {
   let inputHandle;
   let parentHandle;
+  let outputHandle;
+  let outputPath;
+  let conversionAttempted = false;
   try {
     const {input, output} = parseArguments(argv);
+    outputPath = output;
     inputHandle = await openRegularInput(input, fsModule);
     parentHandle = await openRealDirectory(path.dirname(output), fsModule);
     const existing = await fsModule.lstat(output).catch(error => {
@@ -193,6 +252,7 @@ async function preparePrivateAudio({
     if (!await regularInputMatches(inputHandle, fsModule) ||
         !await directoryMatches(parentHandle, fsModule)) throw Error('AUDIO_IDENTITY');
 
+    conversionAttempted = true;
     await execFile(AFCONVERT, [
       input,
       output,
@@ -201,15 +261,32 @@ async function preparePrivateAudio({
       '-b', '128000'
     ]);
 
-    if (!await regularInputMatches(inputHandle, fsModule) ||
-        !await directoryMatches(parentHandle, fsModule)) throw Error('AUDIO_IDENTITY');
-    const summary = await readVerifiedOutput(output, parentHandle, fsModule);
+    outputHandle = await openGeneratedOutput(output, parentHandle, fsModule);
+    if (!await regularInputMatches(inputHandle, fsModule)) throw Error('AUDIO_IDENTITY');
+    const summary = await readVerifiedOutput(outputHandle, parentHandle, fsModule);
     log(`PRIVATE_AUDIO_READY bytes=${summary.bytes} duration_ms=${summary.durationMs} sha256=${summary.sha256}`);
     return Object.freeze(summary);
   } catch (error) {
     if (error instanceof PrivateAudioPreparationError) throw error;
+    if (conversionAttempted) {
+      if (!outputHandle) {
+        try {
+          outputHandle = await openGeneratedOutput(
+            outputPath,
+            parentHandle,
+            fsModule
+          );
+        } catch {}
+      }
+      if (outputHandle) {
+        try {
+          await cleanupGeneratedOutput(outputHandle, parentHandle, fsModule);
+        } catch {}
+      }
+    }
     throw new PrivateAudioPreparationError(error);
   } finally {
+    await outputHandle?.handle.close().catch(() => {});
     await inputHandle?.handle.close().catch(() => {});
     await parentHandle?.handle.close().catch(() => {});
   }
