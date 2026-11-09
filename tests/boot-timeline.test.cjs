@@ -33,6 +33,19 @@ test('timeline reaches but never crosses 99.2 before authorization', () => {
   assert.equal(sampleTimeline(4_000, {reducedMotion: true}).scan, 1);
 });
 
+test('reduced motion jumps to static stage keyframes instead of producing per-frame progress', () => {
+  assert.deepEqual(
+    [9_000, 12_000, 15_499].map(time => sampleTimeline(time, {reducedMotion: true}).progress),
+    [99.2, 99.2, 99.2]
+  );
+  assert.deepEqual(
+    [9_000, 12_000, 15_499].map(time => sampleTimeline(time, {reducedMotion: true}).activeNodes),
+    [12, 12, 12]
+  );
+  assert.equal(sampleTimeline(17_000, {authorized: true, reducedMotion: true}).progress, 99.2);
+  assert.equal(sampleTimeline(20_500, {authorized: true, reducedMotion: true}).progress, 100);
+});
+
 test('motion uses the upstream quintic scan path at fixed reference times', () => {
   assert.equal(scanPosition(0, 900, 5), -72);
   assert.equal(scanPosition(5, 900, 5), 972);

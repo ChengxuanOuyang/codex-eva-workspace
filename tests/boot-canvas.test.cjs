@@ -2,11 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const vm = require('node:vm');
 const {
   DESIGN_HEIGHT,
   DESIGN_WIDTH,
   createBootCanvas,
-  drawBootFrame
+  drawBootFrame,
+  loadBootAssets,
+  prepareBootAssets
 } = require('../renderer/boot/boot-canvas.js');
 
 function recordingContext({drawImageError = false} = {}) {
@@ -14,7 +18,10 @@ function recordingContext({drawImageError = false} = {}) {
   const tags = [];
   const context = {
     canvas: {width: 0, height: 0},
-    projectZeroRecord(tag, detail) { tags.push({tag, detail}); },
+    projectZeroRecord(tag, detail) {
+      tags.push({tag, detail});
+      commands.push(['record', tag, detail]);
+    },
     save() { commands.push(['save']); },
     restore() { commands.push(['restore']); },
     beginPath() { commands.push(['beginPath']); },
@@ -56,6 +63,33 @@ function recordingContext({drawImageError = false} = {}) {
   }
 
   return {commands, context, tags};
+}
+
+function imageRealm({decodeError = false} = {}) {
+  const sandbox = vm.createContext({decodeError});
+  vm.runInContext(`
+    class FixtureHTMLImageElement {
+      constructor() {
+        this.complete = false;
+        this.naturalWidth = 0;
+        this.naturalHeight = 0;
+        this.decodeCalls = 0;
+        this.ownerDocument = {defaultView: {HTMLImageElement: FixtureHTMLImageElement}};
+      }
+      set src(value) { this._src = value; }
+      get src() { return this._src; }
+      async decode() {
+        this.decodeCalls += 1;
+        if (decodeError) throw new TypeError('decode failed');
+        this.complete = true;
+        this.naturalWidth = 640;
+        this.naturalHeight = 640;
+      }
+      get [Symbol.toStringTag]() { return 'HTMLImageElement'; }
+    }
+    globalThis.image = new FixtureHTMLImageElement();
+  `, sandbox);
+  return sandbox.image;
 }
 
 function fixedSnapshot(overrides = {}) {
@@ -109,6 +143,28 @@ test('wake frame draws the fixed 1920 by 1080 surface, fine grid, original mark,
   assert.ok(tagNames(recording.tags).includes('mark:fallback:project-zero'));
   assert.ok(recording.commands.filter(command => command[0] === 'lineTo').length >= 60);
   assert.ok(recording.commands.some(command => command[0] === 'fillText' && command[1] === 'PROJECT ZERO'));
+});
+
+test('the same fixed wake input retains a concrete deterministic command digest', () => {
+  const recording = recordingContext();
+  drawBootFrame(recording.context, fixedSnapshot(), {}, {width: 1920, height: 1080});
+  const digest = crypto.createHash('sha256')
+    .update(JSON.stringify({commands: recording.commands, tags: recording.tags}))
+    .digest('hex');
+
+  assert.equal(digest, 'b42f22f95431de04b791c663b0c5c1019022bff03a1426ce939975d475d9d488');
+});
+
+test('link icons start each loop as an independent canvas subpath', () => {
+  const recording = recordingContext();
+  drawBootFrame(recording.context, fixedSnapshot(), {}, {width: 1920, height: 1080});
+
+  const previousIcon = recording.commands.findIndex(command => command[0] === 'record' && command[1] === 'icon:right:01:core');
+  const linkIcon = recording.commands.findIndex(command => command[0] === 'record' && command[1] === 'icon:left:02:link');
+  const segment = recording.commands.slice(previousIcon + 1, linkIcon);
+  const arcs = segment.map((command, index) => command[0] === 'arc' ? index : -1).filter(index => index >= 0);
+  assert.equal(arcs.length, 2);
+  assert.deepEqual(segment.slice(arcs[0] + 1, arcs[1]).map(command => command[0]), ['stroke', 'beginPath']);
 });
 
 test('scan frame records the restrained orange field and system-check labels', () => {
@@ -186,19 +242,100 @@ test('connect keyframes draw the connection title, exact 100 percent, and comple
   assert.ok(complete.commands.some(command => command[0] === 'fillText' && command[1] === 'SYSTEM ONLINE'));
 });
 
-test('a validated private mark is injected, while a failed image draw uses the original public fallback', () => {
-  const privateMark = {width: 640, height: 640};
+test('a decoded cross-realm image becomes an immutable private asset bundle', async () => {
+  const privateMark = imageRealm();
+  const assets = await prepareBootAssets({mark: privateMark});
+  assert.equal(Object.isFrozen(assets), true);
+  assert.equal(assets.mark, privateMark);
+  assert.equal(privateMark.decodeCalls, 1);
+
   const injected = recordingContext();
-  drawBootFrame(injected.context, fixedSnapshot(), {mark: privateMark}, {width: 1920, height: 1080});
+  drawBootFrame(injected.context, fixedSnapshot(), assets, {width: 1920, height: 1080});
   assert.ok(tagNames(injected.tags).includes('mark:private'));
   assert.equal(injected.commands.filter(command => command[0] === 'drawImage').length, 1);
   assert.equal(tagNames(injected.tags).includes('mark:fallback:project-zero'), false);
+});
+
+test('private mark loading uses only the fixed theme and mark URLs', async () => {
+  const privateMark = imageRealm();
+  const requests = [];
+  const assets = await loadBootAssets({
+    fetch: async (url, options) => {
+      requests.push({url, options});
+      return {ok: true, json: async () => ({mark: '/private/boot-mark.webp'})};
+    },
+    createImage: () => privateMark
+  });
+
+  assert.deepEqual(requests.map(request => request.url), ['/private/theme.json']);
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.equal(privateMark.src, '/private/boot-mark.webp');
+  assert.equal(assets.mark, privateMark);
+});
+
+test('missing, malformed, undecodable, or untrusted private marks use the original fallback', async () => {
+  const failedDecode = await prepareBootAssets({mark: imageRealm({decodeError: true})});
+  const plainObject = await prepareBootAssets({
+    mark: {complete: true, naturalWidth: 640, naturalHeight: 640, decode: async () => {}}
+  });
+  const invalidTheme = await loadBootAssets({
+    fetch: async () => ({ok: true, json: async () => ({mark: '/arbitrary/mark.webp'})}),
+    createImage: () => imageRealm()
+  });
+  const missingTheme = await loadBootAssets({
+    fetch: async () => ({ok: false}),
+    createImage: () => imageRealm()
+  });
+  const failedLoad = await loadBootAssets({
+    fetch: async () => { throw new TypeError('load failed'); },
+    createImage: () => imageRealm()
+  });
+
+  for (const assets of [failedDecode, plainObject, invalidTheme, missingTheme, failedLoad]) {
+    const recording = recordingContext();
+    drawBootFrame(recording.context, fixedSnapshot(), assets, {width: 1920, height: 1080});
+    assert.ok(tagNames(recording.tags).includes('mark:fallback:project-zero'));
+    assert.equal(recording.commands.some(command => command[0] === 'drawImage'), false);
+  }
 
   const failed = recordingContext({drawImageError: true});
-  drawBootFrame(failed.context, fixedSnapshot(), {mark: privateMark}, {width: 1920, height: 1080});
+  const decoded = await prepareBootAssets({mark: imageRealm()});
+  drawBootFrame(failed.context, fixedSnapshot(), decoded, {width: 1920, height: 1080});
   assert.ok(tagNames(failed.tags).includes('mark:private:error'));
   assert.ok(tagNames(failed.tags).includes('mark:fallback:project-zero'));
-  assert.ok(failed.commands.some(command => command[0] === 'fillText' && command[1] === 'PZ'));
+});
+
+test('reduced motion resolves from the snapshot, product setting, or media query and holds static keyframes', () => {
+  const direct = recordingContext();
+  drawBootFrame(direct.context, fixedSnapshot({
+    stage: 'scan', scan: 0.37, reducedMotion: true
+  }), {}, {width: 1920, height: 1080});
+  assert.deepEqual(direct.tags.find(record => record.tag === 'scan:orange-field').detail, {top: 210});
+
+  const recording = recordingContext();
+  const canvas = {
+    clientWidth: 1920,
+    clientHeight: 1080,
+    width: 0,
+    height: 0,
+    style: {},
+    getContext: () => recording.context
+  };
+  const bootCanvas = createBootCanvas(canvas, {
+    dataMotion: () => 'reduced',
+    prefersReducedMotion: () => false
+  });
+  bootCanvas.render(fixedSnapshot({stage: 'synchronize', progress: 56.7, activeNodes: 7}));
+  assert.ok(tagNames(recording.tags).includes('progress:99.2'));
+  assert.equal(tagNames(recording.tags).includes('progress:56.7'), false);
+
+  const mediaRecording = recordingContext();
+  const mediaCanvas = {...canvas, getContext: () => mediaRecording.context};
+  createBootCanvas(mediaCanvas, {
+    dataMotion: () => 'full',
+    prefersReducedMotion: () => true
+  }).render(fixedSnapshot({stage: 'scan', scan: 0.21}));
+  assert.deepEqual(mediaRecording.tags.find(record => record.tag === 'scan:orange-field').detail, {top: 210});
 });
 
 test('boot canvas clamps high-DPI backing store at two and resizing preserves the last timeline snapshot', () => {

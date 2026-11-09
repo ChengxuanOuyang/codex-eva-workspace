@@ -85,9 +85,9 @@ kbd { margin-left: 7px; padding: 2px 4px; border: 1px solid var(--line); backgro
   transform: translateX(-50%);
   backdrop-filter: blur(12px);
 }
+.pilot-authorization[hidden] { display: none; }
 body[data-stage="authorize"] .pilot-authorization,
-body[data-phase="waiting"] .pilot-authorization,
-body[data-readiness="ready"] .pilot-authorization {
+body[data-phase="waiting"] .pilot-authorization {
   opacity: 1;
   pointer-events: auto;
 }
@@ -204,10 +204,35 @@ body[data-scene="online"] #workbench-shell:not([hidden]) .workbench-scene { opac
   .diagnostic-panel { bottom: 10px; max-height: 175px; overflow: auto; }
 }
 
+@media (max-width: 640px) and (max-height: 600px) {
+  .boot-presentation { overflow-y: auto; }
+  #boot-sequence { position: fixed; }
+  .pilot-authorization {
+    position: relative;
+    inset: auto;
+    width: calc(100% - 24px);
+    max-height: none;
+    margin: 66px 12px 12px;
+    overflow: visible;
+  }
+  .diagnostic-panel {
+    position: relative;
+    inset: auto;
+    width: calc(100% - 24px);
+    max-height: none;
+    margin: 12px 12px 18px;
+    overflow: visible;
+  }
+  .pilot-authorization[hidden] + .diagnostic-panel { margin-top: 66px; }
+  .transition-curtain { position: fixed; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  #boot-sequence { transition: opacity 180ms linear; }
   .boot-control-layer { transition: opacity 180ms linear; }
   .transition-curtain { transition: opacity 180ms linear; }
   .workbench-scene { transition: opacity 180ms linear; }
 }
+body[data-motion="reduced"] #boot-sequence { transition: opacity 180ms linear; }
 body[data-motion="reduced"] .boot-control-layer { transition: opacity 180ms linear; }
 body[data-motion="reduced"] .transition-curtain { transition: opacity 180ms linear; }

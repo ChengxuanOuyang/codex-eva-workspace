@@ -62,9 +62,14 @@
           : logicalMs < 15500 ? 'synchronize' : 'connect';
     const sync = Math.max(0, Math.min(1, (logicalMs - 8500) / 7000));
     const connect = authorized ? Math.max(0, Math.min(1, (logicalMs - 15500) / 5000)) : 0;
-    const progress = authorized && stage === 'connect'
+    const animatedProgress = authorized && stage === 'connect'
       ? MAX_UNAUTHORIZED_PROGRESS + (100 - MAX_UNAUTHORIZED_PROGRESS) * connect
       : MAX_UNAUTHORIZED_PROGRESS * sync;
+    const progress = reducedMotion && (stage === 'synchronize' || stage === 'authorize')
+      ? MAX_UNAUTHORIZED_PROGRESS
+      : reducedMotion && stage === 'connect' && logicalMs < 20500
+        ? MAX_UNAUTHORIZED_PROGRESS
+        : animatedProgress;
     const scanPhase = stage === 'scan' ? (logicalMs - 3500) / 5000 : 0;
 
     return Object.freeze({

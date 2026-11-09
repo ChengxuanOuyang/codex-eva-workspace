@@ -45,6 +45,7 @@ test('boot presentation uses one canvas with hidden semantics and keeps controls
   assert.match(html, /id="ring-progress"[^>]*role="progressbar"/);
   assert.match(html, /id="boot-live-status"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(html, /id="pilot-authorization"/);
+  assert.match(html, /id="pilot-authorization"[^>]*hidden/);
   assert.match(html, /id="transition-curtain"/);
   assert.match(html, /id="skip-button"[^>]*aria-label="跳过动态演示"/);
   assert.match(html, /id="confirm-button"[^>]*aria-label="确认驾驶员授权并完成同步"/);
@@ -86,7 +87,9 @@ test('canvas source pins the exact MIT code origins while excluding upstream med
   assert.match(source, /Adapted MIT code scope/);
   assert.match(source, /NERV marks[^.]*not covered/);
   assert.match(source, /voice\/audio[^.]*not covered/);
-  assert.doesNotMatch(source, /data:image|new Image\s*\(|fetch\s*\(/);
+  assert.doesNotMatch(source, /data:image/);
+  assert.match(source, /['"]\/private\/theme\.json['"]/);
+  assert.match(source, /['"]\/private\/boot-mark\.webp['"]/);
 });
 
 test('served renderer code contains no Node API, embedded token, or remote resource', async () => {
@@ -158,6 +161,7 @@ test('reduced motion limits boot composition changes to a short cross-fade', asy
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(css, /\.boot-control-layer[^}]*transition:\s*opacity 180ms/s);
   assert.match(css, /body\[data-motion="reduced"\] \.boot-control-layer[^}]*transition:\s*opacity 180ms/s);
+  assert.match(css, /body\[data-motion="reduced"\] #boot-sequence[^}]*transition:\s*opacity 180ms/s);
   assert.doesNotMatch(css, /transition-duration:\s*(?:[2-9]\d\d|\d{4,})ms[^;]*!important/s);
 });
 
@@ -170,6 +174,20 @@ test('full-screen boot has no scrolling and narrow layouts keep every action rea
   assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.skip-button[^}]*top:/s);
   assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.pilot-authorization[^}]*left:/s);
   assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.diagnostic-panel[^}]*max-height:/s);
+  assert.match(css, /@media \(max-width: 640px\) and \(max-height: 600px\)[\s\S]*\.boot-presentation[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /@media \(max-width: 640px\) and \(max-height: 600px\)[\s\S]*\.pilot-authorization[^}]*position:\s*relative/s);
+  assert.match(css, /@media \(max-width: 640px\) and \(max-height: 600px\)[\s\S]*\.pilot-authorization[^}]*margin:\s*66px 12px 12px/s);
+  assert.match(css, /@media \(max-width: 640px\) and \(max-height: 600px\)[\s\S]*\.diagnostic-panel[^}]*position:\s*relative/s);
+  assert.match(css, /\.pilot-authorization\[hidden\] \+ \.diagnostic-panel[^}]*margin-top:\s*66px/s);
+});
+
+test('authorization is hidden until the authorization or waiting stage regardless of early readiness', async () => {
+  const css = await read('boot/boot.css');
+
+  assert.match(css, /\.pilot-authorization\[hidden\][^}]*display:\s*none/s);
+  assert.match(css, /body\[data-stage="authorize"\] \.pilot-authorization/);
+  assert.match(css, /body\[data-phase="waiting"\] \.pilot-authorization/);
+  assert.doesNotMatch(css, /body\[data-readiness="ready"\] \.pilot-authorization/);
 });
 
 test('reference analysis fixes source priority without private paths, captures, or social identity', async () => {

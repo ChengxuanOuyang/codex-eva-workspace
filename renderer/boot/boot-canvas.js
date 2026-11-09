@@ -18,7 +18,9 @@
     const canvas = root.document.querySelector('#boot-sequence');
     if (canvas) {
       const instance = api.createBootCanvas(canvas, {
-        devicePixelRatio: () => root.devicePixelRatio || 1
+        dataMotion: () => root.document.body?.dataset?.motion,
+        devicePixelRatio: () => root.devicePixelRatio || 1,
+        prefersReducedMotion: () => root.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
       });
       const initialSnapshot = root.ProjectZeroTimeline?.sampleTimeline?.(0) || {
         elapsedMs: 0,
@@ -33,6 +35,10 @@
       instance.render(initialSnapshot);
       root.ProjectZeroBootCanvasInstance = instance;
       root.addEventListener('resize', () => instance.resize());
+      void api.loadBootAssets({
+        createImage: () => root.document.createElement('img'),
+        fetch: typeof root.fetch === 'function' ? root.fetch.bind(root) : undefined
+      }).then(assets => instance.setAssets(assets));
     }
   }
 })(typeof globalThis === 'object' ? globalThis : this, function createBootCanvasModule() {
@@ -40,7 +46,12 @@
 
   const DESIGN_WIDTH = 1920;
   const DESIGN_HEIGHT = 1080;
+  const PRIVATE_THEME_URL = '/private/theme.json';
+  const PRIVATE_MARK_URL = '/private/boot-mark.webp';
   const TAU = Math.PI * 2;
+  const assetBundles = new WeakSet();
+  const EMPTY_ASSETS = Object.freeze({});
+  assetBundles.add(EMPTY_ASSETS);
   const NODE_LABELS = Object.freeze([
     Object.freeze({code: 'core', zh: '核心', ja: '中枢', tech: 'CORE'}),
     Object.freeze({code: 'link', zh: '桥接', ja: '接続', tech: 'LINK'}),
@@ -70,6 +81,71 @@
     if (typeof context.projectZeroRecord === 'function') context.projectZeroRecord(tag, detail);
   }
 
+  function makeAssets(mark) {
+    if (!mark) return EMPTY_ASSETS;
+    const assets = Object.freeze({mark});
+    assetBundles.add(assets);
+    return assets;
+  }
+
+  function trustedAssets(assets) {
+    return assets && assetBundles.has(assets) ? assets : EMPTY_ASSETS;
+  }
+
+  function isDecodedHtmlImage(value) {
+    const realm = value?.ownerDocument?.defaultView;
+    const ImageConstructor = realm?.HTMLImageElement;
+    return typeof ImageConstructor === 'function'
+      && value instanceof ImageConstructor
+      && value.complete === true
+      && Number.isFinite(value.naturalWidth)
+      && value.naturalWidth > 0
+      && Number.isFinite(value.naturalHeight)
+      && value.naturalHeight > 0;
+  }
+
+  function isNativeImageBitmap(value) {
+    if (Object.prototype.toString.call(value) !== '[object ImageBitmap]') return false;
+    const Constructor = Object.getPrototypeOf(value)?.constructor;
+    if (typeof Constructor !== 'function' || Constructor.name !== 'ImageBitmap') return false;
+    if (!/\[native code\]/.test(Function.prototype.toString.call(Constructor))) return false;
+    return Number.isFinite(value.width) && value.width > 0
+      && Number.isFinite(value.height) && value.height > 0;
+  }
+
+  async function prepareBootAssets(input = {}) {
+    const mark = input && typeof input === 'object' ? input.mark : undefined;
+    if (isNativeImageBitmap(mark)) return makeAssets(mark);
+    const realmConstructor = mark?.ownerDocument?.defaultView?.HTMLImageElement;
+    if (typeof realmConstructor !== 'function' || !(mark instanceof realmConstructor)) return EMPTY_ASSETS;
+    if (typeof mark.decode !== 'function') return EMPTY_ASSETS;
+    try {
+      await mark.decode();
+    } catch {
+      return EMPTY_ASSETS;
+    }
+    return isDecodedHtmlImage(mark) ? makeAssets(mark) : EMPTY_ASSETS;
+  }
+
+  async function loadBootAssets({fetch: fetchPrivate, createImage} = {}) {
+    if (typeof fetchPrivate !== 'function' || typeof createImage !== 'function') return EMPTY_ASSETS;
+    try {
+      const response = await fetchPrivate(PRIVATE_THEME_URL, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {Accept: 'application/json'}
+      });
+      if (!response?.ok) return EMPTY_ASSETS;
+      const theme = await response.json();
+      if (!theme || theme.mark !== PRIVATE_MARK_URL) return EMPTY_ASSETS;
+      const mark = createImage();
+      mark.src = PRIVATE_MARK_URL;
+      return prepareBootAssets({mark});
+    } catch {
+      return EMPTY_ASSETS;
+    }
+  }
+
   function finite(value, fallback = 0) {
     return Number.isFinite(value) ? value : fallback;
   }
@@ -81,7 +157,7 @@
   function safeSnapshot(snapshot) {
     const source = snapshot && typeof snapshot === 'object' ? snapshot : {};
     const stages = new Set(['wake', 'scan', 'synchronize', 'authorize', 'connect']);
-    return {
+    const normalized = {
       elapsedMs: Math.max(0, finite(source.elapsedMs)),
       stage: stages.has(source.stage) ? source.stage : 'wake',
       progress: clamp(source.progress, 0, 100),
@@ -89,6 +165,17 @@
       activeNodes: Math.round(clamp(source.activeNodes, 0, 12)),
       reducedMotion: source.reducedMotion === true
     };
+    if (!normalized.reducedMotion) return normalized;
+    if (normalized.stage === 'scan') normalized.scan = 1;
+    if (normalized.stage === 'synchronize' || normalized.stage === 'authorize') {
+      normalized.progress = 99.2;
+      normalized.activeNodes = 12;
+    }
+    if (normalized.stage === 'connect' && normalized.progress < 100) {
+      normalized.progress = 99.2;
+      normalized.activeNodes = 12;
+    }
+    return normalized;
   }
 
   function safeViewport(viewport) {
@@ -153,6 +240,8 @@
   function drawLinkIcon(context, x, y, size) {
     context.beginPath();
     context.arc(x - size * 0.17, y, size * 0.18, -Math.PI * 0.7, Math.PI * 0.7);
+    context.stroke();
+    context.beginPath();
     context.arc(x + size * 0.17, y, size * 0.18, Math.PI * 0.3, Math.PI * 1.7);
     context.stroke();
   }
@@ -425,6 +514,7 @@
   function drawBootFrame(context, snapshotInput, assets = {}, viewportInput = {}) {
     if (!context) throw new TypeError('BOOT_CANVAS_CONTEXT_REQUIRED');
     const snapshot = safeSnapshot(snapshotInput);
+    const safeAssets = trustedAssets(assets);
     const viewport = safeViewport(viewportInput);
     const scale = Math.min(viewport.width / DESIGN_WIDTH, viewport.height / DESIGN_HEIGHT);
     const offsetX = (viewport.width - DESIGN_WIDTH * scale) / 2;
@@ -438,7 +528,7 @@
     drawScanField(context, snapshot);
     drawNodeBanks(context, snapshot.activeNodes);
     drawStageLabels(context, snapshot);
-    if (!['synchronize', 'authorize', 'connect'].includes(snapshot.stage)) drawMark(context, assets);
+    if (!['synchronize', 'authorize', 'connect'].includes(snapshot.stage)) drawMark(context, safeAssets);
     drawSyncRings(context, snapshot);
     drawAuthorization(context, snapshot);
     drawConnection(context, snapshot);
@@ -449,8 +539,10 @@
     if (!canvas || typeof canvas.getContext !== 'function') throw new TypeError('BOOT_CANVAS_ELEMENT_REQUIRED');
     const context = canvas.getContext('2d');
     if (!context) throw new TypeError('BOOT_CANVAS_2D_REQUIRED');
-    const assets = options.assets && typeof options.assets === 'object' ? options.assets : {};
+    let assets = trustedAssets(options.assets);
     const pixelRatioSource = options.devicePixelRatio;
+    const dataMotionSource = options.dataMotion;
+    const mediaPreferenceSource = options.prefersReducedMotion;
     let currentViewport = {width: 1, height: 1, pixelRatio: 1};
     let currentSnapshot;
 
@@ -458,6 +550,18 @@
       if (Number.isFinite(explicit)) return explicit;
       if (typeof pixelRatioSource === 'function') return pixelRatioSource();
       return Number.isFinite(pixelRatioSource) ? pixelRatioSource : 1;
+    }
+
+    function prefersReducedMotion(snapshot) {
+      if (snapshot?.reducedMotion === true) return true;
+      if (typeof dataMotionSource === 'function' && dataMotionSource() === 'reduced') return true;
+      return typeof mediaPreferenceSource === 'function' && mediaPreferenceSource() === true;
+    }
+
+    function snapshotForMotion(snapshot) {
+      if (!prefersReducedMotion(snapshot)) return snapshot;
+      const source = snapshot && typeof snapshot === 'object' ? snapshot : {};
+      return source.reducedMotion === true ? source : {...source, reducedMotion: true};
     }
 
     function resize(width = canvas.clientWidth, height = canvas.clientHeight, explicitPixelRatio) {
@@ -471,13 +575,19 @@
       canvas.style.height = `${safeHeight}px`;
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       currentViewport = {width: safeWidth, height: safeHeight, pixelRatio};
-      if (currentSnapshot) drawBootFrame(context, currentSnapshot, assets, currentViewport);
+      if (currentSnapshot) drawBootFrame(context, snapshotForMotion(currentSnapshot), assets, currentViewport);
       return currentViewport;
     }
 
     function render(snapshot) {
       currentSnapshot = snapshot;
-      drawBootFrame(context, snapshot, assets, currentViewport);
+      drawBootFrame(context, snapshotForMotion(snapshot), assets, currentViewport);
+    }
+
+    function setAssets(nextAssets) {
+      assets = trustedAssets(nextAssets);
+      if (currentSnapshot) drawBootFrame(context, snapshotForMotion(currentSnapshot), assets, currentViewport);
+      return assets;
     }
 
     resize();
@@ -485,9 +595,17 @@
       lastSnapshot: () => currentSnapshot,
       render,
       resize,
+      setAssets,
       viewport: () => ({...currentViewport})
     });
   }
 
-  return Object.freeze({DESIGN_HEIGHT, DESIGN_WIDTH, createBootCanvas, drawBootFrame});
+  return Object.freeze({
+    DESIGN_HEIGHT,
+    DESIGN_WIDTH,
+    createBootCanvas,
+    drawBootFrame,
+    loadBootAssets,
+    prepareBootAssets
+  });
 });

@@ -83,6 +83,7 @@ function fixture(api, {reducedMotion = false} = {}) {
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
     '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell',
+    '#pilot-authorization',
     '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));
@@ -110,6 +111,29 @@ function fixture(api, {reducedMotion = false} = {}) {
   controller.start();
   return {clock, controller, document, elements, rootListeners};
 }
+
+test('early READY keeps authorization hidden before the waiting stage', async () => {
+  const view = fixture({health: () => Promise.resolve({ready: true, code: 'READY'})});
+
+  assert.equal(view.elements['#pilot-authorization'].hidden, true);
+  await view.clock.fireTimeout(0);
+  assert.equal(view.controller.getState().phase, 'syncing');
+  assert.equal(view.document.body.dataset.readiness, 'ready');
+  assert.equal(view.elements['#pilot-authorization'].hidden, true);
+
+  view.document.body.dataset.stage = 'authorize';
+  view.clock.fireInterval(80);
+  assert.equal(view.elements['#pilot-authorization'].hidden, false);
+  view.document.body.dataset.stage = 'wake';
+  view.clock.fireInterval(80);
+  assert.equal(view.elements['#pilot-authorization'].hidden, true);
+
+  view.clock.fireTimeout(3000);
+  view.elements['#skip-button'].dispatch('click');
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(view.elements['#pilot-authorization'].hidden, false);
+  view.controller.destroy();
+});
 
 test('skip atomically reaches confirmation while stopping presentation timers and preserving health polling', async () => {
   const health = deferred();
@@ -523,6 +547,7 @@ test('automatic startup is a window singleton across repeated script execution',
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
     '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell',
+    '#pilot-authorization',
     '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [selector, new FakeElement()]));

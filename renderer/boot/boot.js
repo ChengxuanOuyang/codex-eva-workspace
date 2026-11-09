@@ -35,6 +35,7 @@
     const startedAt = now();
     const elements = {
       backend: document.querySelector('#backend-state'),
+      authorization: document.querySelector('#pilot-authorization'),
       caption: document.querySelector('#phase-caption'),
       clock: document.querySelector('#clock-readout'),
       confirm: document.querySelector('#confirm-button'),
@@ -115,6 +116,8 @@
       if (destroyed) return;
       const progress = Math.max(0, Math.min(100, state.progress));
       document.body.dataset.phase = state.phase;
+      elements.authorization.hidden = !(state.phase === 'waiting'
+        || (state.phase === 'syncing' && document.body.dataset.stage === 'authorize'));
       const scene = state.phase === 'complete' ? 'online' : opening ? 'awakening' : 'sync';
       document.body.dataset.scene = scene;
       if (scene !== previousScene) {
