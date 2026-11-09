@@ -149,7 +149,69 @@ async function closePinnedHandles(pinnedFiles) {
   if (failed) throw failed.reason;
 }
 
+async function physicalAsarArchiveFor(targetPath) {
+  if (!process.versions.electron) return null;
+  let physicalFileSystem;
+  try {
+    physicalFileSystem = require('original-fs').promises;
+  } catch {
+    return null;
+  }
+
+  let candidate = path.resolve(targetPath);
+  while (true) {
+    if (path.extname(candidate).toLowerCase() === '.asar') {
+      try {
+        const stats = await physicalFileSystem.lstat(candidate);
+        if (stats.isFile()) return candidate;
+      } catch {
+        // A virtual or missing .asar-looking ancestor is not a trusted archive boundary.
+      }
+    }
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return null;
+    candidate = parent;
+  }
+}
+
+async function openPinnedAsarPrivateFiles({privateBootRoot, privateFiles, fileSystem}) {
+  const pinnedFiles = new Map();
+  try {
+    for (const [requestPath, file] of privateFiles) {
+      const filePath = path.join(privateBootRoot, file.fileName);
+      let handle;
+      try {
+        const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | (constants.O_NONBLOCK || 0);
+        handle = await fileSystem.open(filePath, fileFlags);
+        const stats = await handle.stat();
+        if (!stats.isFile()) {
+          await handle.close();
+          continue;
+        }
+        pinnedFiles.set(requestPath, {
+          handle,
+          identity: stats,
+          size: stats.size,
+          mtimeMs: stats.mtimeMs,
+          ctimeMs: stats.ctimeMs
+        });
+      } catch (error) {
+        await handle?.close().catch(() => {});
+        if (isAbsentPrivateFileError(error)) continue;
+        throw error;
+      }
+    }
+    return pinnedFiles;
+  } catch (error) {
+    await closePinnedHandles(pinnedFiles);
+    throw error;
+  }
+}
+
 async function openPinnedPrivateFiles({bootRoot, privateBootRoot, privateFiles, fileSystem}) {
+  if (await physicalAsarArchiveFor(privateBootRoot)) {
+    return openPinnedAsarPrivateFiles({privateBootRoot, privateFiles, fileSystem});
+  }
   const candidates = new Map();
   const pinnedFiles = new Map();
   let bootHandle;
@@ -408,7 +470,10 @@ function createWorkbenchService({
     if (req.headers.host !== `127.0.0.1:${port}`) {
       return send(res, 403, {error: 'Invalid host'});
     }
-    const allowedMethods = routeMethods.get(req.url);
+    if (req.routePath.startsWith('/private') && !privateFiles.has(req.url)) {
+      return send(res, 404, {error: 'Not found'});
+    }
+    const allowedMethods = routeMethods.get(req.routePath);
     if (allowedMethods && !allowedMethods.includes(req.method)) {
       return methodNotAllowed(res, allowedMethods);
     }

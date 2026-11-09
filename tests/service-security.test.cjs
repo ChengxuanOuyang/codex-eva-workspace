@@ -1,13 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {execFileSync} = require('node:child_process');
+const {execFile, execFileSync} = require('node:child_process');
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const {promisify} = require('node:util');
+const asar = require('@electron/asar');
+const electronPath = require('electron');
 const {createWorkbenchService} = require('../workbench/service.cjs');
 
 const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
+const execFileAsync = promisify(execFile);
 
 let fixtureRoot;
 let bootRoot;
@@ -195,6 +199,28 @@ test('rejects unsupported methods with an exact Allow header', async () => {
     assert.equal(response.headers.allow, 'GET', requestPath);
     assert.deepEqual(JSON.parse(response.body), {error: 'Method not allowed'});
   }
+});
+
+test('query variants preserve pathname method boundaries without invoking retry', async () => {
+  const {cookie} = await openWorkbench();
+  retryCalls = 0;
+
+  const state = await request({
+    requestPath: '/api/state?x=1',
+    method: 'POST',
+    headers: {Cookie: cookie, Origin: `http://127.0.0.1:${address.port}`}
+  });
+  assert.equal(state.status, 405);
+  assert.equal(state.headers.allow, 'GET');
+
+  const retry = await request({
+    requestPath: '/api/readiness/retry?x=1',
+    method: 'GET',
+    headers: {Cookie: cookie}
+  });
+  assert.equal(retry.status, 405);
+  assert.equal(retry.headers.allow, 'POST');
+  assert.equal(retryCalls, 0);
 });
 
 test('retry is an exact authenticated POST bound to the loopback origin', async () => {
@@ -595,6 +621,78 @@ test('private preload rejects a FIFO without blocking listen', async t => {
   const response = await requestAt(isolatedAddress, {requestPath: '/private/theme.json'});
 
   assert.equal(response.status, 404);
+});
+
+test('Electron serves from a real ASAR with or without private boot files and closes cleanly', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-service-asar-'));
+  t.after(() => fs.rm(root, {recursive: true, force: true}));
+  const helperPath = path.join(root, 'run-service.cjs');
+  await fs.writeFile(helperPath, `'use strict';
+const http = require('node:http');
+const path = require('node:path');
+
+function request(address) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: address.port,
+      path: '/private/theme.json',
+      headers: {Host: \`127.0.0.1:\${address.port}\`}
+    }, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({status: res.statusCode, body: Buffer.concat(chunks).toString('utf8')}));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+(async () => {
+  const archive = process.argv[2];
+  const {createWorkbenchService} = require(path.join(archive, 'workbench', 'service.cjs'));
+  const service = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: path.join(archive, 'renderer', 'boot'),
+    sharedRoot: path.join(archive, 'renderer', 'shared')
+  });
+  const address = await service.listen();
+  const response = await request(address);
+  await service.close();
+  await service.close();
+  process.stdout.write(JSON.stringify({...response, closed: true}));
+})().catch(error => {
+  process.stderr.write(error.stack || String(error));
+  process.exitCode = 1;
+});
+`);
+
+  for (const privateTheme of [undefined, '{"displayName":"ASAR PRIVATE"}']) {
+    const fixture = path.join(root, privateTheme ? 'private-source' : 'public-source');
+    const archive = path.join(root, privateTheme ? 'private-app.asar' : 'public-app.asar');
+    await fs.mkdir(path.join(fixture, 'workbench'), {recursive: true});
+    await fs.mkdir(path.join(fixture, 'renderer', 'boot'), {recursive: true});
+    await fs.mkdir(path.join(fixture, 'renderer', 'shared'), {recursive: true});
+    await fs.copyFile(path.join(__dirname, '..', 'workbench', 'service.cjs'), path.join(fixture, 'workbench', 'service.cjs'));
+    await fs.copyFile(path.join(__dirname, '..', 'workbench', 'routes.cjs'), path.join(fixture, 'workbench', 'routes.cjs'));
+    await fs.writeFile(path.join(fixture, 'renderer', 'boot', 'index.html'), '<!doctype html>');
+    await fs.writeFile(path.join(fixture, 'renderer', 'shared', 'api.js'), '');
+    if (privateTheme) {
+      await fs.mkdir(path.join(fixture, 'renderer', 'boot', 'private'));
+      await fs.writeFile(path.join(fixture, 'renderer', 'boot', 'private', 'theme.json'), privateTheme);
+    }
+    await asar.createPackage(fixture, archive);
+
+    const {stdout} = await execFileAsync(electronPath, [helperPath, archive], {
+      env: {...process.env, ELECTRON_RUN_AS_NODE: '1'},
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024
+    });
+    const result = JSON.parse(stdout);
+    assert.equal(result.status, privateTheme ? 200 : 404);
+    assert.equal(result.body, privateTheme || '{"error":"Not found"}');
+    assert.equal(result.closed, true);
+  }
 });
 
 test('private responses remain pinned to the preopened file and repeated close releases every handle', async t => {
