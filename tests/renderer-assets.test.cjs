@@ -32,38 +32,61 @@ test('boot document uses the exact product name and only local allowlisted asset
   assert.match(html, /PROJECT ZERO <span>\/\/<\/span> PILOT CODEX WORKBENCH/);
   assert.match(html, /href="\/boot\.css"/);
   assert.match(html, /src="\/shared\/api\.js"/);
+  assert.match(html, /src="\/boot-canvas\.js"/);
   assert.match(html, /src="\/boot\.js"/);
   assert.doesNotMatch(html, /https?:\/\//i);
 });
 
-test('public boot theme exposes the original PROJECT ZERO 00 mark and three local scene layers', async () => {
+test('boot presentation uses one canvas with hidden semantics and keeps controls in the DOM', async () => {
   const html = await read('boot/index.html');
   const css = await read('boot/boot.css');
 
-  assert.match(html, /class="project-mark"[^>]*aria-label="PROJECT ZERO 00 原创系统徽记"/);
-  for (const scene of ['awakening', 'sync', 'online']) {
-    assert.match(html, new RegExp(`class="scene-art scene-${scene}"[^>]*data-scene="${scene}"[^>]*aria-hidden="true"`));
-  }
-  for (const asset of ['scene-b-awakening.webp', 'scene-a-sync.webp', 'scene-c-online.webp']) {
-    assert.match(css, new RegExp(`url\\(["']?/assets/${asset.replace('.', '\\.') }["']?\\)`));
-  }
-  assert.doesNotMatch(`${html}\n${css}`, /pilot-silhouette|\bNERV\b|EVANGELION/i);
+  assert.match(html, /<canvas[^>]*id="boot-sequence"[^>]*aria-hidden="true"/);
+  assert.match(html, /id="ring-progress"[^>]*role="progressbar"/);
+  assert.match(html, /id="boot-live-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="pilot-authorization"/);
+  assert.match(html, /id="transition-curtain"/);
+  assert.match(html, /id="skip-button"[^>]*aria-label="跳过动态演示"/);
+  assert.match(html, /id="confirm-button"[^>]*aria-label="确认驾驶员授权并完成同步"/);
+  assert.match(html, /id="retry-button"[^>]*aria-label="重新检查 Codex 连接"/);
+  assert.doesNotMatch(`${html}\n${css}`, /pilot-silhouette|cockpit|helmet|骑士|荧光绿/i);
+  assert.doesNotMatch(`${html}\n${css}`, /\bHIDDEN\b/);
   assert.doesNotMatch(`${html}\n${css}`, /(?:data:image|https?:\/\/)/i);
-  assert.match(css, /\.scene-art[^}]*pointer-events:\s*none/s);
-  assert.match(css, /\.sync-readout[^}]*z-index:\s*[2-9]/s);
-  assert.match(css, /\.action-panel[^}]*z-index:\s*[2-9]/s);
+  assert.match(css, /\.boot-presentation[^}]*position:\s*fixed[^}]*inset:\s*0[^}]*overflow:\s*hidden/s);
+  assert.match(css, /#boot-sequence[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/s);
+  assert.match(css, /\.visually-hidden[^}]*clip:\s*rect\(0 0 0 0\)/s);
 });
 
-test('dynamic synchronization ring exposes progressbar semantics', async () => {
+test('boot scripts load in the required deterministic order', async () => {
   const html = await read('boot/index.html');
+  const scripts = [...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map(match => match[1]);
+  const start = scripts.indexOf('/shared/api.js');
 
-  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*role="progressbar"/);
-  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-label="同步进度"/);
-  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-valuemin="0"/);
-  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-valuemax="100"/);
-  assert.match(html, /<svg[^>]*id="ring-progress"[^>]*aria-valuenow="0"/);
-  assert.doesNotMatch(html, /<svg[^>]*role="img"/);
-  assert.match(html, /<circle[^>]*id="ring-stroke"[^>]*class="ring-progress"/);
+  assert.notEqual(start, -1);
+  assert.deepEqual(scripts.slice(start, start + 8), [
+    '/shared/api.js',
+    '/motion.js',
+    '/stage-layout.js',
+    '/timeline.js',
+    '/boot-canvas.js',
+    '/sequence-audio.js',
+    '/audio-clock.js',
+    '/boot.js'
+  ]);
+});
+
+test('canvas source pins the exact MIT code origins while excluding upstream media', async () => {
+  const source = await read('boot/boot-canvas.js');
+
+  assert.match(source, /https:\/\/github\.com\/Iris-change\/eva-codex-workbench/);
+  assert.match(source, /b12753e063d6b8752b4e0994e851d5cc0950f85b/);
+  for (const file of ['unified-sequence.js', 'boot-atmosphere.js', 'stage-layout.js']) {
+    assert.match(source, new RegExp(file.replace('.', '\\.')));
+  }
+  assert.match(source, /Adapted MIT code scope/);
+  assert.match(source, /NERV marks[^.]*not covered/);
+  assert.match(source, /voice\/audio[^.]*not covered/);
+  assert.doesNotMatch(source, /data:image|new Image\s*\(|fetch\s*\(/);
 });
 
 test('served renderer code contains no Node API, embedded token, or remote resource', async () => {
@@ -97,16 +120,17 @@ test('declarative boot modules are served through exact allowlist entries only',
   const bootRoot = path.join(fixtureRoot, 'boot');
   const sharedRoot = path.join(fixtureRoot, 'shared');
   const service = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
+  const scripts = ['motion.js', 'stage-layout.js', 'timeline.js', 'boot-canvas.js', 'sequence-audio.js', 'audio-clock.js'];
 
   try {
     await fs.mkdir(bootRoot);
     await fs.mkdir(sharedRoot);
-    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js', 'sequence-audio.js', 'audio-clock.js']) {
+    for (const script of scripts) {
       await fs.writeFile(path.join(bootRoot, script), `globalThis.${script} = true;`);
     }
     const address = await service.listen();
 
-    for (const script of ['motion.js', 'stage-layout.js', 'timeline.js', 'sequence-audio.js', 'audio-clock.js']) {
+    for (const script of scripts) {
       const response = await request(address, `/${script}`);
       assert.equal(response.status, 200, script);
       assert.equal(response.headers['content-type'], 'text/javascript; charset=utf-8', script);
@@ -128,35 +152,39 @@ test('declarative boot modules are served through exact allowlist entries only',
   }
 });
 
-test('reduced motion removes decorative animation and keeps scene changes to a short cross-fade', async () => {
+test('reduced motion limits boot composition changes to a short cross-fade', async () => {
   const css = await read('boot/boot.css');
 
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(css, /\.orbit[^}]*animation: none !important/s);
-  assert.match(css, /\.ring-progress[^}]*transition: none !important/s);
-  assert.match(css, /\.scene-art[^}]*transition: opacity 120ms/s);
+  assert.match(css, /\.boot-control-layer[^}]*transition:\s*opacity 180ms/s);
+  assert.match(css, /body\[data-motion="reduced"\] \.boot-control-layer[^}]*transition:\s*opacity 180ms/s);
+  assert.doesNotMatch(css, /transition-duration:\s*(?:[2-9]\d\d|\d{4,})ms[^;]*!important/s);
 });
 
-test('scene artwork cross-fades without parallax and narrow layouts keep controls scroll-reachable', async () => {
+test('full-screen boot has no scrolling and narrow layouts keep every action reachable', async () => {
   const css = await read('boot/boot.css');
 
-  assert.match(css, /\.scene-art[^}]*transition:\s*opacity/s);
-  assert.match(css, /body\[data-scene="awakening"\][^}]*\.scene-awakening[^}]*opacity:\s*1/s);
-  assert.match(css, /body\[data-scene="sync"\][^}]*\.scene-sync[^}]*opacity:\s*1/s);
-  assert.match(css, /body\[data-scene="online"\][^}]*\.scene-online[^}]*opacity:\s*1/s);
-  assert.match(css, /@media \(max-width: 780px\)[\s\S]*\.boot-grid[^}]*grid-template-columns:\s*1fr/s);
-  assert.match(css, /@media \(max-width: 780px\)[\s\S]*\.boot-footer[^}]*position:\s*static/s);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.scene-art[^}]*transition:\s*opacity 120ms/s);
+  assert.match(css, /html,\s*body[^}]*width:\s*100%[^}]*height:\s*100%/s);
+  assert.match(css, /body:not\(\[data-phase="complete"\]\)[^}]*overflow:\s*hidden/s);
+  assert.match(css, /body\[data-phase="complete"\][^}]*overflow:\s*auto/s);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.skip-button[^}]*top:/s);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.pilot-authorization[^}]*left:/s);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.diagnostic-panel[^}]*max-height:/s);
 });
 
-test('waiting presentation disables every decorative animation and ring transition', async () => {
-  const css = await read('boot/boot.css');
+test('reference analysis fixes source priority without private paths, captures, or social identity', async () => {
+  const analysis = await fs.readFile(path.join(__dirname, '..', 'docs', 'reference-analysis.md'), 'utf8');
 
-  for (const selector of ['orbit', 'telemetry span', 'signal-dot']) {
-    const escaped = selector.replace('.', '\\.').replace(' ', '\\s+');
-    assert.match(css, new RegExp(`body\\[data-phase="waiting"\\] \\.${escaped}[^\\{]*\\{[^}]*animation: none`, 's'));
-  }
-  assert.match(css, /body\[data-phase="waiting"\] \.ring-progress[^}]*transition: none/s);
+  assert.match(analysis, /EVA startup recording is the sole primary reference/i);
+  assert.match(analysis, /engineering reference only/i);
+  assert.match(analysis, /Kamen Rider recording is a secondary motion reference only/i);
+  assert.match(analysis, /node cascades/i);
+  assert.match(analysis, /authorization flash/i);
+  assert.match(analysis, /progress-linked/i);
+  assert.match(analysis, /completion handoff/i);
+  assert.doesNotMatch(analysis, /\/(?:Users|home|private|var|tmp)\/|[A-Z]:\\/);
+  assert.doesNotMatch(analysis, /<img|!\[[^\]]*\]\(|screenshot|screen capture|截图/i);
+  assert.doesNotMatch(analysis, /@[a-z0-9_]{2,}|social account|账号|handle/i);
 });
 
 test('small functional text colors meet 4.5 to 1 contrast on the ice surface', async () => {

@@ -412,6 +412,7 @@ function createWorkbenchService({
     ['/motion.js', {root: bootRoot, fileName: 'motion.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/stage-layout.js', {root: bootRoot, fileName: 'stage-layout.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/timeline.js', {root: bootRoot, fileName: 'timeline.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/boot-canvas.js', {root: bootRoot, fileName: 'boot-canvas.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/sequence-audio.js', {root: bootRoot, fileName: 'sequence-audio.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/audio-clock.js', {root: bootRoot, fileName: 'audio-clock.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/shared/api.js', {root: sharedRoot, fileName: 'api.js', contentType: 'text/javascript; charset=utf-8'}],

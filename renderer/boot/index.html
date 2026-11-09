@@ -11,6 +11,13 @@
   <script src="/vendor/xterm.js" defer></script>
   <script src="/vendor/xterm-addon-fit.js" defer></script>
   <script src="/shared/api.js" defer></script>
+  <script src="/motion.js" defer></script>
+  <script src="/stage-layout.js" defer></script>
+  <script src="/timeline.js" defer></script>
+  <script src="/boot-canvas.js" defer></script>
+  <script src="/sequence-audio.js" defer></script>
+  <script src="/audio-clock.js" defer></script>
+  <script src="/boot.js" defer></script>
   <script src="/conversation.js" defer></script>
   <script src="/approvals.js" defer></script>
   <script src="/files.js" defer></script>
@@ -20,93 +27,49 @@
   <script src="/git.js" defer></script>
   <script src="/plugins.js" defer></script>
   <script src="/workbench.js" defer></script>
-  <script src="/boot.js" defer></script>
 </head>
-<body data-phase="syncing" data-scene="awakening">
-  <div class="screen-grain" aria-hidden="true"></div>
-  <div id="boot-screen">
-  <header class="topbar">
-    <div class="identity">
-      <div class="project-mark" role="img" aria-label="PROJECT ZERO 00 原创系统徽记">
-        <strong>PZ</strong><small>00</small>
+<body data-phase="syncing" data-scene="awakening" data-stage="wake">
+  <div id="boot-screen" class="boot-presentation">
+    <canvas id="boot-sequence" aria-hidden="true"></canvas>
+
+    <div class="visually-hidden boot-semantics">
+      <div id="ring-progress" role="progressbar" aria-label="同步进度"
+        aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span id="ring-stroke" aria-hidden="true"></span>
+        <output id="progress-value">00.0</output><span>%</span>
       </div>
-      <div>
-        <p class="eyebrow">独立本地控制界面 <span lang="ja">起動準備</span></p>
-        <h1>PROJECT ZERO <span>//</span> PILOT CODEX WORKBENCH</h1>
-      </div>
+      <p id="boot-live-status" role="status" aria-live="polite" aria-atomic="true">启动序列正在运行。</p>
+      <time id="clock-readout">T+000.0</time>
     </div>
-    <div class="top-status" aria-label="安全状态">
-      <span class="signal-dot"></span><span>LOOPBACK / LOCAL</span><span class="build-tag">PREVIEW 0.1</span>
-    </div>
-  </header>
 
-  <main class="boot-grid">
-    <aside class="status-rail" aria-label="启动子系统">
-      <p class="rail-title">SUBSYSTEM / 06</p>
-      <ol>
-        <li class="hex-cell active"><span>01</span><strong>核心</strong><small>CORE</small></li>
-        <li class="hex-cell active"><span>02</span><strong>桥接</strong><small>BRIDGE</small></li>
-        <li class="hex-cell active"><span>03</span><strong>会话</strong><small>SESSION</small></li>
-        <li class="hex-cell"><span>04</span><strong>模型</strong><small>MODEL</small></li>
-        <li class="hex-cell"><span>05</span><strong>界面</strong><small>RENDER</small></li>
-        <li class="hex-cell"><span>06</span><strong>确认</strong><small>PILOT</small></li>
-      </ol>
-    </aside>
+    <button id="skip-button" class="skip-button boot-control-layer" type="button"
+      aria-label="跳过动态演示" hidden>SKIP / 跳过 <kbd>ESC</kbd></button>
 
-    <section class="sync-stage" aria-labelledby="sync-heading">
-      <div class="scene-art scene-awakening" data-scene="awakening" aria-hidden="true"></div>
-      <div class="scene-art scene-sync" data-scene="sync" aria-hidden="true"></div>
-      <div class="scene-art scene-online" data-scene="online" aria-hidden="true"></div>
-      <div class="stage-index" aria-hidden="true">00—SYNC / A</div>
-      <div class="sync-assembly">
-        <div class="orbit orbit-outer" aria-hidden="true"><i></i><i></i><i></i></div>
-        <div class="orbit orbit-inner" aria-hidden="true"></div>
-        <svg id="ring-progress" class="progress-ring" viewBox="0 0 320 320"
-          role="progressbar" aria-label="同步进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <title id="ring-title">同步进度</title>
-          <desc id="ring-desc">启动同步会在后端就绪且用户确认前停留在百分之九十九点二。</desc>
-          <circle class="ring-track" cx="160" cy="160" r="132"></circle>
-          <circle id="ring-stroke" class="ring-progress" cx="160" cy="160" r="132"></circle>
-        </svg>
-        <div class="sync-readout">
-          <p class="sync-label" lang="ja">同期率</p>
-          <p class="sync-number"><span id="progress-value">00.0</span><small>%</small></p>
-          <h2 id="sync-heading">系统同步中</h2>
-          <p id="phase-caption">正在建立本地工作台链路</p>
-        </div>
-      </div>
-
-      <div class="action-panel">
-        <button id="confirm-button" class="confirm-button" type="button" disabled>
-          <span class="button-code">PILOT / 00</span><strong>确认并完成同步</strong><span class="button-arrow" aria-hidden="true">→</span>
-        </button>
-        <button id="skip-button" class="skip-button" type="button" hidden>跳过动态演示 <kbd>ESC</kbd></button>
-      </div>
+    <section id="pilot-authorization" class="pilot-authorization boot-control-layer"
+      aria-labelledby="sync-heading">
+      <p class="authorization-code">PILOT-00 / LOCAL AUTHORIZATION</p>
+      <h1 id="sync-heading">系统同步中</h1>
+      <p id="phase-caption">正在建立本地工作台链路</p>
+      <button id="confirm-button" class="confirm-button" type="button"
+        aria-label="确认驾驶员授权并完成同步" disabled>
+        <span>CONFIRM / 确认</span><strong>完成同步</strong>
+      </button>
     </section>
 
-    <aside class="diagnostic-panel" aria-label="启动诊断">
-      <div class="diagnostic-heading"><p class="eyebrow" lang="ja">接続待機</p><h2>链路诊断</h2></div>
+    <aside class="diagnostic-panel boot-control-layer" aria-label="启动诊断">
+      <p class="diagnostic-code">DIAGNOSTIC / LOCAL</p>
       <dl>
-        <div><dt>渲染隔离</dt><dd class="ok">已启用</dd></div>
-        <div><dt>服务边界</dt><dd>127.0.0.1</dd></div>
-        <div><dt>远程资源</dt><dd class="ok">已阻止</dd></div>
+        <div><dt>安全边界</dt><dd>127.0.0.1</dd></div>
         <div><dt>后端状态</dt><dd id="backend-state">检查中</dd></div>
       </dl>
       <div class="diagnostic-message" role="status" aria-live="polite">
-        <span class="message-index">D-00</span><p id="diagnostic-text">正在检查本地服务，请稍候。</p>
-        <button id="retry-button" class="retry-button" type="button" hidden>重新检查 Codex</button>
+        <p id="diagnostic-text">正在检查本地服务，请稍候。</p>
+        <button id="retry-button" class="retry-button" type="button"
+          aria-label="重新检查 Codex 连接" hidden>重新检查 Codex</button>
       </div>
-      <div class="telemetry" aria-hidden="true">
-        <span></span><span></span><span></span><span></span><span></span><span></span>
-        <span></span><span></span><span></span><span></span><span></span><span></span>
-      </div>
-      <p class="privacy-note">启动诊断仅显示脱敏状态。凭据不会进入渲染进程。</p>
     </aside>
-  </main>
 
-  <footer class="boot-footer">
-    <span>ORIGINAL INTERFACE SYSTEM / PROJECT ZERO</span><span id="clock-readout">T+000.0</span><span>按确认键前不会进入工作台</span>
-  </footer>
+    <div id="transition-curtain" class="transition-curtain" aria-hidden="true"></div>
   </div>
 
   <main id="workbench-shell" class="workbench-shell" hidden>
