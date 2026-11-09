@@ -133,6 +133,10 @@ function deferred() {
   return {promise, resolve, reject};
 }
 
+async function flushMicrotasks(turns = 3) {
+  for (let index = 0; index < turns; index += 1) await Promise.resolve();
+}
+
 function response({status = 200, json = {}} = {}) {
   return {
     ok: status >= 200 && status < 300,
@@ -378,6 +382,92 @@ test('private config accepts only fixed same-origin asset URLs and applies the f
   );
 });
 
+test('a decoded private track shorter than audioEndMs closes and falls back to the public silent clock', async () => {
+  let closeCalls = 0;
+  const decodedTrack = {
+    currentTime: 0,
+    duration: 20.7,
+    volume: 1,
+    play: async () => {},
+    pause() {},
+    close: async () => { closeCalls += 1; }
+  };
+  const view = await fixture({}, {
+    decodedTrack,
+    fetch: async () => response({json: {
+      displayName: 'PROJECT ZERO // PRIVATE',
+      mark: '/private/boot-mark.webp',
+      portrait: '/private/rei-portrait.webp',
+      soundtrack: '/private/startup-reference.wav',
+      audioStartMs: 250,
+      audioEndMs: 20_750
+    }})
+  });
+
+  assert.equal(closeCalls, 1);
+  assert.notEqual(view.audioClock.options.audio, decodedTrack);
+  assert.equal(view.audioClock.options.startSeconds, 0);
+  assert.equal(view.audioClock.options.endSeconds, 20.5);
+  assert.equal(view.audioClock.calls.start, 1);
+});
+
+test('a missing or non-finite decoded duration fails closed without stalling presentation', async () => {
+  for (const duration of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+    let closeCalls = 0;
+    const decodedTrack = {
+      currentTime: 0,
+      duration,
+      volume: 1,
+      play: async () => {},
+      pause() {},
+      close: async () => { closeCalls += 1; }
+    };
+    const view = await fixture({}, {
+      decodedTrack,
+      fetch: async () => response({json: {
+        displayName: 'PROJECT ZERO // PRIVATE',
+        mark: '/private/boot-mark.webp',
+        portrait: '/private/rei-portrait.webp',
+        soundtrack: '/private/startup-reference.wav',
+        audioStartMs: 250,
+        audioEndMs: 20_750
+      }})
+    });
+
+    assert.equal(closeCalls, 1);
+    assert.notEqual(view.audioClock.options.audio, decodedTrack);
+    assert.equal(view.audioClock.options.startSeconds, 0);
+    assert.equal(view.audioClock.options.endSeconds, 20.5);
+    assert.equal(view.audioClock.calls.start, 1);
+  }
+});
+
+test('decoded duration accepts a sub-millisecond floating-point shortfall', async () => {
+  const decodedTrack = {
+    currentTime: 0,
+    duration: 20.7499995,
+    volume: 1,
+    play: async () => {},
+    pause() {},
+    close: async () => { throw new Error('valid track must remain open'); }
+  };
+  const view = await fixture({}, {
+    decodedTrack,
+    fetch: async () => response({json: {
+      displayName: 'PROJECT ZERO // PRIVATE',
+      mark: '/private/boot-mark.webp',
+      portrait: '/private/rei-portrait.webp',
+      soundtrack: '/private/startup-reference.wav',
+      audioStartMs: 250,
+      audioEndMs: 20_750
+    }})
+  });
+
+  assert.equal(view.audioClock.options.audio, decodedTrack);
+  assert.equal(view.audioClock.options.startSeconds, 0.25);
+  assert.equal(view.audioClock.options.endSeconds, 20.75);
+});
+
 test('arbitrary private URLs are rejected without fetching them', async () => {
   const view = await fixture({}, {
     fetch: async () => response({json: {
@@ -466,9 +556,13 @@ test('Escape uses skip without preventing the browser default', async () => {
 });
 
 test('completion closes for 180 ms, completes the window once, reveals the shell and resumes polling', async () => {
+  let healthCalls = 0;
   let completeCalls = 0;
   const view = await fixture({
-    health: () => Promise.resolve({ready: true, code: 'READY'}),
+    health: () => {
+      healthCalls += 1;
+      return Promise.resolve({ready: true, code: 'READY'});
+    },
     completePresentation: () => {
       completeCalls += 1;
       view.events.push('api.completePresentation');
@@ -481,6 +575,8 @@ test('completion closes for 180 ms, completes the window once, reveals the shell
   view.audioClock.tick(20_500);
 
   const completionRun = view.audioClock.end();
+  await flushMicrotasks();
+  assert.equal(healthCalls, 3);
   assert.equal(view.document.body.dataset.transition, 'closing');
   assert.equal(completeCalls, 0);
   assert.equal(view.elements['#boot-screen'].hidden, false);
@@ -514,6 +610,83 @@ test('completion closes for 180 ms, completes the window once, reveals the shell
   assert.equal(completeCalls, 1);
 });
 
+test('completion revalidates exact READY before closing and returns to the authorization gate on failure', async () => {
+  let healthCalls = 0;
+  let completeCalls = 0;
+  const view = await fixture({
+    health: () => Promise.resolve(++healthCalls <= 2
+      ? {ready: true, code: 'READY'}
+      : {ready: false, code: 'DISCONNECTED'}),
+    completePresentation: () => {
+      completeCalls += 1;
+      return Promise.resolve();
+    }
+  });
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+  view.audioClock.tick(20_500);
+
+  const completionRun = view.audioClock.end();
+  await flushMicrotasks();
+  if (view.clock.countTimeouts(180) > 0) await view.clock.fireTimeout(180);
+  await completionRun;
+
+  assert.equal(healthCalls, 3);
+  assert.equal(completeCalls, 0);
+  assert.equal(view.document.body.dataset.transition, undefined);
+  assert.equal(view.elements['#boot-screen'].hidden, false);
+  assert.equal(view.elements['#workbench-shell'].hidden, true);
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(view.controller.getState().confirmed, false);
+  assert.equal(view.document.body.dataset.stage, 'authorize');
+  assert.equal(view.canvas.lastSnapshot.stage, 'authorize');
+  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.equal(view.clock.countTimeouts(500), 1);
+});
+
+test('completion aborts a stale disconnect poll before its fresh READY revalidation', async () => {
+  const stalePoll = deferred();
+  const freshReady = deferred();
+  let healthCalls = 0;
+  let staleSignal;
+  let completeCalls = 0;
+  const view = await fixture({
+    health: ({signal}) => {
+      healthCalls += 1;
+      if (healthCalls <= 2) return Promise.resolve({ready: true, code: 'READY'});
+      if (healthCalls === 3) {
+        staleSignal = signal;
+        return stalePoll.promise;
+      }
+      return freshReady.promise;
+    },
+    completePresentation: () => {
+      completeCalls += 1;
+      return Promise.resolve();
+    }
+  });
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(15_500);
+  await view.elements['#confirm-button'].dispatch('click');
+  const staleRun = view.clock.fireTimeout(500);
+  view.audioClock.tick(20_500);
+
+  const completionRun = view.audioClock.end();
+  stalePoll.resolve({ready: false, code: 'DISCONNECTED'});
+  await staleRun;
+  freshReady.resolve({ready: true, code: 'READY'});
+  await flushMicrotasks();
+  if (view.clock.countTimeouts(180) > 0) await view.clock.fireTimeout(180);
+  await completionRun;
+
+  assert.equal(staleSignal.aborted, true);
+  assert.equal(healthCalls, 4);
+  assert.equal(completeCalls, 1);
+  assert.equal(view.controller.getState().phase, 'complete');
+  assert.equal(view.elements['#workbench-shell'].hidden, false);
+});
+
 test('a rejected completion API fails closed with no unhandled reveal', async () => {
   const view = await fixture({
     health: () => Promise.resolve({ready: true, code: 'READY'}),
@@ -523,12 +696,16 @@ test('a rejected completion API fails closed with no unhandled reveal', async ()
   view.audioClock.tick(15_500);
   await view.elements['#confirm-button'].dispatch('click');
   const completionRun = view.audioClock.end();
+  await flushMicrotasks();
   await view.clock.fireTimeout(180);
   await completionRun;
 
   assert.equal(view.elements['#boot-screen'].hidden, false);
   assert.equal(view.elements['#workbench-shell'].hidden, true);
-  assert.equal(view.controller.getState().phase, 'failed');
+  assert.equal(view.controller.getState().phase, 'waiting');
+  assert.equal(view.controller.getState().confirmed, false);
+  assert.equal(view.document.body.dataset.stage, 'authorize');
+  assert.equal(view.canvas.lastSnapshot.stage, 'authorize');
   assert.equal(view.document.body.dataset.transition, undefined);
   assert.doesNotMatch(view.elements['#diagnostic-text'].textContent, /private|window failure/);
   assert.equal(view.clock.countTimeouts(500), 1);
@@ -548,6 +725,7 @@ test('destroy during a pending completion aborts and blocks every later DOM tran
   view.audioClock.tick(15_500);
   await view.elements['#confirm-button'].dispatch('click');
   const completionRun = view.audioClock.end();
+  await flushMicrotasks();
   await view.clock.fireTimeout(180);
 
   view.controller.destroy();
@@ -644,12 +822,14 @@ test('health polling remains serial', async () => {
   assert.equal(maximum, 1);
 });
 
-test('disconnect after confirmation revokes authorization and pauses the resumed clock', async () => {
+test('disconnect after confirmation restores authorize and requires a fresh second confirmation', async () => {
   let calls = 0;
   const view = await fixture({
-    health: () => Promise.resolve(++calls <= 2
-      ? {ready: true, code: 'READY'}
-      : {ready: false, code: 'DISCONNECTED'})
+    health: () => {
+      calls += 1;
+      if (calls <= 2 || calls >= 4) return Promise.resolve({ready: true, code: 'READY'});
+      return Promise.resolve({ready: false, code: 'DISCONNECTED'});
+    }
   });
   await view.clock.fireTimeout(0);
   view.audioClock.tick(15_500);
@@ -657,10 +837,25 @@ test('disconnect after confirmation revokes authorization and pauses the resumed
   assert.equal(view.audioClock.calls.pause, 1);
   await view.clock.fireTimeout(500);
 
-  assert.equal(view.controller.getState().phase, 'failed');
+  assert.equal(view.controller.getState().phase, 'waiting');
   assert.equal(view.controller.getState().confirmed, false);
   assert.equal(view.audioClock.calls.pause, 2);
+  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.deepEqual(
+    view.events.filter(event => event === 'audio.pause' || event === 'audio.seek:15500').slice(-2),
+    ['audio.pause', 'audio.seek:15500']
+  );
+  assert.equal(view.document.body.dataset.stage, 'authorize');
+  assert.equal(view.canvas.lastSnapshot.stage, 'authorize');
+  assert.equal(view.elements['#confirm-button'].disabled, true);
   assert.equal(view.elements['#workbench-shell'].hidden, true);
+
+  await view.clock.fireTimeout(500);
+  assert.equal(view.elements['#confirm-button'].disabled, false);
+  await view.elements['#confirm-button'].dispatch('click');
+  assert.equal(calls, 5);
+  assert.equal(view.controller.getState().phase, 'completing');
+  assert.equal(view.audioClock.calls.resume, 2);
 });
 
 test('destroy aborts health, destroys audio once and blocks late writes', async () => {

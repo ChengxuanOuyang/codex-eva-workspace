@@ -10,6 +10,7 @@
   ]);
   const AUTHORIZATION_MS = 15_500;
   const PRESENTATION_END_MS = 20_500;
+  const TRACK_DURATION_TOLERANCE_MS = 1;
   const PRIVATE_THEME_FIELDS = Object.freeze([
     'audioEndMs',
     'audioStartMs',
@@ -146,6 +147,11 @@
       return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : 0.65;
     }
 
+    function trackCoversPresentation(track, presentation) {
+      return Number.isFinite(track?.duration)
+        && track.duration * 1000 + TRACK_DURATION_TOLERANCE_MS >= presentation.audioEndMs;
+    }
+
     function silentTrack() {
       let currentTime = 0;
       let trackVolume = normalizedVolume();
@@ -280,17 +286,12 @@
 
     function dispatch(event) {
       if (destroyed) return false;
-      const wasConfirmed = state.confirmed;
       const next = api.nextBootState(state, event);
       if (next === state) {
         render();
         return false;
       }
       state = next;
-      if (event.type === 'failed' && wasConfirmed && !gatePaused) {
-        audioClock?.pause();
-        gatePaused = true;
-      }
       render();
       if (state.phase === 'complete') unbindBootInteractions();
       return true;
@@ -314,6 +315,15 @@
       }
     }
 
+    function restoreAuthorizationGate() {
+      if (destroyed || !audioClock) return;
+      audioClock.pause();
+      audioClock.seek(AUTHORIZATION_MS);
+      gatePaused = true;
+      dispatch({type: 'skip'});
+      renderTimeline(AUTHORIZATION_MS);
+    }
+
     function normalizeReadiness(health) {
       if (!health || typeof health !== 'object') return 'DISCONNECTED';
       if (Object.hasOwn(READINESS_DETAILS, health.code)) {
@@ -325,6 +335,7 @@
 
     function applyReadiness(health, {retrying = false} = {}) {
       const code = normalizeReadiness(health);
+      const authorizationWasConfirmed = state.confirmed;
       readinessCode = code;
       document.body.dataset.readiness = code.toLowerCase();
       if (state.phase === 'complete') {
@@ -342,6 +353,7 @@
           : '本地后端已就绪，等待同步演示完成。');
       } else {
         if (code !== 'INITIALIZING' || state.ready || state.confirmed) dispatch({type: 'failed'});
+        if (authorizationWasConfirmed) restoreAuthorizationGate();
         const details = READINESS_DETAILS[code];
         setText(elements.backend, details.backend);
         setText(elements.diagnostic, details.diagnostic);
@@ -483,8 +495,20 @@
       if (destroyed || completionInFlight || state.phase !== 'completing') return;
       completionInFlight = true;
       stopHealth();
-      document.body.dataset.transition = 'closing';
+      const generation = ++healthGeneration;
+      const healthCheckController = new root.AbortController();
+      healthController = healthCheckController;
       try {
+        const health = await api.health({signal: healthCheckController.signal});
+        if (destroyed || generation !== healthGeneration || healthCheckController.signal.aborted) return;
+        if (health?.ready !== true || health.code !== 'READY') {
+          applyReadiness({ready: false, code: 'DISCONNECTED'});
+          scheduleHealth(500);
+          return;
+        }
+        applyReadiness(health);
+        if (healthController === healthCheckController) healthController = undefined;
+        document.body.dataset.transition = 'closing';
         if (!await waitForCurtain() || destroyed) return;
         const controller = new root.AbortController();
         completionController = controller;
@@ -502,6 +526,7 @@
         applyReadiness({ready: false, code: 'DISCONNECTED'});
         scheduleHealth(500);
       } finally {
+        if (healthController === healthCheckController) healthController = undefined;
         completionController = undefined;
         completionInFlight = false;
       }
@@ -539,17 +564,26 @@
     }
 
     async function initializePresentation() {
-      const theme = await loadPresentationTheme();
+      let theme = await loadPresentationTheme();
       if (destroyed) return;
       applyPrivatePresentation(theme);
       let decodedTrack = silentTrack();
       if (theme.audio && typeof loadSequenceAudio === 'function') {
         try {
-          decodedTrack = await loadSequenceAudio(theme.audio, {
+          const loadedTrack = await loadSequenceAudio(theme.audio, {
             fetch: fetchPrivate,
             AudioContext: root.AudioContext || root.webkitAudioContext
           });
+          if (trackCoversPresentation(loadedTrack, theme)) {
+            decodedTrack = loadedTrack;
+          } else {
+            await Promise.resolve(loadedTrack?.close?.()).catch(() => {});
+            theme = PUBLIC_PRESENTATION;
+            applyPrivatePresentation(theme);
+          }
         } catch {
+          theme = PUBLIC_PRESENTATION;
+          applyPrivatePresentation(theme);
           decodedTrack = silentTrack();
         }
       }
