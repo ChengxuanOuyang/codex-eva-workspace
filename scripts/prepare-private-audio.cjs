@@ -155,16 +155,40 @@ function combined(failures) {
     : new AggregateError(failures, 'PRIVATE_AUDIO_CLEANUP_FAILED');
 }
 
+async function openMatchingWritableOutput(output, parent, fsModule) {
+  let handle;
+  try {
+    handle = await fsModule.open(
+      output.target,
+      constants.O_WRONLY | constants.O_NOFOLLOW
+    );
+    const authority = await output.handle.stat();
+    const writable = await handle.stat();
+    const current = await fsModule.lstat(output.target);
+    if (!authority.isFile() || !sameIdentity(authority, output.identity) ||
+        !writable.isFile() || !sameIdentity(writable, output.identity) ||
+        current.isSymbolicLink() || !current.isFile() ||
+        !sameIdentity(current, output.identity) ||
+        !await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT');
+    return handle;
+  } catch {
+    await handle?.close().catch(() => {});
+    return null;
+  }
+}
+
 async function openGeneratedOutput(target, parent, fsModule) {
   if (!await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT_PARENT');
-  const handle = await fsModule.open(target, constants.O_RDWR | constants.O_NOFOLLOW);
+  const handle = await fsModule.open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const identity = await handle.stat();
     const current = await fsModule.lstat(target);
     if (!identity.isFile() || current.isSymbolicLink() || !current.isFile() ||
         !sameIdentity(identity, current) ||
         !await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT');
-    return {handle, identity, target};
+    const output = {handle, identity, target, writeHandle: null};
+    output.writeHandle = await openMatchingWritableOutput(output, parent, fsModule);
+    return output;
   } catch (error) {
     await handle.close().catch(() => {});
     throw error;
@@ -194,15 +218,21 @@ async function readVerifiedOutput(output, parent, fsModule) {
 
 async function cleanupGeneratedOutput(output, parent, fsModule) {
   const failures = [];
-  try {
-    await output.handle.truncate(0);
-  } catch (error) {
-    failures.push(error);
+  if (!output.writeHandle) {
+    output.writeHandle = await openMatchingWritableOutput(output, parent, fsModule);
   }
-  try {
-    await output.handle.sync();
-  } catch (error) {
-    failures.push(error);
+  if (output.writeHandle) {
+    try {
+      const authority = await output.handle.stat();
+      const writable = await output.writeHandle.stat();
+      if (authority.isFile() && sameIdentity(authority, output.identity) &&
+          writable.isFile() && sameIdentity(writable, output.identity)) {
+        await output.writeHandle.truncate(0);
+        await output.writeHandle.sync();
+      }
+    } catch (error) {
+      failures.push(error);
+    }
   }
 
   try {
@@ -286,6 +316,7 @@ async function preparePrivateAudio({
     }
     throw new PrivateAudioPreparationError(error);
   } finally {
+    await outputHandle?.writeHandle?.close().catch(() => {});
     await outputHandle?.handle.close().catch(() => {});
     await inputHandle?.handle.close().catch(() => {});
     await parentHandle?.handle.close().catch(() => {});

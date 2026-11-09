@@ -138,6 +138,27 @@ async function expectStableAudioFailure(operation, forbidden = []) {
   return captured;
 }
 
+function denyOutputWriteOpens(output) {
+  let writeOpenAttempts = 0;
+  return {
+    fsModule: {
+      ...fs,
+      async open(target, flags, ...arguments_) {
+        if (target === output && typeof flags === 'number' && (flags & 3) !== 0) {
+          writeOpenAttempts += 1;
+          const error = Error('simulated read-only output');
+          error.code = 'EACCES';
+          throw error;
+        }
+        return fs.open(target, flags, ...arguments_);
+      }
+    },
+    get writeOpenAttempts() {
+      return writeOpenAttempts;
+    }
+  };
+}
+
 test('prepares private audio with the exact afconvert argument array and redacted summary', async t => {
   const {input, output} = await privateAudioFixture(t);
   const calls = [];
@@ -164,6 +185,54 @@ test('prepares private audio with the exact afconvert argument array and redacte
   ]);
   assert.equal(logs[0].includes(input), false);
   assert.equal(logs[0].includes(output), false);
+});
+
+test('private audio preparation accepts a valid 0444 generated output', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const readOnly = denyOutputWriteOpens(output);
+
+  const result = await preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => {
+      await fs.writeFile(output, syntheticM4a());
+      await fs.chmod(output, 0o444);
+    },
+    fsModule: readOnly.fsModule,
+    log: () => {}
+  });
+
+  assert.equal(result.durationMs, 20_500);
+  assert.equal((await fs.stat(output)).mode & 0o777, 0o444);
+  assert.deepEqual(await fs.readFile(output), syntheticM4a());
+});
+
+test('private audio preparation safely unlinks an invalid 0444 output and permits retry', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  const readOnly = denyOutputWriteOpens(output);
+
+  await expectStableAudioFailure(preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => {
+      await fs.writeFile(output, 'invalid read-only container');
+      await fs.chmod(output, 0o444);
+    },
+    fsModule: readOnly.fsModule,
+    log: () => assert.fail('failure must not log')
+  }), [input, output]);
+
+  assert.ok(readOnly.writeOpenAttempts > 0);
+  await assertMissing(output);
+
+  const retry = await preparePrivateAudio({
+    argv: ['--input', input, '--output', output],
+    execFile: async () => {
+      await fs.writeFile(output, syntheticM4a());
+      await fs.chmod(output, 0o444);
+    },
+    fsModule: readOnly.fsModule,
+    log: () => {}
+  });
+  assert.equal(retry.durationMs, 20_500);
 });
 
 test('private audio preparation accepts only the exact absolute mp4 to m4a syntax', async t => {
@@ -298,16 +367,26 @@ test('private audio cleanup preserves a replacement path and scrubs the held ori
   const movedOutput = `${output}.moved`;
   const replacement = Buffer.from('replacement must survive');
   let replaced = false;
-  let outputCloseCalls = 0;
+  let readCloseCalls = 0;
+  let writeCloseCalls = 0;
   const fsModule = {
     ...fs,
-    async open(target, ...arguments_) {
-      const handle = await fs.open(target, ...arguments_);
+    async open(target, flags, ...arguments_) {
+      const handle = await fs.open(target, flags, ...arguments_);
       if (target !== output) return handle;
+      if ((flags & 3) !== 0) {
+        return {
+          stat: (...statArguments) => handle.stat(...statArguments),
+          truncate: (...truncateArguments) => handle.truncate(...truncateArguments),
+          sync: (...syncArguments) => handle.sync(...syncArguments),
+          async close() {
+            writeCloseCalls += 1;
+            return handle.close();
+          }
+        };
+      }
       return {
         stat: (...statArguments) => handle.stat(...statArguments),
-        truncate: (...truncateArguments) => handle.truncate(...truncateArguments),
-        sync: (...syncArguments) => handle.sync(...syncArguments),
         async readFile(...readArguments) {
           const bytes = await handle.readFile(...readArguments);
           if (!replaced) {
@@ -318,7 +397,7 @@ test('private audio cleanup preserves a replacement path and scrubs the held ori
           return bytes;
         },
         async close() {
-          outputCloseCalls += 1;
+          readCloseCalls += 1;
           return handle.close();
         }
       };
@@ -333,7 +412,8 @@ test('private audio cleanup preserves a replacement path and scrubs the held ori
   }), [input, output]);
 
   assert.equal(replaced, true);
-  assert.equal(outputCloseCalls, 1);
+  assert.equal(readCloseCalls, 1);
+  assert.equal(writeCloseCalls, 1);
   assert.deepEqual(await fs.readFile(output), replacement);
   assert.equal((await fs.stat(movedOutput)).size, 0);
 });
@@ -344,12 +424,18 @@ test('private audio cleanup failures remain redacted and do not prevent safe unl
   let closeCalls = 0;
   const fsModule = {
     ...fs,
-    async open(target, ...arguments_) {
-      const handle = await fs.open(target, ...arguments_);
+    async open(target, flags, ...arguments_) {
+      const handle = await fs.open(target, flags, ...arguments_);
       if (target !== output) return handle;
+      if ((flags & 3) === 0) {
+        return {
+          stat: (...statArguments) => handle.stat(...statArguments),
+          readFile: (...readArguments) => handle.readFile(...readArguments),
+          close: (...closeArguments) => handle.close(...closeArguments)
+        };
+      }
       return {
         stat: (...statArguments) => handle.stat(...statArguments),
-        readFile: (...readArguments) => handle.readFile(...readArguments),
         sync: (...syncArguments) => handle.sync(...syncArguments),
         async truncate() {
           truncateCalls += 1;

@@ -90,7 +90,7 @@ npm run prepare:private-audio -- \
   --output "/absolute/path/to/private-theme/startup-reference.m4a"
 ```
 
-脚本以固定参数数组调用 `/usr/bin/afconvert`，不会经过 shell。转换后会重新用 `O_NOFOLLOW` 打开输出，要求它是最大 32 MiB 的普通文件，解析 M4A movie header 验证非零时长并计算 SHA-256。成功日志只有以下无路径摘要：
+脚本以固定参数数组调用 `/usr/bin/afconvert`，不会经过 shell。转换后会用 `O_RDONLY | O_NOFOLLOW` 打开输出，要求它是最大 32 MiB 的普通文件，解析 M4A movie header 验证非零时长并计算 SHA-256；因此合法的只读 M4A（例如 restrictive umask 产生的 `0444` 文件）也能通过。成功日志只有以下无路径摘要：
 
 ```text
 PRIVATE_AUDIO_READY bytes=<整数> duration_ms=<整数> sha256=<64 位摘要>
@@ -98,7 +98,7 @@ PRIVATE_AUDIO_READY bytes=<整数> duration_ms=<整数> sha256=<64 位摘要>
 
 任何参数、文件、转换或验证失败都只向 CLI 输出 `PRIVATE_AUDIO_PREP_FAILED`；不会转发底层 stderr，也不会打印输入或输出路径。把摘要写入 `assets.json` 前仍应确认你有权使用这条声音。
 
-如果转换已产生文件但随后的大小、容器、时长或身份验证失败，脚本会通过 held 输出句柄尽力截断该 inode。只有输出父目录身份仍匹配、当前路径是非符号链接普通文件且 dev/inode 仍与 held 对象一致时才会 unlink。若同权限进程已把路径替换成新文件，脚本不会删除替换文件，只清空并关闭自己仍持有的原 inode。清理自身失败也不会把底层错误或路径写入 CLI。
+如果转换已产生文件但随后的大小、容器、时长或身份验证失败，脚本以 held 只读输出句柄的 dev/inode 为 authority，并通过另一个身份匹配的可写句柄尽力截断该 inode。即使文件本身不可写，只要输出父目录身份仍匹配、当前路径是非符号链接普通文件且 dev/inode 仍与 authority 一致，也会依靠父目录权限安全 unlink。若同权限进程已把路径替换成新文件，脚本不会删除替换文件；若替换前已安全取得原 inode 的可写句柄，仍会尽力清空并关闭它。清理自身失败也不会把底层错误或路径写入 CLI。
 
 ## 校验与打包
 
