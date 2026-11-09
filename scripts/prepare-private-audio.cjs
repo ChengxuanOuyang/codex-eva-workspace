@@ -36,7 +36,10 @@ function parseArguments(argv) {
 }
 
 async function openRegularInput(target, fsModule) {
-  const handle = await fsModule.open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await fsModule.open(
+    target,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+  );
   try {
     const identity = await handle.stat();
     const current = await fsModule.lstat(target);
@@ -160,7 +163,7 @@ async function openMatchingWritableOutput(output, parent, fsModule) {
   try {
     handle = await fsModule.open(
       output.target,
-      constants.O_WRONLY | constants.O_NOFOLLOW
+      constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
     );
     const authority = await output.handle.stat();
     const writable = await handle.stat();
@@ -179,7 +182,10 @@ async function openMatchingWritableOutput(output, parent, fsModule) {
 
 async function openGeneratedOutput(target, parent, fsModule) {
   if (!await directoryMatches(parent, fsModule)) throw Error('AUDIO_OUTPUT_PARENT');
-  const handle = await fsModule.open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await fsModule.open(
+    target,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+  );
   try {
     const identity = await handle.stat();
     const current = await fsModule.lstat(target);

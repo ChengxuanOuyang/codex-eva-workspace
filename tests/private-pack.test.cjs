@@ -159,6 +159,17 @@ function denyOutputWriteOpens(output) {
   };
 }
 
+function createFifoOrSkip(t, target) {
+  const result = childProcess.spawnSync('mkfifo', [target], {encoding: 'utf8'});
+  if (result.error?.code === 'ENOENT') {
+    t.skip('mkfifo is unavailable on this platform');
+    return false;
+  }
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  return true;
+}
+
 test('prepares private audio with the exact afconvert argument array and redacted summary', async t => {
   const {input, output} = await privateAudioFixture(t);
   const calls = [];
@@ -255,6 +266,72 @@ test('private audio preparation accepts only the exact absolute mp4 to m4a synta
     }), [input, output]);
   }
   assert.equal(calls, 0);
+});
+
+test('private audio preparation rejects a real input FIFO without blocking or leaking paths', async t => {
+  const {input, output} = await privateAudioFixture(t);
+  await fs.unlink(input);
+  if (!createFifoOrSkip(t, input)) return;
+
+  const result = childProcess.spawnSync(process.execPath, [
+    'scripts/prepare-private-audio.cjs',
+    '--input', input,
+    '--output', output
+  ], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    timeout: 1500
+  });
+
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, 'PRIVATE_AUDIO_PREP_FAILED\n');
+  assert.equal(result.stderr.includes(input), false);
+  assert.equal((await fs.lstat(input)).isFIFO(), true);
+});
+
+test('private audio preparation rejects a real output FIFO without blocking or deleting it', async t => {
+  const {input, output, root} = await privateAudioFixture(t);
+  const probe = path.join(root, 'fifo-probe');
+  if (!createFifoOrSkip(t, probe)) return;
+  await fs.unlink(probe);
+  const prepareModule = path.join(projectRoot, 'scripts', 'prepare-private-audio.cjs');
+  const childSource = `
+    const childProcess = require('node:child_process');
+    const {preparePrivateAudio} = require(process.argv[1]);
+    const input = process.argv[2];
+    const output = process.argv[3];
+    preparePrivateAudio({
+      argv: ['--input', input, '--output', output],
+      execFile: async () => {
+        const result = childProcess.spawnSync('mkfifo', [output]);
+        if (result.error || result.status !== 0) throw Error('FIFO_CREATE_FAILED');
+      },
+      log: () => process.stdout.write('UNEXPECTED_AUDIO_SUCCESS\\n')
+    }).then(
+      () => process.exitCode = 2,
+      error => {
+        process.stderr.write(error.message + '\\n');
+        process.exitCode = 1;
+      }
+    );
+  `;
+
+  const result = childProcess.spawnSync(process.execPath, [
+    '-e', childSource, prepareModule, input, output
+  ], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    timeout: 1500
+  });
+
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, 'PRIVATE_AUDIO_PREP_FAILED\n');
+  assert.equal(result.stderr.includes(output), false);
+  assert.equal((await fs.lstat(output)).isFIFO(), true);
 });
 
 test('private audio preparation rejects linked input and linked output parents', async t => {
