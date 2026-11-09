@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const {execFileSync} = require('node:child_process');
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
@@ -84,7 +85,47 @@ async function openWorkbench() {
   return {response, cookie: setCookie[0].split(';', 1)[0]};
 }
 
-async function createIsolatedFixture(t, {privateFiles = {}, onPresentationComplete} = {}) {
+function createTrackedPrivateFileSystem({afterOpen, afterRealpath} = {}) {
+  const activeHandles = new Set();
+  let totalOpened = 0;
+  let hookCalled = false;
+  const tracked = Object.create(fs);
+  tracked.realpath = async target => {
+    const result = await fs.realpath(target);
+    if (!hookCalled && afterRealpath) {
+      hookCalled = await afterRealpath(target, result) === true;
+    }
+    return result;
+  };
+  tracked.open = async (...args) => {
+    const handle = await fs.open(...args);
+    let closed = false;
+    const trackedHandle = {
+      fd: handle.fd,
+      stat: (...statArgs) => handle.stat(...statArgs),
+      read: (...readArgs) => handle.read(...readArgs),
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        activeHandles.delete(trackedHandle);
+        await handle.close();
+      }
+    };
+    totalOpened += 1;
+    activeHandles.add(trackedHandle);
+    await afterOpen?.(args[0], trackedHandle);
+    return trackedHandle;
+  };
+  tracked.activeHandleCount = () => activeHandles.size;
+  tracked.totalOpened = () => totalOpened;
+  return tracked;
+}
+
+async function createIsolatedFixture(t, {
+  privateFiles = {},
+  onPresentationComplete,
+  privateFileSystem
+} = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-isolated-service-'));
   const isolatedBootRoot = path.join(root, 'boot');
   const isolatedSharedRoot = path.join(root, 'shared');
@@ -99,14 +140,15 @@ async function createIsolatedFixture(t, {privateFiles = {}, onPresentationComple
     snapshot: () => ({ready: true, code: 'READY'}),
     bootRoot: isolatedBootRoot,
     sharedRoot: isolatedSharedRoot,
-    onPresentationComplete
+    onPresentationComplete,
+    privateFileSystem
   });
   const isolatedAddress = await isolatedService.listen();
   t.after(async () => {
     await isolatedService.close();
     await fs.rm(root, {recursive: true, force: true});
   });
-  return {address: isolatedAddress, bootRoot: isolatedBootRoot, privateRoot};
+  return {address: isolatedAddress, bootRoot: isolatedBootRoot, privateRoot, service: isolatedService};
 }
 
 test('listens only on a random IPv4 loopback port', () => {
@@ -410,6 +452,9 @@ test('private boot assets may be absent and only exact allowlisted URLs are serv
     '/private/%2e%2e/theme.json',
     '/private/%74heme.json',
     '/private/theme%2ejson',
+    '/private\\theme.json',
+    '/private/%5ctheme.json',
+    '/private/%255ctheme.json',
     '/private/boot-mark.webp.bak',
     '/private/startup-reference.mp3'
   ]) {
@@ -418,6 +463,190 @@ test('private boot assets may be absent and only exact allowlisted URLs are serv
     assert.deepEqual(JSON.parse(response.body), {error: 'Not found'}, requestPath);
     assert.doesNotMatch(response.body, /project-zero-isolated-service|PRIVATE|boot-mark|portrait/);
   }
+
+  for (const requestPath of ['/private\\theme.json', '/private/%5ctheme.json']) {
+    const response = await requestAt(fixture.address, {
+      requestPath,
+      method: 'POST',
+      headers: {Origin: `http://127.0.0.1:${fixture.address.port}`}
+    });
+    assert.equal(response.status, 404, requestPath);
+    assert.deepEqual(JSON.parse(response.body), {error: 'Not found'}, requestPath);
+  }
+});
+
+test('private preload rejects a root replaced after canonicalization instead of serving outside bytes', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-private-swap-'));
+  const isolatedBootRoot = path.join(root, 'boot');
+  const isolatedSharedRoot = path.join(root, 'shared');
+  const privateRoot = path.join(isolatedBootRoot, 'private');
+  const originalPrivateRoot = path.join(isolatedBootRoot, 'private-original');
+  const outsideRoot = path.join(root, 'outside');
+  await fs.mkdir(privateRoot, {recursive: true});
+  await fs.mkdir(isolatedSharedRoot);
+  await fs.mkdir(outsideRoot);
+  await fs.writeFile(path.join(isolatedBootRoot, 'index.html'), '<!doctype html>');
+  await fs.writeFile(path.join(privateRoot, 'theme.json'), 'ORIGINAL_PRIVATE');
+  await fs.writeFile(path.join(outsideRoot, 'theme.json'), 'SECRET_OUTSIDE');
+  const privateFileSystem = createTrackedPrivateFileSystem({
+    afterRealpath: async target => {
+      if (target !== privateRoot) return false;
+      await fs.rename(privateRoot, originalPrivateRoot);
+      await fs.symlink(outsideRoot, privateRoot);
+      return true;
+    }
+  });
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot,
+    privateFileSystem
+  });
+  t.after(async () => {
+    await isolatedService.close();
+    await fs.rm(root, {recursive: true, force: true});
+  });
+
+  const isolatedAddress = await isolatedService.listen();
+  const response = await requestAt(isolatedAddress, {requestPath: '/private/theme.json'});
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(JSON.parse(response.body), {error: 'Not found'});
+  assert.doesNotMatch(response.body, /SECRET_OUTSIDE|ORIGINAL_PRIVATE|outside|private-swap/);
+  assert.equal(privateFileSystem.activeHandleCount(), 0);
+});
+
+test('private preload rejects repeated outside-safe-outside root switching', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-private-multi-swap-'));
+  const isolatedBootRoot = path.join(root, 'boot');
+  const isolatedSharedRoot = path.join(root, 'shared');
+  const privateRoot = path.join(isolatedBootRoot, 'private');
+  const safeRoot = path.join(isolatedBootRoot, 'private-safe');
+  const outsideRoot = path.join(root, 'outside');
+  await fs.mkdir(privateRoot, {recursive: true});
+  await fs.mkdir(isolatedSharedRoot);
+  await fs.mkdir(outsideRoot);
+  await fs.writeFile(path.join(privateRoot, 'theme.json'), 'SAFE_PRIVATE');
+  await fs.writeFile(path.join(outsideRoot, 'theme.json'), 'SECRET_OUTSIDE');
+  let privateDirectoryOpened = false;
+  const privateFileSystem = createTrackedPrivateFileSystem({
+    afterOpen: async target => {
+      if (target !== privateRoot || privateDirectoryOpened) return;
+      privateDirectoryOpened = true;
+      await fs.rename(privateRoot, safeRoot);
+      await fs.symlink(outsideRoot, privateRoot);
+    },
+    afterRealpath: async target => {
+      if (target === isolatedBootRoot) {
+        await fs.rm(privateRoot);
+        await fs.rename(safeRoot, privateRoot);
+        return false;
+      }
+      if (target === path.join(privateRoot, 'theme.json')) {
+        await fs.rename(privateRoot, safeRoot);
+        await fs.symlink(outsideRoot, privateRoot);
+        return true;
+      }
+      return false;
+    }
+  });
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot,
+    privateFileSystem
+  });
+  t.after(async () => {
+    await isolatedService.close();
+    await fs.rm(root, {recursive: true, force: true});
+  });
+
+  const isolatedAddress = await isolatedService.listen();
+  const response = await requestAt(isolatedAddress, {requestPath: '/private/theme.json'});
+
+  assert.equal(response.status, 404);
+  assert.doesNotMatch(response.body, /SECRET_OUTSIDE|SAFE_PRIVATE|outside|multi-swap/);
+  assert.equal(privateFileSystem.activeHandleCount(), 0);
+});
+
+test('private preload rejects a FIFO without blocking listen', async t => {
+  if (process.platform === 'win32') return t.skip('FIFO is not available on Windows');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-private-fifo-'));
+  const isolatedBootRoot = path.join(root, 'boot');
+  const isolatedSharedRoot = path.join(root, 'shared');
+  const privateRoot = path.join(isolatedBootRoot, 'private');
+  await fs.mkdir(privateRoot, {recursive: true});
+  await fs.mkdir(isolatedSharedRoot);
+  execFileSync('mkfifo', [path.join(privateRoot, 'theme.json')]);
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot
+  });
+  t.after(async () => {
+    await isolatedService.close();
+    await fs.rm(root, {recursive: true, force: true});
+  });
+
+  const isolatedAddress = await Promise.race([
+    isolatedService.listen(),
+    new Promise((_, reject) => setTimeout(() => reject(Error('listen blocked on FIFO')), 500))
+  ]);
+  const response = await requestAt(isolatedAddress, {requestPath: '/private/theme.json'});
+
+  assert.equal(response.status, 404);
+});
+
+test('private responses remain pinned to the preopened file and repeated close releases every handle', async t => {
+  const privateFileSystem = createTrackedPrivateFileSystem();
+  const fixture = await createIsolatedFixture(t, {
+    privateFiles: {'theme.json': 'PINNED_ORIGINAL'},
+    privateFileSystem
+  });
+  const pinnedRoot = path.join(fixture.bootRoot, 'private-pinned');
+  const outsideRoot = path.join(path.dirname(fixture.bootRoot), 'outside-after-listen');
+  await fs.rename(fixture.privateRoot, pinnedRoot);
+  await fs.mkdir(outsideRoot);
+  await fs.writeFile(path.join(outsideRoot, 'theme.json'), 'SECRET_OUTSIDE_REPLACEMENT');
+  await fs.symlink(outsideRoot, fixture.privateRoot);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await requestAt(fixture.address, {requestPath: '/private/theme.json'});
+    assert.equal(response.status, 200);
+    assert.equal(response.body, 'PINNED_ORIGINAL');
+    assert.doesNotMatch(response.body, /SECRET_OUTSIDE_REPLACEMENT/);
+  }
+  assert.equal(privateFileSystem.activeHandleCount(), 1);
+
+  await fixture.service.close();
+  await fixture.service.close();
+  assert.equal(privateFileSystem.activeHandleCount(), 0);
+});
+
+test('a listen failure closes every private handle opened during preload', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-private-listen-failure-'));
+  const isolatedBootRoot = path.join(root, 'boot');
+  const isolatedSharedRoot = path.join(root, 'shared');
+  await fs.mkdir(path.join(isolatedBootRoot, 'private'), {recursive: true});
+  await fs.mkdir(isolatedSharedRoot);
+  await fs.writeFile(path.join(isolatedBootRoot, 'private', 'theme.json'), 'PINNED_BEFORE_FAILURE');
+  const privateFileSystem = createTrackedPrivateFileSystem();
+  const isolatedService = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot: isolatedBootRoot,
+    sharedRoot: isolatedSharedRoot,
+    privateFileSystem
+  });
+  const listenError = Error('listen failed');
+  isolatedService.server.listen = () => { throw listenError; };
+  t.after(async () => {
+    await isolatedService.close();
+    await fs.rm(root, {recursive: true, force: true});
+  });
+
+  await assert.rejects(isolatedService.listen(), error => error === listenError);
+  assert.ok(privateFileSystem.totalOpened() >= 1);
+  assert.equal(privateFileSystem.activeHandleCount(), 0);
 });
 
 test('private boot assets reject parent-directory symlinks and non-regular files without path disclosure', async t => {

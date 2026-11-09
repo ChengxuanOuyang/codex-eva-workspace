@@ -12,6 +12,7 @@ const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const MAX_REQUEST_BODY_BYTES = 128 * 1024;
 const MAX_ATTACHMENT_BODY_BYTES = 13 * 1024 * 1024;
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
+const ABSENT_PRIVATE_FILE_ERROR_CODES = new Set(['EACCES', 'ELOOP', 'ENOENT', 'ENOTDIR', 'EPERM']);
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -119,9 +120,187 @@ async function readRegularFile(rootDirectory, fileName, boundaryDirectory = root
   }
 }
 
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function isAbsentPrivateFileError(error) {
+  return ABSENT_PRIVATE_FILE_ERROR_CODES.has(error?.code);
+}
+
+async function pathMatchesHandle(fileSystem, targetPath, handleStats, expectedType, statOptions) {
+  try {
+    const pathStats = await fileSystem.lstat(targetPath, statOptions);
+    return sameFileIdentity(pathStats, handleStats) && expectedType(pathStats);
+  } catch (error) {
+    if (isAbsentPrivateFileError(error)) return false;
+    throw error;
+  }
+}
+
+function sameDirectorySnapshot(left, right) {
+  return sameFileIdentity(left, right) &&
+    left.ctimeNs === right.ctimeNs && left.mtimeNs === right.mtimeNs;
+}
+
+async function closePinnedHandles(pinnedFiles) {
+  const results = await Promise.allSettled([...pinnedFiles.values()].map(file => file.handle.close()));
+  const failed = results.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+}
+
+async function openPinnedPrivateFiles({bootRoot, privateBootRoot, privateFiles, fileSystem}) {
+  const candidates = new Map();
+  const pinnedFiles = new Map();
+  let bootHandle;
+  let privateHandle;
+  try {
+    try {
+      const directoryFlags = constants.O_RDONLY | (constants.O_DIRECTORY || 0) | constants.O_NOFOLLOW;
+      bootHandle = await fileSystem.open(bootRoot, directoryFlags);
+      privateHandle = await fileSystem.open(privateBootRoot, directoryFlags);
+    } catch (error) {
+      if (isAbsentPrivateFileError(error)) return pinnedFiles;
+      throw error;
+    }
+    const bootSnapshot = await bootHandle.stat({bigint: true});
+    const privateSnapshot = await privateHandle.stat({bigint: true});
+    if (!bootSnapshot.isDirectory() || !privateSnapshot.isDirectory()) return pinnedFiles;
+
+    for (const [requestPath, file] of privateFiles) {
+      const filePath = path.join(privateBootRoot, file.fileName);
+      let handle;
+      try {
+        const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | (constants.O_NONBLOCK || 0);
+        handle = await fileSystem.open(filePath, fileFlags);
+        const stats = await handle.stat();
+        if (!stats.isFile()) {
+          await handle.close();
+          continue;
+        }
+        candidates.set(requestPath, {
+          handle,
+          identity: stats,
+          size: stats.size,
+          mtimeMs: stats.mtimeMs,
+          ctimeMs: stats.ctimeMs
+        });
+      } catch (error) {
+        await handle?.close().catch(() => {});
+        if (isAbsentPrivateFileError(error)) continue;
+        throw error;
+      }
+    }
+    if (candidates.size === 0) return pinnedFiles;
+
+    let canonicalBootRoot;
+    let canonicalPrivateRoot;
+    try {
+      canonicalBootRoot = await fileSystem.realpath(bootRoot);
+      canonicalPrivateRoot = await fileSystem.realpath(privateBootRoot);
+    } catch (error) {
+      if (isAbsentPrivateFileError(error)) return pinnedFiles;
+      throw error;
+    }
+    if (path.relative(canonicalBootRoot, canonicalPrivateRoot) !== 'private') return pinnedFiles;
+
+    for (const [requestPath, file] of privateFiles) {
+      const candidate = candidates.get(requestPath);
+      if (!candidate) continue;
+      const filePath = path.join(privateBootRoot, file.fileName);
+      let canonicalFile;
+      try {
+        canonicalFile = await fileSystem.realpath(filePath);
+      } catch (error) {
+        if (isAbsentPrivateFileError(error)) continue;
+        throw error;
+      }
+      if (path.relative(canonicalPrivateRoot, canonicalFile) !== file.fileName) continue;
+      const valid = await pathMatchesHandle(
+        fileSystem,
+        filePath,
+        candidate.identity,
+        pathStats => pathStats.isFile()
+      );
+      if (!valid) continue;
+      candidates.delete(requestPath);
+      pinnedFiles.set(requestPath, candidate);
+    }
+    const bootAfter = await bootHandle.stat({bigint: true});
+    const privateAfter = await privateHandle.stat({bigint: true});
+    const rootsStayedPinned = sameDirectorySnapshot(bootSnapshot, bootAfter) &&
+      sameDirectorySnapshot(privateSnapshot, privateAfter) &&
+      await pathMatchesHandle(
+        fileSystem,
+        bootRoot,
+        bootSnapshot,
+        pathStats => pathStats.isDirectory(),
+        {bigint: true}
+      ) &&
+      await pathMatchesHandle(
+        fileSystem,
+        privateBootRoot,
+        privateSnapshot,
+        pathStats => pathStats.isDirectory(),
+        {bigint: true}
+      );
+    if (!rootsStayedPinned) {
+      await closePinnedHandles(pinnedFiles);
+      pinnedFiles.clear();
+    }
+    return pinnedFiles;
+  } catch (error) {
+    await closePinnedHandles(pinnedFiles);
+    throw error;
+  } finally {
+    const cleanupResults = await Promise.allSettled([
+      closePinnedHandles(candidates),
+      privateHandle?.close(),
+      bootHandle?.close()
+    ].filter(Boolean));
+    const cleanupFailure = cleanupResults.find(result => result.status === 'rejected');
+    if (cleanupFailure) throw cleanupFailure.reason;
+  }
+}
+
+async function readPinnedPrivateFile(file) {
+  if (!file) return null;
+  const before = await file.handle.stat();
+  if (!before.isFile() || !sameFileIdentity(before, file.identity) ||
+      before.size !== file.size || before.mtimeMs !== file.mtimeMs || before.ctimeMs !== file.ctimeMs) return null;
+
+  const body = Buffer.alloc(file.size);
+  let offset = 0;
+  while (offset < body.length) {
+    const {bytesRead} = await file.handle.read(body, offset, body.length - offset, offset);
+    if (bytesRead === 0) return null;
+    offset += bytesRead;
+  }
+
+  const after = await file.handle.stat();
+  if (!sameFileIdentity(after, file.identity) || after.size !== file.size ||
+      after.mtimeMs !== file.mtimeMs || after.ctimeMs !== file.ctimeMs) return null;
+  return body;
+}
+
 async function serveFile(root, fileName, contentType, res, boundaryRoot) {
   try {
     const body = await readRegularFile(root, fileName, boundaryRoot);
+    if (body === null) return send(res, 404, {error: 'Not found'});
+
+    setSecurityHeaders(res);
+    res.statusCode = 200;
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', body.length);
+    res.end(body);
+  } catch {
+    return send(res, 404, {error: 'Not found'});
+  }
+}
+
+async function servePinnedPrivateFile(file, contentType, res) {
+  try {
+    const body = await readPinnedPrivateFile(file);
     if (body === null) return send(res, 404, {error: 'Not found'});
 
     setSecurityHeaders(res);
@@ -153,10 +332,18 @@ function createWorkbenchService({
   bootRoot,
   sharedRoot,
   workbenchRoot = path.join(bootRoot, '..', 'workbench'),
-  controller
+  controller,
+  privateFileSystem = fs
 }) {
   const token = crypto.randomBytes(32).toString('hex');
   const privateBootRoot = path.join(bootRoot, 'private');
+  const privateFiles = new Map([
+    ['/private/theme.json', {fileName: 'theme.json', contentType: 'application/json; charset=utf-8'}],
+    ['/private/boot-mark.webp', {fileName: 'boot-mark.webp', contentType: 'image/webp'}],
+    ['/private/rei-portrait.webp', {fileName: 'rei-portrait.webp', contentType: 'image/webp'}],
+    ['/private/startup-reference.wav', {fileName: 'startup-reference.wav', contentType: 'audio/wav'}],
+    ['/private/startup-reference.m4a', {fileName: 'startup-reference.m4a', contentType: 'audio/mp4'}]
+  ]);
   const staticFiles = new Map([
     ['/boot.css', {root: bootRoot, fileName: 'boot.css', contentType: 'text/css; charset=utf-8'}],
     ['/boot.js', {root: bootRoot, fileName: 'boot.js', contentType: 'text/javascript; charset=utf-8'}],
@@ -182,11 +369,7 @@ function createWorkbenchService({
     ['/assets/scene-a-sync.webp', {root: bootRoot, fileName: 'assets/scene-a-sync.webp', contentType: 'image/webp'}],
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}],
-    ['/private/theme.json', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'theme.json', contentType: 'application/json; charset=utf-8'}],
-    ['/private/boot-mark.webp', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'boot-mark.webp', contentType: 'image/webp'}],
-    ['/private/rei-portrait.webp', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'rei-portrait.webp', contentType: 'image/webp'}],
-    ['/private/startup-reference.wav', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'startup-reference.wav', contentType: 'audio/wav'}],
-    ['/private/startup-reference.m4a', {root: privateBootRoot, boundaryRoot: bootRoot, fileName: 'startup-reference.m4a', contentType: 'audio/mp4'}]
+    ...[...privateFiles].map(([requestPath, file]) => [requestPath, {...file, pinnedPrivate: true}])
     ,['/audio/system-awake.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'system-awake.wav', contentType: 'audio/wav'}]
     ,['/audio/sync-start.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'sync-start.wav', contentType: 'audio/wav'}]
     ,['/audio/pilot-confirm.wav', {root: path.join(bootRoot, '..', '..', 'assets', 'audio'), fileName: 'pilot-confirm.wav', contentType: 'audio/wav'}]
@@ -203,7 +386,9 @@ function createWorkbenchService({
     ...[...staticFiles.keys()].map(route => [route, ['GET']]),
     ...[...(workbenchRoutes?.routeMethods || new Map())]
   ]);
+  let pinnedPrivateFiles = new Map();
   let presentationCompletion;
+  let listenPromise;
   let server;
 
   function completePresentation() {
@@ -223,7 +408,7 @@ function createWorkbenchService({
     if (req.headers.host !== `127.0.0.1:${port}`) {
       return send(res, 403, {error: 'Invalid host'});
     }
-    const allowedMethods = routeMethods.get(req.routePath);
+    const allowedMethods = routeMethods.get(req.url);
     if (allowedMethods && !allowedMethods.includes(req.method)) {
       return methodNotAllowed(res, allowedMethods);
     }
@@ -246,6 +431,9 @@ function createWorkbenchService({
     }
     const staticFile = staticFiles.get(req.url);
     if (staticFile) {
+      if (staticFile.pinnedPrivate) {
+        return servePinnedPrivateFile(pinnedPrivateFiles.get(req.url), staticFile.contentType, res);
+      }
       return serveFile(staticFile.root, staticFile.fileName, staticFile.contentType, res, staticFile.boundaryRoot);
     }
     if (req.routePath === '/api/state') return send(res, 200, snapshot());
@@ -279,20 +467,66 @@ function createWorkbenchService({
   });
 
   return {
-    listen: () => new Promise((resolve, reject) => {
-      const failed = error => reject(error);
-      server.once('error', failed);
-      server.listen(0, '127.0.0.1', () => {
-        server.off('error', failed);
-        resolve(server.address());
-      });
-    }),
-    close: () => new Promise((resolve, reject) => {
-      server.close(error => {
-        if (!error || error.code === 'ERR_SERVER_NOT_RUNNING') resolve();
-        else reject(error);
-      });
-    }),
+    listen: () => {
+      if (!listenPromise) {
+        listenPromise = (async () => {
+          pinnedPrivateFiles = await openPinnedPrivateFiles({
+            bootRoot,
+            privateBootRoot,
+            privateFiles,
+            fileSystem: privateFileSystem
+          });
+          try {
+            return await new Promise((resolve, reject) => {
+              const failed = error => {
+                server.off('error', failed);
+                reject(error);
+              };
+              server.once('error', failed);
+              try {
+                server.listen(0, '127.0.0.1', () => {
+                  server.off('error', failed);
+                  resolve(server.address());
+                });
+              } catch (error) {
+                server.off('error', failed);
+                reject(error);
+              }
+            });
+          } catch (error) {
+            const preparedFiles = pinnedPrivateFiles;
+            pinnedPrivateFiles = new Map();
+            await closePinnedHandles(preparedFiles);
+            throw error;
+          }
+        })();
+      }
+      return listenPromise;
+    },
+    close: async () => {
+      await listenPromise?.catch(() => {});
+      let serverError;
+      try {
+        await new Promise((resolve, reject) => {
+          server.close(error => {
+            if (!error || error.code === 'ERR_SERVER_NOT_RUNNING') resolve();
+            else reject(error);
+          });
+        });
+      } catch (error) {
+        serverError = error;
+      }
+      const preparedFiles = pinnedPrivateFiles;
+      pinnedPrivateFiles = new Map();
+      let handleError;
+      try {
+        await closePinnedHandles(preparedFiles);
+      } catch (error) {
+        handleError = error;
+      }
+      if (serverError) throw serverError;
+      if (handleError) throw handleError;
+    },
     server
   };
 }
