@@ -152,7 +152,7 @@ test('the same fixed wake input retains a concrete deterministic command digest'
     .update(JSON.stringify({commands: recording.commands, tags: recording.tags}))
     .digest('hex');
 
-  assert.equal(digest, 'b42f22f95431de04b791c663b0c5c1019022bff03a1426ce939975d475d9d488');
+  assert.equal(digest, '789d9a98c760b37b0b2628c9e1de0ea30e2ac1da22000f7d48c707ac4218de6d');
 });
 
 test('link icons start each loop as an independent canvas subpath', () => {
@@ -182,6 +182,51 @@ test('scan frame records the restrained orange field and system-check labels', (
   assert.ok(tagNames(recording.tags).includes('label:zh:\u7cfb\u7edf\u68c0\u67e5'));
   assert.ok(tagNames(recording.tags).includes('label:ja:\u63a5\u7d9a\u76e3\u8996'));
   assert.ok(recording.commands.some(command => command[0] === 'fillStyle' && command[1] === 'rgba(232, 100, 38, 0.34)'));
+});
+
+test('render records come from actual draw branches instead of caller debug fields', () => {
+  const scan = recordingContext();
+  const forgedDebugFields = {
+    headingKey: 'forged.heading',
+    iconStates: Object.freeze(Array(12).fill('forged:active'))
+  };
+  const scanRecord = drawBootFrame(scan.context, fixedSnapshot({
+    ...forgedDebugFields,
+    stage: 'scan',
+    progress: 0,
+    scan: 0.25,
+    activeNodes: 3
+  }), {}, {width: 1920, height: 1080});
+
+  assert.deepEqual(scanRecord, {
+    stage: 'scan',
+    progress: 0,
+    progressDrawn: false,
+    activeNodes: 3,
+    scan: {drawn: true, position: 0.25, top: 787.5},
+    iconStates: [
+      'core:active', 'core:active', 'link:active', 'link:idle',
+      'data:idle', 'data:idle', 'shield:idle', 'shield:idle',
+      'render:idle', 'render:idle', 'pilot:idle', 'pilot:idle'
+    ],
+    headingKey: 'boot.scan.heading',
+    headingText: 'SYSTEM CHECK',
+    mark: 'fallback',
+    reducedMotion: false
+  });
+  assert.ok(scan.commands.some(command => command[0] === 'fillText' && command[1] === scanRecord.headingText));
+
+  const wake = recordingContext();
+  const wakeRecord = drawBootFrame(wake.context, fixedSnapshot({
+    ...forgedDebugFields,
+    stage: 'wake',
+    activeNodes: 0
+  }), {}, {width: 1920, height: 1080});
+  assert.equal(wakeRecord.headingKey, 'boot.wake.heading');
+  assert.equal(wakeRecord.headingText, 'SYSTEM WAKE');
+  assert.equal(wakeRecord.activeNodes, 0);
+  assert.notDeepEqual(wakeRecord.iconStates, scanRecord.iconStates);
+  assert.ok(wake.commands.some(command => command[0] === 'fillText' && command[1] === wakeRecord.headingText));
 });
 
 test('synchronization and authorization keyframes draw rings, exact 99.2 percent, and a bounded authorization flash', () => {
@@ -250,7 +295,13 @@ test('a decoded cross-realm image becomes an immutable private asset bundle', as
   assert.equal(privateMark.decodeCalls, 1);
 
   const injected = recordingContext();
-  drawBootFrame(injected.context, fixedSnapshot(), assets, {width: 1920, height: 1080});
+  const privateRecord = drawBootFrame(
+    injected.context,
+    fixedSnapshot(),
+    assets,
+    {width: 1920, height: 1080}
+  );
+  assert.equal(privateRecord.mark, 'private');
   assert.ok(tagNames(injected.tags).includes('mark:private'));
   assert.equal(injected.commands.filter(command => command[0] === 'drawImage').length, 1);
   assert.equal(tagNames(injected.tags).includes('mark:fallback:project-zero'), false);
@@ -300,7 +351,13 @@ test('missing, malformed, undecodable, or untrusted private marks use the origin
 
   const failed = recordingContext({drawImageError: true});
   const decoded = await prepareBootAssets({mark: imageRealm()});
-  drawBootFrame(failed.context, fixedSnapshot(), decoded, {width: 1920, height: 1080});
+  const fallbackRecord = drawBootFrame(
+    failed.context,
+    fixedSnapshot(),
+    decoded,
+    {width: 1920, height: 1080}
+  );
+  assert.equal(fallbackRecord.mark, 'fallback');
   assert.ok(tagNames(failed.tags).includes('mark:private:error'));
   assert.ok(tagNames(failed.tags).includes('mark:fallback:project-zero'));
 });
@@ -323,11 +380,29 @@ test('reduced motion resolves from the snapshot, product setting, or media query
   };
   const bootCanvas = createBootCanvas(canvas, {
     dataMotion: () => 'reduced',
+    exposeRenderRecord: true,
     prefersReducedMotion: () => false
   });
   bootCanvas.render(fixedSnapshot({stage: 'synchronize', progress: 56.7, activeNodes: 7}));
   assert.ok(tagNames(recording.tags).includes('progress:99.2'));
   assert.equal(tagNames(recording.tags).includes('progress:56.7'), false);
+  assert.deepEqual(bootCanvas.lastRenderRecord(), {
+    renderCount: 1,
+    stage: 'synchronize',
+    progress: 99.2,
+    progressDrawn: true,
+    activeNodes: 12,
+    scan: {drawn: false, position: null, top: null},
+    iconStates: [
+      'core:active', 'core:active', 'link:active', 'link:active',
+      'data:active', 'data:active', 'shield:active', 'shield:active',
+      'render:active', 'render:active', 'pilot:active', 'pilot:active'
+    ],
+    headingKey: 'boot.synchronize.heading',
+    headingText: 'SYNCHRONIZATION',
+    mark: 'not-drawn',
+    reducedMotion: true
+  });
 
   const mediaRecording = recordingContext();
   const mediaCanvas = {...canvas, getContext: () => mediaRecording.context};
@@ -336,6 +411,7 @@ test('reduced motion resolves from the snapshot, product setting, or media query
     prefersReducedMotion: () => true
   }).render(fixedSnapshot({stage: 'scan', scan: 0.21}));
   assert.deepEqual(mediaRecording.tags.find(record => record.tag === 'scan:orange-field').detail, {top: 210});
+  assert.equal(typeof createBootCanvas(mediaCanvas).lastRenderRecord, 'undefined');
 });
 
 test('boot canvas clamps high-DPI backing store at two and resizing preserves the last timeline snapshot', () => {

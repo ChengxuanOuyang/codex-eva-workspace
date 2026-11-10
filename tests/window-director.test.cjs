@@ -57,7 +57,7 @@ function createDirector(window, timers = timerFixture(), options = {}) {
 
 test('boot enters fullscreen before the hidden window is shown and shares repeated work', async () => {
   const {window, calls} = windowFixture();
-  const {director} = createDirector(window);
+  const {director} = createDirector(window, timerFixture(), {platform: 'linux'});
 
   const first = director.showBoot();
   const concurrent = director.showBoot();
@@ -74,7 +74,7 @@ test('macOS uses stable simple fullscreen after show without entering native ful
       calls.push(`setSimpleFullScreen:${enabled}`);
     }
   });
-  const {director, timers} = createDirector(window);
+  const {director, timers} = createDirector(window, timerFixture(), {platform: 'darwin'});
 
   assert.deepEqual(await director.showBoot(), {mode: 'fullscreen'});
   assert.deepEqual(calls, ['show', 'setSimpleFullScreen:true']);
@@ -98,7 +98,7 @@ test('macOS simple fullscreen exit failure restores the window once and returns 
       if (!enabled) throw Error('simple fullscreen exit failed');
     }
   });
-  const {director} = createDirector(window);
+  const {director} = createDirector(window, timerFixture(), {platform: 'darwin'});
 
   assert.deepEqual(await director.showBoot(), {mode: 'fullscreen'});
   const reveal = director.revealWorkbench();
@@ -118,7 +118,7 @@ test('macOS simple fullscreen entry failure does not mix in native fullscreen', 
       throw Error('simple fullscreen entry failed');
     }
   });
-  const {director} = createDirector(window);
+  const {director} = createDirector(window, timerFixture(), {platform: 'darwin'});
 
   assert.deepEqual(await director.showBoot(), {mode: 'fallback'});
   assert.deepEqual(calls, ['show', 'setSimpleFullScreen:true']);

@@ -8,14 +8,22 @@ const path = require('node:path');
 const {_electron: electron} = require('playwright');
 
 const KEYFRAMES = Object.freeze([
-  Object.freeze({elapsedMs: 0, stage: 'wake', progress: 0, activeNodes: 0, scan: 0}),
-  Object.freeze({elapsedMs: 1500, stage: 'wake', progress: 0, activeNodes: 0, scan: 0}),
-  Object.freeze({elapsedMs: 3500, stage: 'scan', progress: 0, activeNodes: 0, scan: 0}),
-  Object.freeze({elapsedMs: 5500, stage: 'scan', progress: 0, activeNodes: 0, scan: 1}),
-  Object.freeze({elapsedMs: 8500, stage: 'synchronize', progress: 99.2, activeNodes: 12, scan: 0}),
-  Object.freeze({elapsedMs: 10500, stage: 'synchronize', progress: 99.2, activeNodes: 12, scan: 0}),
-  Object.freeze({elapsedMs: 12500, stage: 'synchronize', progress: 99.2, activeNodes: 12, scan: 0}),
-  Object.freeze({elapsedMs: 15500, stage: 'authorize', progress: 99.2, activeNodes: 12, scan: 0})
+  Object.freeze({elapsedMs: 0, stage: 'wake', progress: 0, activeNodes: 0,
+    scan: {drawn: false, position: null, top: null}, headingText: 'SYSTEM WAKE', mark: 'fallback'}),
+  Object.freeze({elapsedMs: 1500, stage: 'wake', progress: 0, activeNodes: 0,
+    scan: {drawn: false, position: null, top: null}, headingText: 'SYSTEM WAKE', mark: 'fallback'}),
+  Object.freeze({elapsedMs: 3500, stage: 'scan', progress: 0, activeNodes: 0,
+    scan: {drawn: true, position: 1, top: 210}, headingText: 'SYSTEM CHECK', mark: 'fallback'}),
+  Object.freeze({elapsedMs: 5500, stage: 'scan', progress: 0, activeNodes: 0,
+    scan: {drawn: true, position: 1, top: 210}, headingText: 'SYSTEM CHECK', mark: 'fallback'}),
+  Object.freeze({elapsedMs: 8500, stage: 'synchronize', progress: 99.2, activeNodes: 12,
+    scan: {drawn: false, position: null, top: null}, headingText: 'SYNCHRONIZATION', mark: 'not-drawn'}),
+  Object.freeze({elapsedMs: 10500, stage: 'synchronize', progress: 99.2, activeNodes: 12,
+    scan: {drawn: false, position: null, top: null}, headingText: 'SYNCHRONIZATION', mark: 'not-drawn'}),
+  Object.freeze({elapsedMs: 12500, stage: 'synchronize', progress: 99.2, activeNodes: 12,
+    scan: {drawn: false, position: null, top: null}, headingText: 'SYNCHRONIZATION', mark: 'not-drawn'}),
+  Object.freeze({elapsedMs: 15500, stage: 'authorize', progress: 99.2, activeNodes: 12,
+    scan: {drawn: false, position: null, top: null}, headingText: 'PILOT AUTHORIZATION', mark: 'not-drawn'})
 ]);
 const ICONS = Object.freeze(['core', 'core', 'link', 'link', 'data', 'data',
   'shield', 'shield', 'render', 'render', 'pilot', 'pilot']);
@@ -35,10 +43,12 @@ async function pngSize(file) {
 }
 
 async function setPresentationElapsed(page, elapsedMs) {
+  const renderCount = await page.evaluate(() =>
+    globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord().renderCount);
   await page.evaluate(value => globalThis.ProjectZeroTestBridge.setPresentationElapsed(value), elapsedMs);
-  await page.waitForFunction(value =>
-    globalThis.ProjectZeroBootCanvasInstance?.lastSnapshot?.()?.elapsedMs === value,
-  elapsedMs);
+  await page.waitForFunction(previousCount =>
+    globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord?.()?.renderCount > previousCount,
+  renderCount);
 }
 
 async function readWindowMode(page) {
@@ -92,7 +102,7 @@ test('deterministic reduced-motion keyframes render at both acceptance viewports
       await page.waitForFunction(() =>
         typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
           && typeof globalThis.ProjectZeroTestBridge?.readWindowMode === 'function'
-          && Boolean(globalThis.ProjectZeroBootCanvasInstance));
+          && typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord === 'function');
       await waitForWindowMode(page, 'fullscreen');
       assert.equal(await readWindowMode(page), 'fullscreen');
 
@@ -104,26 +114,34 @@ test('deterministic reduced-motion keyframes render at both acceptance viewports
         for (const expected of KEYFRAMES) {
           await setPresentationElapsed(page, expected.elapsedMs);
           const actual = await page.evaluate(() => {
-            const snapshot = globalThis.ProjectZeroBootCanvasInstance.lastSnapshot();
+            const snapshot = globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord();
             return {
-              stage: document.body.dataset.stage,
+              stage: snapshot.stage,
+              domStage: document.body.dataset.stage,
               progress: snapshot.progress,
+              progressDrawn: snapshot.progressDrawn,
               progressText: document.querySelector('#progress-value').textContent,
               activeNodes: snapshot.activeNodes,
               scan: snapshot.scan,
               iconStates: [...snapshot.iconStates],
               headingKey: snapshot.headingKey,
+              headingText: snapshot.headingText,
+              mark: snapshot.mark,
               reducedMotion: snapshot.reducedMotion
             };
           });
           assert.deepEqual(actual, {
             stage: expected.stage,
+            domStage: expected.stage,
             progress: expected.progress,
+            progressDrawn: ['synchronize', 'authorize'].includes(expected.stage),
             progressText: expected.progress.toFixed(1),
             activeNodes: expected.activeNodes,
             scan: expected.scan,
             iconStates: expectedIconStates(expected.activeNodes),
             headingKey: `boot.${expected.stage}.heading`,
+            headingText: expected.headingText,
+            mark: expected.mark,
             reducedMotion: true
           });
 
@@ -167,7 +185,7 @@ test('deterministic reduced-motion keyframes render at both acceptance viewports
       await page.waitForURL(/^http:\/\/127\.0\.0\.1:/);
       await page.waitForFunction(() =>
         typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
-          && Boolean(globalThis.ProjectZeroBootCanvasInstance));
+          && typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord === 'function');
       await waitForWindowMode(page, 'fullscreen');
       assert.equal(await readWindowMode(page), 'fullscreen');
       for (const keyframe of KEYFRAMES) {

@@ -48,7 +48,8 @@ async function waitForTestPage(app) {
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:/);
   await page.waitForFunction(() =>
     typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
-      && typeof globalThis.ProjectZeroTestBridge?.readWindowMode === 'function');
+      && typeof globalThis.ProjectZeroTestBridge?.readWindowMode === 'function'
+      && typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord === 'function');
   return page;
 }
 
@@ -74,16 +75,19 @@ async function waitForWindowMode(page, expected) {
 
 async function assertClockPausedAtGate(page) {
   const before = await page.evaluate(() => ({
-    elapsedMs: globalThis.ProjectZeroBootCanvasInstance.lastSnapshot().elapsedMs,
+    render: globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord(),
     clock: document.querySelector('#clock-readout').textContent
   }));
   await page.waitForTimeout(250);
   const after = await page.evaluate(() => ({
-    elapsedMs: globalThis.ProjectZeroBootCanvasInstance.lastSnapshot().elapsedMs,
+    render: globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord(),
     clock: document.querySelector('#clock-readout').textContent
   }));
   assert.deepEqual(after, before);
-  assert.deepEqual(after, {elapsedMs: 15500, clock: 'T+015.5'});
+  assert.equal(after.render.stage, 'authorize');
+  assert.equal(after.render.progress, 99.2);
+  assert.equal(after.render.activeNodes, 12);
+  assert.equal(after.clock, 'T+015.5');
 }
 
 async function finishConfirmedPresentation(page) {
@@ -122,7 +126,8 @@ test('skip button pauses at 99.2, preserves READY gating, restores window mode a
 
       await page.getByRole('button', {name: /跳过动态演示/}).click();
       await page.waitForFunction(() =>
-        globalThis.ProjectZeroBootCanvasInstance.lastSnapshot()?.elapsedMs === 15500);
+        globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.stage === 'authorize'
+          && globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.progress === 99.2);
       assert.equal(await page.locator('#progress-value').textContent(), '99.2');
       assert.equal(await page.locator('body').getAttribute('data-stage'), 'authorize');
       await assertClockPausedAtGate(page);
@@ -225,7 +230,8 @@ test('Escape invokes the same paused READY-gated skip path', {timeout: 30000}, a
     const page = await waitForTestPage(app);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() =>
-      globalThis.ProjectZeroBootCanvasInstance.lastSnapshot()?.elapsedMs === 15500);
+      globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.stage === 'authorize'
+        && globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.progress === 99.2);
     assert.equal(await page.locator('#progress-value').textContent(), '99.2');
     await assertClockPausedAtGate(page);
     await assertExactReady(page);

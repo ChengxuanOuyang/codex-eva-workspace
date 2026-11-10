@@ -20,6 +20,8 @@
       const instance = api.createBootCanvas(canvas, {
         dataMotion: () => root.document.body?.dataset?.motion,
         devicePixelRatio: () => root.devicePixelRatio || 1,
+        exposeRenderRecord: typeof root.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
+          && typeof root.ProjectZeroTestBridge?.readWindowMode === 'function',
         prefersReducedMotion: () => root.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
       });
       const initialSnapshot = root.ProjectZeroTimeline?.sampleTimeline?.(0) || {
@@ -50,6 +52,7 @@
   const PRIVATE_MARK_URL = '/private/boot-mark.webp';
   const TAU = Math.PI * 2;
   const assetBundles = new WeakSet();
+  const frameRecordSinks = new WeakMap();
   const EMPTY_ASSETS = Object.freeze({});
   assetBundles.add(EMPTY_ASSETS);
   const NODE_LABELS = Object.freeze([
@@ -78,7 +81,62 @@
   });
 
   function record(context, tag, detail) {
+    frameRecordSinks.get(context)?.(tag, detail);
     if (typeof context.projectZeroRecord === 'function') context.projectZeroRecord(tag, detail);
+  }
+
+  function renderRecordCollector() {
+    const state = {
+      stage: null,
+      progress: null,
+      progressDrawn: false,
+      activeNodes: 0,
+      scan: {drawn: false, position: null, top: null},
+      iconStates: [],
+      headingKey: null,
+      headingText: null,
+      mark: null,
+      reducedMotion: false
+    };
+
+    return Object.freeze({
+      capture(tag, detail) {
+        if (tag === 'heading:title') {
+          state.stage = detail.stage;
+          state.headingKey = detail.key;
+          state.headingText = detail.text;
+          state.reducedMotion = detail.reducedMotion;
+        } else if (tag === 'progress:state') {
+          state.progress = detail.value;
+          state.progressDrawn = detail.drawn;
+        } else if (tag === 'scan:state') {
+          state.scan = {...detail};
+        } else if (tag.startsWith('icon:') && detail) {
+          state.iconStates.push(`${detail.code}:${detail.state}`);
+          if (detail.state === 'active') state.activeNodes += 1;
+        } else if (tag === 'mark:private') {
+          state.mark = 'private';
+        } else if (tag === 'mark:fallback:project-zero') {
+          state.mark = 'fallback';
+        } else if (tag === 'mark:not-drawn') {
+          state.mark = 'not-drawn';
+        }
+      },
+      finish() {
+        return Object.freeze({
+          stage: state.stage,
+          progress: state.progress,
+          progressDrawn: state.progressDrawn,
+          activeNodes: state.activeNodes,
+          scan: Object.freeze({...state.scan}),
+          iconStates: Object.freeze([...state.iconStates]),
+          headingKey: state.headingKey,
+          headingText: state.headingText,
+          mark: state.mark,
+          reducedMotion: state.reducedMotion
+        });
+      }
+    });
   }
 
   function makeAssets(mark) {
@@ -308,6 +366,12 @@
     context.strokeStyle = active ? PALETTE.orange : PALETTE.muted;
     context.lineWidth = 2;
     ICON_DRAWERS[label.code](context, x, y, 48);
+    record(context, `icon:${side}:${number}:${label.code}`, {
+      code: label.code,
+      side,
+      number,
+      state: active ? 'active' : 'idle'
+    });
 
     context.fillStyle = PALETTE.ink;
     context.font = '600 20px ui-monospace, SFMono-Regular, Menlo, monospace';
@@ -320,7 +384,6 @@
     context.restore();
 
     record(context, `node:${side}:${number}:${active ? 'active' : 'idle'}`);
-    record(context, `icon:${side}:${number}:${label.code}`);
   }
 
   function drawNodeBanks(context, activeNodes) {
@@ -384,6 +447,12 @@
     context.textBaseline = 'alphabetic';
     context.font = '600 52px Georgia, "Times New Roman", serif';
     context.fillText(stageCopy[0], 960, 150);
+    record(context, 'heading:title', {
+      stage: snapshot.stage,
+      key: `boot.${snapshot.stage}.heading`,
+      text: stageCopy[0],
+      reducedMotion: snapshot.reducedMotion
+    });
     context.fillStyle = PALETTE.muted;
     context.font = '600 18px "Helvetica Neue", Arial, sans-serif';
     context.fillText(`${stageCopy[1]}  /  ${stageCopy[2]}`, 960, 188);
@@ -401,7 +470,10 @@
   }
 
   function drawScanField(context, snapshot) {
-    if (snapshot.stage !== 'scan') return;
+    if (snapshot.stage !== 'scan') {
+      record(context, 'scan:state', {drawn: false, position: null, top: null});
+      return;
+    }
     const top = 980 - snapshot.scan * 770;
     context.save();
     context.beginPath();
@@ -419,12 +491,16 @@
     context.lineWidth = 5;
     context.stroke();
     context.restore();
+    record(context, 'scan:state', {drawn: true, position: snapshot.scan, top});
     record(context, 'scan:orange-field', {top});
     record(context, 'scan:wave-edge');
   }
 
   function drawSyncRings(context, snapshot) {
-    if (!['synchronize', 'authorize', 'connect'].includes(snapshot.stage)) return;
+    if (!['synchronize', 'authorize', 'connect'].includes(snapshot.stage)) {
+      record(context, 'progress:state', {drawn: false, value: snapshot.progress});
+      return;
+    }
     const progressRadians = -Math.PI / 2 + TAU * (snapshot.progress / 100);
     const isComplete = snapshot.progress >= 100;
     context.save();
@@ -453,6 +529,7 @@
     context.font = '700 22px ui-monospace, SFMono-Regular, Menlo, monospace';
     context.fillText('%  SYNCHRONIZATION', 0, 72);
     context.restore();
+    record(context, 'progress:state', {drawn: true, value: Number(progressText)});
     record(context, 'ring:sync');
     record(context, `progress:${progressText}`);
   }
@@ -519,20 +596,33 @@
     const scale = Math.min(viewport.width / DESIGN_WIDTH, viewport.height / DESIGN_HEIGHT);
     const offsetX = (viewport.width - DESIGN_WIDTH * scale) / 2;
     const offsetY = (viewport.height - DESIGN_HEIGHT * scale) / 2;
+    const collector = renderRecordCollector();
+    const previousRecordSink = frameRecordSinks.get(context);
+    frameRecordSinks.set(context, collector.capture);
 
-    context.save();
-    drawSurface(context, viewport);
-    context.translate(offsetX, offsetY);
-    context.scale(scale, scale);
-    drawFineGrid(context);
-    drawScanField(context, snapshot);
-    drawNodeBanks(context, snapshot.activeNodes);
-    drawStageLabels(context, snapshot);
-    if (!['synchronize', 'authorize', 'connect'].includes(snapshot.stage)) drawMark(context, safeAssets);
-    drawSyncRings(context, snapshot);
-    drawAuthorization(context, snapshot);
-    drawConnection(context, snapshot);
-    context.restore();
+    try {
+      context.save();
+      drawSurface(context, viewport);
+      context.translate(offsetX, offsetY);
+      context.scale(scale, scale);
+      drawFineGrid(context);
+      drawScanField(context, snapshot);
+      drawNodeBanks(context, snapshot.activeNodes);
+      drawStageLabels(context, snapshot);
+      if (!['synchronize', 'authorize', 'connect'].includes(snapshot.stage)) {
+        drawMark(context, safeAssets);
+      } else {
+        record(context, 'mark:not-drawn');
+      }
+      drawSyncRings(context, snapshot);
+      drawAuthorization(context, snapshot);
+      drawConnection(context, snapshot);
+      context.restore();
+    } finally {
+      if (previousRecordSink) frameRecordSinks.set(context, previousRecordSink);
+      else frameRecordSinks.delete(context);
+    }
+    return collector.finish();
   }
 
   function createBootCanvas(canvas, options = {}) {
@@ -543,8 +633,11 @@
     const pixelRatioSource = options.devicePixelRatio;
     const dataMotionSource = options.dataMotion;
     const mediaPreferenceSource = options.prefersReducedMotion;
+    const exposeRenderRecord = options.exposeRenderRecord === true;
     let currentViewport = {width: 1, height: 1, pixelRatio: 1};
     let currentSnapshot;
+    let currentRenderRecord;
+    let renderCount = 0;
 
     function sourcePixelRatio(explicit) {
       if (Number.isFinite(explicit)) return explicit;
@@ -564,6 +657,16 @@
       return source.reducedMotion === true ? source : {...source, reducedMotion: true};
     }
 
+    function drawCurrentSnapshot() {
+      const record = drawBootFrame(
+        context,
+        snapshotForMotion(currentSnapshot),
+        assets,
+        currentViewport
+      );
+      currentRenderRecord = Object.freeze({renderCount: ++renderCount, ...record});
+    }
+
     function resize(width = canvas.clientWidth, height = canvas.clientHeight, explicitPixelRatio) {
       const safeWidth = Math.max(1, Math.round(finite(width, 1)));
       const safeHeight = Math.max(1, Math.round(finite(height, 1)));
@@ -575,29 +678,31 @@
       canvas.style.height = `${safeHeight}px`;
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       currentViewport = {width: safeWidth, height: safeHeight, pixelRatio};
-      if (currentSnapshot) drawBootFrame(context, snapshotForMotion(currentSnapshot), assets, currentViewport);
+      if (currentSnapshot) drawCurrentSnapshot();
       return currentViewport;
     }
 
     function render(snapshot) {
       currentSnapshot = snapshot;
-      drawBootFrame(context, snapshotForMotion(snapshot), assets, currentViewport);
+      drawCurrentSnapshot();
     }
 
     function setAssets(nextAssets) {
       assets = trustedAssets(nextAssets);
-      if (currentSnapshot) drawBootFrame(context, snapshotForMotion(currentSnapshot), assets, currentViewport);
+      if (currentSnapshot) drawCurrentSnapshot();
       return assets;
     }
 
     resize();
-    return Object.freeze({
+    const api = {
       lastSnapshot: () => currentSnapshot,
       render,
       resize,
       setAssets,
       viewport: () => ({...currentViewport})
-    });
+    };
+    if (exposeRenderRecord) api.lastRenderRecord = () => currentRenderRecord;
+    return Object.freeze(api);
   }
 
   return Object.freeze({

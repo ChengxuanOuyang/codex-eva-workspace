@@ -95,14 +95,19 @@ test('packaged app starts from packaged resources with production fake gates clo
       }
     });
     const page = await app.firstWindow();
-    assert.equal(
-      await page.evaluate(() => typeof globalThis.ProjectZeroTestBridge),
-      'undefined',
-      'packaged production must not inject the renderer test bridge'
-    );
+    await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\/$/);
     await page.getByRole('heading', {name: '等待用户确认'}).waitFor();
+    await page.waitForFunction(() =>
+      document.querySelector('#boot-sequence') instanceof HTMLCanvasElement
+        && document.querySelector('#confirm-button') instanceof HTMLButtonElement);
+    assert.deepEqual(await page.evaluate(() => ({
+      renderRecord: typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord,
+      testBridge: typeof globalThis.ProjectZeroTestBridge
+    })), {
+      renderRecord: 'undefined',
+      testBridge: 'undefined'
+    }, 'packaged production must expose neither the renderer test bridge nor its render record');
     await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
-    assert.match(page.url(), /^http:\/\/127\.0\.0\.1:\d+\/$/);
   } finally {
     await app?.close();
   }

@@ -24,6 +24,8 @@
 1440×900、1280×800 截图到系统临时目录。测试同时要求页面没有滚动溢出、没有远程资源，
 并验证完整播放、按钮跳过和 `Escape` 跳过都受真实 `READY` 门控，99.2% 等待点的音频保持暂停，
 确认后窗口从 fullscreen 恢复为 windowed，关闭后本地 listener 与任务子进程消失。
+这些 Canvas 断言读取实际 title、icon、scan、ring 和 mark 绘制分支生成的 render record，
+不是把传入的 timeline snapshot 原样回显；未安装测试桥的 production renderer 不暴露该 record。
 
 测试桥只有在 `NODE_ENV=test`、应用未打包且显式加载外置 fake bridge 时才安装。renderer 只获得
 “设置 presentation elapsed ms”和“读取 window mode”两个方法；没有任意代码执行、文件路径或
