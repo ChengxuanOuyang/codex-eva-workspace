@@ -7,7 +7,7 @@ const http = require('node:http');
 const path = require('node:path');
 const {createWorkbenchRoutes} = require('./routes.cjs');
 
-const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
+const CSP = "default-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const MAX_REQUEST_BODY_BYTES = 128 * 1024;
 const MAX_ATTACHMENT_BODY_BYTES = 13 * 1024 * 1024;
@@ -399,6 +399,7 @@ function createWorkbenchService({
 }) {
   const token = crypto.randomBytes(32).toString('hex');
   const privateBootRoot = path.join(bootRoot, 'private');
+  const fontsRoot = path.join(bootRoot, '..', 'fonts');
   const privateFiles = new Map([
     ['/private/theme.json', {fileName: 'theme.json', contentType: 'application/json; charset=utf-8'}],
     ['/private/boot-mark.webp', {fileName: 'boot-mark.webp', contentType: 'image/webp'}],
@@ -429,6 +430,8 @@ function createWorkbenchService({
     ['/vendor/xterm.css', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm.css', contentType: 'text/css; charset=utf-8'}],
     ['/vendor/xterm.js', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/vendor/xterm-addon-fit.js', {root: path.join(workbenchRoot, '..', 'vendor'), fileName: 'xterm-addon-fit.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/fonts/mincho.css', {root: fontsRoot, fileName: 'mincho.css', contentType: 'text/css; charset=utf-8'}],
+    ['/fonts/unit02-mincho-black.woff2', {root: fontsRoot, fileName: 'unit02-mincho-black.woff2', contentType: 'font/woff2'}],
     ['/assets/scene-a-sync.webp', {root: bootRoot, fileName: 'assets/scene-a-sync.webp', contentType: 'image/webp'}],
     ['/assets/scene-b-awakening.webp', {root: bootRoot, fileName: 'assets/scene-b-awakening.webp', contentType: 'image/webp'}],
     ['/assets/scene-c-online.webp', {root: bootRoot, fileName: 'assets/scene-c-online.webp', contentType: 'image/webp'}],

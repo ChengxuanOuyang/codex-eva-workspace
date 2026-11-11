@@ -8,6 +8,18 @@ const os = require('node:os');
 const path = require('node:path');
 const {checkAssetLicenses} = require('../scripts/check-asset-licenses.cjs');
 
+test('bundled reference font retains its OFL notice and source record', async () => {
+  const fontsRoot = path.join(__dirname, '..', 'renderer', 'fonts');
+  const [notice, sources] = await Promise.all([
+    fs.readFile(path.join(fontsRoot, 'OFL-NotoSerifCJK.txt'), 'utf8'),
+    fs.readFile(path.join(fontsRoot, 'SOURCES.md'), 'utf8')
+  ]);
+
+  assert.match(notice, /SIL OPEN FONT LICENSE Version 1\.1/);
+  assert.match(sources, /Noto Serif CJK SC Black/);
+  assert.match(sources, /OFL-NotoSerifCJK\.txt/);
+});
+
 test('every redistributable asset requires a license record and matching digest', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-licenses-'));
   t.after(() => fs.rm(root, {recursive: true, force: true}));

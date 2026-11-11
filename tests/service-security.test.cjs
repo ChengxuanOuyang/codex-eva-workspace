@@ -10,7 +10,7 @@ const asar = require('@electron/asar');
 const electronPath = require('electron');
 const {createWorkbenchService} = require('../workbench/service.cjs');
 
-const CSP = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
+const CSP = "default-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'";
 const execFileAsync = promisify(execFile);
 
 let fixtureRoot;

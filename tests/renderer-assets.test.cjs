@@ -31,10 +31,53 @@ test('boot document uses the exact product name and only local allowlisted asset
   assert.match(html, /<title>PROJECT ZERO \/\/ PILOT CODEX WORKBENCH<\/title>/);
   assert.match(html, /PROJECT ZERO <span>\/\/<\/span> PILOT CODEX WORKBENCH/);
   assert.match(html, /href="\/boot\.css"/);
+  assert.match(html, /href="\/fonts\/mincho\.css"/);
   assert.match(html, /src="\/shared\/api\.js"/);
   assert.match(html, /src="\/boot-canvas\.js"/);
   assert.match(html, /src="\/boot\.js"/);
   assert.doesNotMatch(html, /https?:\/\//i);
+});
+
+test('reference font is exact-allowlisted with its OFL notice', async () => {
+  const bootRoot = path.join(rendererRoot, 'boot');
+  const service = createWorkbenchService({
+    snapshot: () => ({ready: true}),
+    bootRoot,
+    sharedRoot: path.join(rendererRoot, 'shared')
+  });
+
+  try {
+    const address = await service.listen();
+    for (const requestPath of ['/fonts/mincho.css', '/fonts/unit02-mincho-black.woff2']) {
+      const response = await request(address, requestPath);
+      assert.equal(response.status, 200, requestPath);
+      assert.equal(response.headers['content-security-policy'], "default-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'");
+    }
+    for (const requestPath of [
+      '/fonts/../package.json',
+      '/fonts/mincho.css?cache=1',
+      '/fonts\\\\unit02-mincho-black.woff2',
+      '/fonts/unlisted.woff2'
+    ]) {
+      const response = await request(address, requestPath);
+      assert.equal(response.status, 404, requestPath);
+      assert.deepEqual(JSON.parse(response.body), {error: 'Not found'}, requestPath);
+    }
+  } finally {
+    await service.close();
+  }
+
+  const [font, css, notice, sources] = await Promise.all([
+    fs.readFile(path.join(rendererRoot, 'fonts', 'unit02-mincho-black.woff2')),
+    read('fonts/mincho.css'),
+    read('fonts/OFL-NotoSerifCJK.txt'),
+    read('fonts/SOURCES.md')
+  ]);
+  assert.equal(require('node:crypto').createHash('sha256').update(font).digest('hex'), '9fc4a47a81d503580674d4b754b84b17557e57ca53136abd6c563a6892c93d65');
+  assert.match(css, /^@font-face \{\n  font-family: "Unit02 Mincho";\n  src: url\("\/fonts\/unit02-mincho-black\.woff2"\) format\("woff2"\);\n  font-display: swap;\n  font-weight: 900;\n\}\n$/);
+  assert.match(notice, /SIL OPEN FONT LICENSE Version 1\.1/);
+  assert.match(sources, /Noto Serif CJK SC Black/);
+  assert.match(sources, /SIL Open Font License 1\.1/);
 });
 
 test('boot presentation uses one canvas with hidden semantics and keeps controls in the DOM', async () => {
