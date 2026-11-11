@@ -4,14 +4,14 @@
 
 最终成品只复刻参考视频内部的 Windows 启动动画与工作台，不包含手机状态栏、播放器控件、博主字幕或社交平台元素。视觉、文字、图标、颜色、音频和动画节奏以参考视频及其作者仓库为准；Mac 窗口生命周期、Codex 连接和真实 READY 门保持本项目实现。
 
-本设计不删除已经完成的 Canvas 重绘版。最终应用包含两个渲染器：作者源文件渲染器是完整私有主题的默认路径，Canvas 渲染器是公开版、素材缺失和加载失败时的高质量 fallback。
+本设计不删除已经完成的 Canvas 重绘版。最终应用包含两个渲染器：参考 DOM 渲染器是完整私有主题的默认路径，Canvas 渲染器是公开版、素材缺失和加载失败时的高质量 fallback。
 
 ## 基准与优先级
 
-1. 工程和界面源文件基准：`https://github.com/Iris-change/eva-codex-workbench` 的 `main@9733eb192e8ef97d3e7469ede544cad2a6186519`。
+1. 工程结构和动画算法基准：`https://github.com/Iris-change/eva-codex-workbench` 的 `main@9733eb192e8ef97d3e7469ede544cad2a6186519`。公开历史只包含红黑明日香版，没有参考视频中的浅蓝 `EVANGELION-00` 私人版源文件。
 2. 音画与实际呈现基准：用户提供的视频 `BF.JUV-RR 2026-11-11 00.57.25.mp4`。该文件与先前的 `609_1794013039.mp4` SHA-256 相同。
 3. 角色主题：绫波丽侧脸半身，替换作者仓库的明日香头像和线稿，不改变其余作者界面语言。
-4. 冲突处理：视频实际画面优先于仓库文档；作者源文件优先于本项目近似重绘；真实 Codex READY 和安全要求优先于纯视觉复刻。
+4. 冲突处理：视频实际画面优先于公开仓库的红黑视觉；作者的结构、坐标算法和动作规则优先于本项目近似实现；真实 Codex READY 和安全要求优先于纯视觉复刻。
 
 ## 双渲染器架构
 
@@ -26,15 +26,15 @@ lastRenderRecord() // 仅测试桥
 destroy()
 ```
 
-### 作者源文件渲染器
+### 参考 DOM 渲染器
 
-从固定上游提交移植并适配 `intro.html`、`intro.css`、`intro.js`、`unified-sequence.js`、`boot-atmosphere.js`、`intro-cg.js`、`motion-v12.js`、`sequence-timing.js`、`sequence-audio.js` 和 `stage-layout.js`。保留作者的坐标、边框、六边形节点、标题、警告标签、扫描场、同步圆环、认证闪屏和完成转场。所有改编文件记录仓库 URL、完整提交、原文件名和 MIT 代码范围。
+从固定上游提交移植并适配 `intro.html`、`intro.css`、`intro.js`、`unified-sequence.js`、`boot-atmosphere.js`、`intro-cg.js`、`motion-v12.js`、`sequence-timing.js`、`sequence-audio.js` 和 `stage-layout.js` 的结构、坐标算法和动作规则。红黑明日香视觉不复制；浅冰蓝背景、灰蓝 NERV、`EVANGELION-00`、节点文字、橙色扫描场、蓝色同步圆环、认证闪屏和完成标题按参考视频内部画面逐帧重建。所有改编文件记录仓库 URL、完整提交、原文件名和 MIT 代码范围。
 
-该渲染器仅在固定私有素材清单完整、摘要验证通过且所有必需源资产成功解码时启用。任何缺失或解码失败均在同一状态机位置切换至 Canvas fallback，不显示空白帧。
+该渲染器仅在固定私有素材清单完整、摘要验证通过且所有必需媒体成功解码时启用。任何缺失或解码失败均在同一状态机位置切换至 Canvas fallback，不显示空白帧。
 
 ### Canvas 渲染器
 
-保留现有 `boot-canvas.js`、确定性绘制清单、reduced-motion、HiDPI、无障碍 DOM 控制层和真实 render record。它继续作为公开版默认渲染器，并作为作者源文件渲染器的运行时 fallback。
+保留现有 `boot-canvas.js`、确定性绘制清单、reduced-motion、HiDPI、无障碍 DOM 控制层和真实 render record。它继续作为公开版默认渲染器，并作为参考 DOM 渲染器的运行时 fallback。
 
 ## 资产与许可边界
 
@@ -46,7 +46,7 @@ destroy()
 
 ## 页面与工作台
 
-启动页面按作者源文件的 1920×1080 逻辑坐标复刻，在其他屏幕按比例缩放并保留安全边距。参考视频的手机竖屏外框和播放器 UI 不属于目标。
+启动页面按 1920×1080 逻辑坐标重建。坐标和动作规则来自作者代码，颜色、文字、图标状态和实际合成位置来自裁掉手机外框后的参考视频关键帧；其他屏幕按比例缩放并保留安全边距。参考视频的手机竖屏外框和播放器 UI 不属于目标。
 
 工作台沿用作者的信息架构、边框、标题字、侧栏比例和背景层次；明日香相关资源替换为 Rei portrait。对话、终端、设置和权限确认始终高于人物图层，人物图层不接收指针事件。Mac 专属的 fullscreen、simple fullscreen、窗口恢复和应用退出仍由 `WindowDirector` 管理。
 
@@ -54,7 +54,7 @@ destroy()
 
 视频音轨是唯一 presentation clock。启动片段从视频 2,000 ms 开始，对应逻辑时间 0；视频 22,500 ms 对应逻辑时间 20,500 ms。
 
-逻辑时间到认证门时固定为 99.2%。若 Codex 尚未返回 exact `{ready:true, code:"READY"}`，音频、动画和节点状态共同暂停。用户确认前执行 fresh READY revalidation；成功后从同一音频位置继续。完成前再次 revalidate，之后依次执行认证闪屏、100%、完成标题、180 ms 幕布、退出全屏和工作台显示。
+作者时间轴的认证门是逻辑时间 13,300 ms，对应参考视频绝对时间约 15,300 ms；到达时固定为 99.2%。若 Codex 尚未返回 exact `{ready:true, code:"READY"}`，音频、动画和节点状态共同暂停。用户确认前执行 fresh READY revalidation；成功后从同一音频位置继续。完成前再次 revalidate，之后依次执行认证闪屏、100%、完成标题、180 ms 幕布、退出全屏和工作台显示。
 
 跳过按钮和 `Escape` 只跳过演出前半段：150 ms 淡出并 seek 到认证门，不能终止 health polling、伪造 READY 或绕过确认。
 
@@ -70,11 +70,11 @@ destroy()
 - 音轨起点、暂停点、恢复点、完成点和 150 ms 跳过淡出；
 - fullscreen 到 windowed、READY 门、断连恢复和工作台交互。
 
-视觉回归测试必须读取真实绘制记录或 DOM computed style，不得回读时间轴输入常量。作者源文件模式和 Canvas fallback 都运行关键帧、完整播放、按钮跳过、Escape、reduced-motion 和 packaged production bridge 拒绝测试。
+视觉回归测试必须读取真实绘制记录或 DOM computed style，不得回读时间轴输入常量。参考 DOM 模式和 Canvas fallback 都运行关键帧、完整播放、按钮跳过、Escape、reduced-motion 和 packaged production bridge 拒绝测试。
 
 ## 完成标准
 
-- 私有主题默认显示作者源文件模式，视觉清单无已知偏差；Canvas fallback 可从相同状态无闪屏接管。
+- 私有主题默认显示参考 DOM 模式，视觉清单无已知偏差；Canvas fallback 可从相同状态无闪屏接管。
 - BGM、音效和播报来自参考视频同一音轨，动画由该音轨驱动。
 - 99.2% READY、确认、100%、窗口交接、断连恢复和退出清理全部通过实机两轮验收。
 - 公开 Git、公开 ASAR、日志和测试产物不含 NERV、Rei、参考音轨、绝对本地路径或私有主题标识。
