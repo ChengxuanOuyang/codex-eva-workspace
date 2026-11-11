@@ -107,10 +107,11 @@ test('boot scripts load in the required deterministic order', async () => {
   const start = scripts.indexOf('/shared/api.js');
 
   assert.notEqual(start, -1);
-  assert.deepEqual(scripts.slice(start, start + 8), [
+  assert.deepEqual(scripts.slice(start, start + 9), [
     '/shared/api.js',
     '/motion.js',
     '/stage-layout.js',
+    '/reference-timing.js',
     '/timeline.js',
     '/boot-canvas.js',
     '/sequence-audio.js',
@@ -166,7 +167,15 @@ test('declarative boot modules are served through exact allowlist entries only',
   const bootRoot = path.join(fixtureRoot, 'boot');
   const sharedRoot = path.join(fixtureRoot, 'shared');
   const service = createWorkbenchService({snapshot: () => ({ready: true}), bootRoot, sharedRoot});
-  const scripts = ['motion.js', 'stage-layout.js', 'timeline.js', 'boot-canvas.js', 'sequence-audio.js', 'audio-clock.js'];
+  const scripts = [
+    'motion.js',
+    'stage-layout.js',
+    'reference-timing.js',
+    'timeline.js',
+    'boot-canvas.js',
+    'sequence-audio.js',
+    'audio-clock.js'
+  ];
 
   try {
     await fs.mkdir(bootRoot);

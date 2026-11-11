@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const {createAudioClock} = require('../renderer/boot/audio-clock.js');
 const {loadSequenceAudio} = require('../renderer/boot/sequence-audio.js');
+const {REFERENCE_TIMING} = require('../renderer/boot/reference-timing.js');
 
 function deferred() {
   let resolve;
@@ -241,7 +242,7 @@ test('a rejected play switches once to the monotonic clock', async () => {
   assert.deepEqual(modes, ['silent']);
 });
 
-test('pause at 15500 ms and resume exclude the authorization wait', async () => {
+test('pause at the reference hold and resume exclude the authorization wait', async () => {
   let currentNow = 0;
   const ticks = [];
   const raf = fakeRaf();
@@ -253,36 +254,36 @@ test('pause at 15500 ms and resume exclude the authorization wait', async () => 
   });
 
   await clock.start();
-  currentNow = 15500;
+  currentNow = REFERENCE_TIMING.holdMs;
   raf.fire();
   await clock.pause();
-  currentNow = 45500;
+  currentNow = REFERENCE_TIMING.holdMs + 30_000;
   await clock.resume();
-  currentNow = 46500;
+  currentNow = REFERENCE_TIMING.holdMs + 31_000;
   raf.fire();
 
-  assert.equal(ticks.at(-2), 15500);
-  assert.equal(ticks.at(-1), 16500);
+  assert.equal(ticks.at(-2), REFERENCE_TIMING.holdMs);
+  assert.equal(ticks.at(-1), REFERENCE_TIMING.holdMs + 1_000);
 });
 
-test('media pause at 15500 ms and resume exclude the authorization wait', async () => {
+test('media pause at the reference hold and resume exclude the authorization wait', async () => {
   const audio = fakeAudio();
   const ticks = [];
   const raf = fakeRaf();
   const clock = createAudioClock({audio, onTick: value => ticks.push(value), raf});
 
   await clock.start();
-  audio.currentTime = 15.5;
+  audio.currentTime = REFERENCE_TIMING.holdMs / 1_000;
   raf.fire();
   clock.pause();
-  audio.currentTime = 45.5;
+  audio.currentTime = REFERENCE_TIMING.holdMs / 1_000 + 30;
   await clock.resume();
-  assert.equal(audio.currentTime, 15.5);
-  audio.currentTime = 16.5;
+  assert.equal(audio.currentTime, REFERENCE_TIMING.holdMs / 1_000);
+  audio.currentTime = REFERENCE_TIMING.holdMs / 1_000 + 1;
   raf.fire();
 
-  assert.equal(ticks.at(-2), 15500);
-  assert.equal(ticks.at(-1), 16500);
+  assert.equal(ticks.at(-2), REFERENCE_TIMING.holdMs);
+  assert.equal(ticks.at(-1), REFERENCE_TIMING.holdMs + 1_000);
 });
 
 test('pause invalidates a pending clock start so it cannot later play', async () => {
@@ -343,7 +344,7 @@ test('seek synchronizes media and monotonic positions', async () => {
     raf: mediaRaf
   });
   await mediaClock.start();
-  mediaClock.seek(15500);
+  mediaClock.seek(REFERENCE_TIMING.holdMs);
   mediaRaf.fire();
 
   const silentRaf = fakeRaf();
@@ -355,13 +356,13 @@ test('seek synchronizes media and monotonic positions', async () => {
     raf: silentRaf
   });
   await silentClock.start();
-  silentClock.seek(15500);
+  silentClock.seek(REFERENCE_TIMING.holdMs);
   currentNow = 1250;
   silentRaf.fire();
 
-  assert.equal(media.currentTime, 17.5);
-  assert.equal(mediaTicks.at(-1), 15500);
-  assert.equal(silentTicks.at(-1), 15750);
+  assert.equal(media.currentTime, REFERENCE_TIMING.videoHoldMs / 1_000);
+  assert.equal(mediaTicks.at(-1), REFERENCE_TIMING.holdMs);
+  assert.equal(silentTicks.at(-1), REFERENCE_TIMING.holdMs + 250);
 });
 
 test('fadeOut lowers volume every 25 ms, pauses, and restores the initial gain', async () => {

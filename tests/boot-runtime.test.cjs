@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {nextBootState, MAX_UNCONFIRMED_PROGRESS} = require('../renderer/boot/boot-state.cjs');
+const {REFERENCE_TIMING} = require('../renderer/boot/reference-timing.js');
 const {sampleTimeline} = require('../renderer/boot/timeline.js');
 
 class FakeStyle {
@@ -147,7 +148,10 @@ function response({status = 200, json = {}} = {}) {
 
 async function fixture(apiOverrides = {}, options = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
-  const sandbox = {AbortController};
+  const sandbox = {
+    AbortController,
+    ProjectZeroReferenceTiming: {REFERENCE_TIMING}
+  };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
   assert.equal(typeof sandbox.ProjectZeroBoot?.createBootController, 'function');
@@ -273,16 +277,16 @@ async function fixture(apiOverrides = {}, options = {}) {
 test('audio ticks drive the timeline, accessible state, canvas and one authorization pause', async () => {
   const view = await fixture();
 
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   assert.equal(view.document.body.dataset.stage, 'authorize');
   assert.equal(view.elements['#progress-value'].textContent, '99.2');
   assert.equal(view.elements['#confirm-button'].disabled, true);
-  assert.deepEqual(view.canvas.lastSnapshot, sampleTimeline(15_500));
+  assert.deepEqual(view.canvas.lastSnapshot, sampleTimeline(REFERENCE_TIMING.holdMs));
   assert.equal(view.audioClock.calls.pause, 1);
   assert.equal(view.clock.countIntervals(80), 0);
   assert.equal(view.clock.countIntervals(100), 0);
 
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.clock.fireTimeout(0);
   await view.clock.fireTimeout(500);
   assert.equal(view.audioClock.calls.pause, 1);
@@ -299,7 +303,7 @@ test('READY only unlocks confirmation and a fresh exact READY resumes once', asy
   await view.clock.fireTimeout(0);
   assert.equal(view.controller.getState().progress, 0);
   assert.equal(view.elements['#confirm-button'].disabled, true);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   assert.equal(view.elements['#confirm-button'].disabled, false);
 
   await Promise.all([
@@ -322,7 +326,7 @@ test('reduced motion cannot confirm before the semantic authorization gate', asy
   }, {reducedMotion: true});
 
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(8_500);
+  view.audioClock.tick(REFERENCE_TIMING.syncStartMs);
   assert.equal(view.controller.getState().progress, 99.2);
   assert.equal(view.document.body.dataset.stage, 'synchronize');
   assert.equal(view.elements['#confirm-button'].disabled, true);
@@ -330,7 +334,7 @@ test('reduced motion cannot confirm before the semantic authorization gate', asy
   assert.equal(healthCalls, 1);
   assert.equal(view.audioClock.calls.resume, 0);
 
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   assert.equal(view.elements['#confirm-button'].disabled, false);
 });
 
@@ -343,7 +347,7 @@ test('confirmation fails closed when the revalidation is not exact READY', async
   });
 
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
 
   assert.equal(healthCalls, 2);
@@ -511,12 +515,12 @@ test('skip strictly fades, seeks and dispatches without stopping health polling'
 
   fade.resolve();
   await skipRun;
-  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.deepEqual(view.audioClock.calls.seek, [REFERENCE_TIMING.holdMs]);
   assert.equal(view.controller.getState().phase, 'waiting');
   assert.equal(view.controller.getState().progress, 99.2);
   assert.deepEqual(
     view.events.filter(event => event.startsWith('audio.fadeOut') || event.startsWith('audio.seek') || event === 'state.skip'),
-    ['audio.fadeOut:150', 'audio.seek:15500', 'state.skip']
+    ['audio.fadeOut:150', `audio.seek:${REFERENCE_TIMING.holdMs}`, 'state.skip']
   );
 
   health.resolve({ready: false, code: 'INITIALIZING'});
@@ -538,7 +542,7 @@ test('skip waits for pending clock initialization and still runs exactly once', 
   await skipRun;
 
   assert.deepEqual(view.audioClock.calls.fadeOut, [150]);
-  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.deepEqual(view.audioClock.calls.seek, [REFERENCE_TIMING.holdMs]);
   assert.equal(view.controller.getState().phase, 'waiting');
 });
 
@@ -571,7 +575,7 @@ test('completion closes for 180 ms, completes the window once, reveals the shell
     }
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
   view.audioClock.tick(20_500);
 
@@ -624,7 +628,7 @@ test('completion revalidates exact READY before closing and returns to the autho
     }
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
   view.audioClock.tick(20_500);
 
@@ -642,7 +646,7 @@ test('completion revalidates exact READY before closing and returns to the autho
   assert.equal(view.controller.getState().confirmed, false);
   assert.equal(view.document.body.dataset.stage, 'authorize');
   assert.equal(view.canvas.lastSnapshot.stage, 'authorize');
-  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.deepEqual(view.audioClock.calls.seek, [REFERENCE_TIMING.holdMs]);
   assert.equal(view.clock.countTimeouts(500), 1);
 });
 
@@ -668,7 +672,7 @@ test('completion aborts a stale disconnect poll before its fresh READY revalidat
     }
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
   const staleRun = view.clock.fireTimeout(500);
   view.audioClock.tick(20_500);
@@ -694,7 +698,7 @@ test('a rejected completion API fails closed with no unhandled reveal', async ()
     completePresentation: () => Promise.reject(Error('/private/window failure'))
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
   const completionRun = view.audioClock.end();
   await flushMicrotasks();
@@ -723,7 +727,7 @@ test('destroy during a pending completion aborts and blocks every later DOM tran
     }
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
   const completionRun = view.audioClock.end();
   await flushMicrotasks();
@@ -751,7 +755,7 @@ test('a concurrent confirm wins over skip and does not duplicate revalidation', 
     }
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
 
   const confirmRun = view.elements['#confirm-button'].dispatch('click');
   await view.elements['#skip-button'].dispatch('click');
@@ -833,7 +837,7 @@ test('disconnect after confirmation restores authorize and requires a fresh seco
     }
   });
   await view.clock.fireTimeout(0);
-  view.audioClock.tick(15_500);
+  view.audioClock.tick(REFERENCE_TIMING.holdMs);
   await view.elements['#confirm-button'].dispatch('click');
   assert.equal(view.audioClock.calls.pause, 1);
   await view.clock.fireTimeout(500);
@@ -841,10 +845,11 @@ test('disconnect after confirmation restores authorize and requires a fresh seco
   assert.equal(view.controller.getState().phase, 'waiting');
   assert.equal(view.controller.getState().confirmed, false);
   assert.equal(view.audioClock.calls.pause, 2);
-  assert.deepEqual(view.audioClock.calls.seek, [15_500]);
+  assert.deepEqual(view.audioClock.calls.seek, [REFERENCE_TIMING.holdMs]);
   assert.deepEqual(
-    view.events.filter(event => event === 'audio.pause' || event === 'audio.seek:15500').slice(-2),
-    ['audio.pause', 'audio.seek:15500']
+    view.events.filter(event => event === 'audio.pause'
+      || event === `audio.seek:${REFERENCE_TIMING.holdMs}`).slice(-2),
+    ['audio.pause', `audio.seek:${REFERENCE_TIMING.holdMs}`]
   );
   assert.equal(view.document.body.dataset.stage, 'authorize');
   assert.equal(view.canvas.lastSnapshot.stage, 'authorize');
@@ -890,7 +895,10 @@ test('identical readiness and timeline snapshots do not rewrite live regions', a
   view.audioClock.tick(10_500);
   assert.equal(view.elements['#diagnostic-text'].textWrites, diagnosticWrites);
   assert.equal(view.elements['#boot-live-status'].textWrites, liveWrites);
-  assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '28.3');
+  assert.equal(
+    view.elements['#ring-progress'].getAttribute('aria-valuenow'),
+    sampleTimeline(10_500).progress.toFixed(1)
+  );
 });
 
 test('automatic startup remains a singleton and uses no legacy interval ticker', async () => {
@@ -924,6 +932,7 @@ test('automatic startup remains a singleton and uses no legacy interval ticker',
     },
     ProjectZeroAudioClock: {createAudioClock: () => presentationClock},
     ProjectZeroBootCanvasInstance: {render() {}},
+    ProjectZeroReferenceTiming: {REFERENCE_TIMING},
     ProjectZeroSequenceAudio: {loadSequenceAudio: async () => { throw Error('not used'); }},
     ProjectZeroTimeline: {sampleTimeline},
     addEventListener(type, listener) { listeners.set(type, listener); },

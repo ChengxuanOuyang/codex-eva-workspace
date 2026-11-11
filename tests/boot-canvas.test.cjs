@@ -245,7 +245,7 @@ test('synchronization and authorization keyframes draw rings, exact 99.2 percent
 
   const authorize = recordingContext();
   drawBootFrame(authorize.context, fixedSnapshot({
-    elapsedMs: 15500,
+    elapsedMs: 13300,
     stage: 'authorize',
     progress: 99.2,
     activeNodes: 12,

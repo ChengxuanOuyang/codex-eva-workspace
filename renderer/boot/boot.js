@@ -1,6 +1,8 @@
 'use strict';
 
 (function installProjectZeroBoot(root) {
+  const REFERENCE_TIMING = root.ProjectZeroReferenceTiming?.REFERENCE_TIMING;
+  if (!REFERENCE_TIMING) throw new Error('REFERENCE_TIMING_UNAVAILABLE');
   const PRIVATE_THEME_URL = '/private/theme.json';
   const PRIVATE_MARK_URL = '/private/boot-mark.webp';
   const PRIVATE_PORTRAIT_URL = '/private/rei-portrait.webp';
@@ -8,8 +10,6 @@
     '/private/startup-reference.wav',
     '/private/startup-reference.m4a'
   ]);
-  const AUTHORIZATION_MS = 15_500;
-  const PRESENTATION_END_MS = 20_500;
   const TEST_PRESENTATION_ATTRIBUTE = 'data-project-zero-test-presentation-elapsed';
   const TEST_PRESENTATION_EVENT = 'project-zero:test-presentation-elapsed';
   const TRACK_DURATION_TOLERANCE_MS = 1;
@@ -24,7 +24,7 @@
   const PUBLIC_PRESENTATION = Object.freeze({
     audio: null,
     audioStartMs: 0,
-    audioEndMs: PRESENTATION_END_MS,
+    audioEndMs: REFERENCE_TIMING.durationMs,
     portrait: null
   });
   const STAGE_TEXT = Object.freeze({
@@ -194,7 +194,7 @@
         || !Number.isSafeInteger(theme.audioStartMs)
         || !Number.isSafeInteger(theme.audioEndMs)
         || theme.audioStartMs < 0
-        || theme.audioEndMs - theme.audioStartMs !== PRESENTATION_END_MS) {
+        || theme.audioEndMs - theme.audioStartMs !== REFERENCE_TIMING.durationMs) {
         return PUBLIC_PRESENTATION;
       }
       return Object.freeze({
@@ -327,7 +327,7 @@
       const delta = snapshot.progress - state.progress;
       if (delta > 0) dispatch({type: 'tick', delta});
       else render();
-      if (!state.confirmed && snapshot.elapsedMs >= AUTHORIZATION_MS && !gatePaused) {
+      if (!state.confirmed && snapshot.elapsedMs >= REFERENCE_TIMING.holdMs && !gatePaused) {
         gatePaused = true;
         audioClock?.pause();
       }
@@ -346,24 +346,24 @@
       pendingTestElapsedMs = undefined;
       audioClock.pause();
       audioClock.seek(elapsedMs);
-      gatePaused = !state.confirmed && elapsedMs >= AUTHORIZATION_MS;
+      gatePaused = !state.confirmed && elapsedMs >= REFERENCE_TIMING.holdMs;
       renderTimeline(elapsedMs);
-      if (state.confirmed && elapsedMs >= PRESENTATION_END_MS) void completePresentation();
+      if (state.confirmed && elapsedMs >= REFERENCE_TIMING.durationMs) void completePresentation();
     }
 
     function onTestPresentationElapsed() {
       const elapsedMs = Number(document.documentElement?.getAttribute?.(TEST_PRESENTATION_ATTRIBUTE));
-      if (!Number.isSafeInteger(elapsedMs) || elapsedMs < 0 || elapsedMs > PRESENTATION_END_MS) return;
+      if (!Number.isSafeInteger(elapsedMs) || elapsedMs < 0 || elapsedMs > REFERENCE_TIMING.durationMs) return;
       applyTestElapsed(elapsedMs);
     }
 
     function restoreAuthorizationGate() {
       if (destroyed || !audioClock) return;
       audioClock.pause();
-      audioClock.seek(AUTHORIZATION_MS);
+      audioClock.seek(REFERENCE_TIMING.holdMs);
       gatePaused = true;
       dispatch({type: 'skip'});
-      renderTimeline(AUTHORIZATION_MS);
+      renderTimeline(REFERENCE_TIMING.holdMs);
     }
 
     function normalizeReadiness(health) {
@@ -509,11 +509,11 @@
         if (destroyed || !audioClock) return;
         await audioClock.fadeOut(150);
         if (destroyed) return;
-        audioClock.seek(AUTHORIZATION_MS);
+        audioClock.seek(REFERENCE_TIMING.holdMs);
         if (destroyed) return;
         if (!dispatch({type: 'skip'})) return;
         gatePaused = true;
-        renderTimeline(AUTHORIZATION_MS);
+        renderTimeline(REFERENCE_TIMING.holdMs);
       } catch {
         if (!destroyed) applyReadiness({ready: false, code: 'DISCONNECTED'});
       } finally {
