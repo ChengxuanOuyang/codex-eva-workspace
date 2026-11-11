@@ -107,11 +107,13 @@ test('boot scripts load in the required deterministic order', async () => {
   const start = scripts.indexOf('/shared/api.js');
 
   assert.notEqual(start, -1);
-  assert.deepEqual(scripts.slice(start, start + 9), [
+  assert.deepEqual(scripts.slice(start, start + 11), [
     '/shared/api.js',
     '/motion.js',
     '/stage-layout.js',
     '/reference-timing.js',
+    '/reference-layout.js',
+    '/reference-renderer.js',
     '/timeline.js',
     '/boot-canvas.js',
     '/sequence-audio.js',
@@ -171,6 +173,8 @@ test('declarative boot modules are served through exact allowlist entries only',
     'motion.js',
     'stage-layout.js',
     'reference-timing.js',
+    'reference-layout.js',
+    'reference-renderer.js',
     'timeline.js',
     'boot-canvas.js',
     'sequence-audio.js',
@@ -183,7 +187,11 @@ test('declarative boot modules are served through exact allowlist entries only',
     for (const script of scripts) {
       await fs.writeFile(path.join(bootRoot, script), `globalThis.${script} = true;`);
     }
+    await fs.writeFile(path.join(bootRoot, 'reference.css'), '.reference-sequence {}');
     const address = await service.listen();
+    const referenceCss = await request(address, '/reference.css');
+    assert.equal(referenceCss.status, 200);
+    assert.equal(referenceCss.headers['content-type'], 'text/css; charset=utf-8');
 
     for (const script of scripts) {
       const response = await request(address, `/${script}`);
@@ -195,7 +203,15 @@ test('declarative boot modules are served through exact allowlist entries only',
       '/unlisted-boot-module.js',
       '/audio-clock.js?cache=1',
       '/sequence-audio.js.bak',
-      '/boot/audio-clock.js'
+      '/boot/audio-clock.js',
+      '/reference-layout.js?cache=1',
+      '/reference-renderer.js?cache=1',
+      '/reference.css?cache=1',
+      '/boot/../reference-layout.js',
+      '/%2e%2e/reference-renderer.js',
+      '/boot\\reference-layout.js',
+      '/reference-renderer.js.bak',
+      '/reference-unlisted.js'
     ]) {
       const unknown = await request(address, requestPath);
       assert.equal(unknown.status, 404, requestPath);
@@ -264,4 +280,19 @@ test('small functional text colors meet 4.5 to 1 contrast on the ice surface', a
 
   assert.ok(contrast(muted, '#f6fbfa') >= 4.5, `muted contrast was ${contrast(muted, '#f6fbfa')}`);
   assert.ok(contrast(accent, '#f6fbfa') >= 4.5, `accent contrast was ${contrast(accent, '#f6fbfa')}`);
+});
+
+
+test('reference DOM is a hidden companion surface with local styles and fixed logical scaling', async () => {
+  const [html, css] = await Promise.all([read('boot/index.html'), read('boot/reference.css')]);
+  assert.match(html, /<section id="reference-sequence" class="reference-sequence" hidden aria-hidden="true">/);
+  for (const className of ['reference-header', 'reference-grid', 'reference-node-column--left',
+    'reference-node-column--right', 'reference-center', 'reference-scan-field', 'reference-footer']) {
+    assert.ok(html.includes(className), className);
+  }
+  assert.match(html, /href="\/reference\.css"/);
+  assert.match(css, /width:\s*1920px/);
+  assert.match(css, /height:\s*1080px/);
+  assert.match(css, /--reference-scale/);
+  assert.doesNotMatch(css, /https?:\/\/|data:image|#(?:ff0000|000000)\b/i);
 });

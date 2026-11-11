@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>PROJECT ZERO // PILOT CODEX WORKBENCH</title>
   <link rel="stylesheet" href="/boot.css">
+  <link rel="stylesheet" href="/reference.css">
   <link rel="stylesheet" href="/fonts/mincho.css">
   <link rel="stylesheet" href="/workbench.css">
   <link rel="stylesheet" href="/vendor/xterm.css">
@@ -15,6 +16,8 @@
   <script src="/motion.js" defer></script>
   <script src="/stage-layout.js" defer></script>
   <script src="/reference-timing.js" defer></script>
+  <script src="/reference-layout.js" defer></script>
+  <script src="/reference-renderer.js" defer></script>
   <script src="/timeline.js" defer></script>
   <script src="/boot-canvas.js" defer></script>
   <script src="/sequence-audio.js" defer></script>
@@ -33,6 +36,15 @@
 <body data-phase="syncing" data-scene="awakening" data-stage="wake">
   <div id="boot-screen" class="boot-presentation">
     <canvas id="boot-sequence" aria-hidden="true"></canvas>
+    <section id="reference-sequence" class="reference-sequence" hidden aria-hidden="true">
+      <header class="reference-header"></header>
+      <div class="reference-grid"></div>
+      <div class="reference-node-column reference-node-column--left"></div>
+      <div class="reference-node-column reference-node-column--right"></div>
+      <div class="reference-center"></div>
+      <div class="reference-scan-field"></div>
+      <footer class="reference-footer"></footer>
+    </section>
 
     <div class="visually-hidden boot-semantics">
       <div id="ring-progress" role="progressbar" aria-label="同步进度"
