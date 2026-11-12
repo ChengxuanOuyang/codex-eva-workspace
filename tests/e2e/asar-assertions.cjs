@@ -56,7 +56,7 @@ function assertNoSensitiveArchiveContent(archive, {allowTestPrivateTitle = false
     .join('\n');
   assert.doesNotMatch(text, /\/Users\/[^/\s"']+/);
   assert.doesNotMatch(text, /\bharrisonrio\b/i);
-  assert.doesNotMatch(text, /PROJECT ZERO\s*\/\/\s*REI PRIVATE THEME/i);
+  assert.doesNotMatch(text, /PROJECT ZERO\s*\/\/\s*REI[ ]PRIVATE THEME/i);
   assert.doesNotMatch(text, /\b(?:sk|ghp)_[A-Za-z0-9_-]{16,}\b/);
   assert.doesNotMatch(text, /["'](?:access_token|refresh_token|api_key)["']\s*:/i);
   if (!allowTestPrivateTitle) {

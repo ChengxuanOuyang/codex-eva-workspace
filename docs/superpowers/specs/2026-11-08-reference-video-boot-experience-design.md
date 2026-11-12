@@ -2,7 +2,7 @@
 
 Date: 2026-11-08  
 Status: User-approved design, pending written-spec review  
-Product: PROJECT ZERO — REI PRIVATE THEME
+Product: PROJECT ZERO — PRIVATE THEME
 
 ## Objective
 

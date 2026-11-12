@@ -278,7 +278,7 @@
       metric: {text: `${progress.toFixed(1)}%`, opacity: metricOpacity},
       unit: {text: 'EVANGELION-00', opacity: completionOpacity},
       title: {text: title, opacity: completionOpacity || introOpacity},
-      subtitle: {text: mode === 'mark' && elapsedMs > 0 ? 'EVANGELION-00 / REI PRIVATE WORKSTATION' : '', opacity: introOpacity},
+      subtitle: {text: mode === 'mark' && elapsedMs > 0 ? 'EVANGELION-00 / LOCAL WORKSTATION' : '', opacity: introOpacity},
       code: {text: 'CODEX / 本地链路已建立', opacity: completionOpacity},
       cueJa: {text: cue?.ja || '', opacity: cue?.ja ? 1 : 0},
       cueZh: {text: cue?.zh || '', opacity: cue?.zh ? 1 : 0}

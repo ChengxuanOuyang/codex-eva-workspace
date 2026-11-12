@@ -86,7 +86,7 @@ cp assets/themes/project-zero/ASSET-LICENSE.md private-themes/rei/package/ASSET-
 {
   "schemaVersion": 1,
   "id": "rei-private",
-  "displayName": "PROJECT ZERO // REI PRIVATE THEME",
+  "displayName": "PROJECT ZERO // PRIVATE THEME",
   "scenes": {
     "awakening": "scene-b-awakening.webp",
     "synchronization": "scene-a-sync.webp",
@@ -672,7 +672,7 @@ git commit -m "feat: package validated private themes in isolation"
 
 - [ ] **步骤 1：编写产物红灯**
 
-公共 smoke 要求：公开 ASAR 标题为 PILOT；只有 VOIDGLASS manifest/hash；无 `private-themes`、`REI PRIVATE THEME`、凭据、测试或用户绝对路径。
+公共 smoke 要求：公开 ASAR 标题为 PILOT；只有 VOIDGLASS manifest/hash；无 `private-themes`、`PRIVATE THEME`、凭据、测试或用户绝对路径。
 
 私人 smoke 使用合成 fixture 调用 staging packer，要求：单独输出目录；ASAR 包含 fixture 的精确三个 scene hash；应用内标题为 TEST PRIVATE THEME；公共 tracked asset hash 未改变；应用可启动并关闭。
 
@@ -721,7 +721,7 @@ git commit -m "docs: publish the public and private theme workflow"
 npm run pack:private -- --theme private-themes/rei/package
 ```
 
-检查私人 ASAR：三个 hash 与 ignored manifest 完全一致；显示名为 `PROJECT ZERO // REI PRIVATE THEME`；无 PNG master、凭据、测试、fixture 或绝对用户路径。启动后验证真实 Codex readiness、Skip、确认、shell 后断线恢复，再正常退出。
+检查私人 ASAR：三个 hash 与 ignored manifest 完全一致；显示名为 `PROJECT ZERO // PRIVATE THEME`；无 PNG master、凭据、测试、fixture 或绝对用户路径。启动后验证真实 Codex readiness、Skip、确认、shell 后断线恢复，再正常退出。
 
 - [ ] **步骤 2：运行最终公共门禁**
 
@@ -774,7 +774,7 @@ git -C "$release_dir" push --force-with-lease="main:$expected_remote" origin mai
 
 - [ ] **步骤 7：本机安装私人预览**
 
-在用户确认安装目标后，把私人 `.app` 复制到 `~/Applications/PROJECT ZERO — REI PRIVATE THEME.app`，保留 `dist-private` 原件；启动一次验证。由于未签名/未公证，只提供本地首次打开指导，不修改 macOS Gatekeeper 或安全设置。
+在用户确认安装目标后，把私人 `.app` 复制到 `~/Applications/PROJECT ZERO — PRIVATE THEME.app`，保留 `dist-private` 原件；启动一次验证。由于未签名/未公证，只提供本地首次打开指导，不修改 macOS Gatekeeper 或安全设置。
 
 - [ ] **步骤 8：最终交付**
 

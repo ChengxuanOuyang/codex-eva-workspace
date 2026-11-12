@@ -70,7 +70,7 @@ manifest, asset manifest, and notice into `private-themes/rei/package/`. These f
 outside Git and outside the public ASAR.
 
 The private theme manifest may use the in-app label
-`PROJECT ZERO // REI PRIVATE THEME`. It must state that it is unofficial fan material, is for
+`PROJECT ZERO // PRIVATE THEME`. It must state that it is unofficial fan material, is for
 private local use, does not convey third-party character or trademark rights, and is not part
 of the open-source distribution.
 

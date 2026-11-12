@@ -4,6 +4,25 @@
 
 公开仓库内的 `tests/fixtures/private-theme-valid/` 只有无版权合成测试字节，不是可发布主题，也不能替代使用者对真实素材的授权确认。
 
+## 双渲染器、作者源码与视频优先级
+
+公开版始终以 Canvas 为默认渲染器。完整私有包通过固定文件集合和摘要校验后，运行时还需成功
+解码私有音轨与标志，才会启用 reference DOM/SVG 渲染器。私有配置、媒体解码或 reference
+初始化失败时使用 Canvas；reference 的 render/resize 抛错时，Canvas 从当前展示快照接管，
+不重启时间轴，也不绕过 READY 门。
+
+作者公开源码提供结构、坐标和动作算法，固定提交及逐文件改编范围见
+[代码来源](code-origins.md)。`reference-timing.js` 负责参考时间点，`reference-layout.js`
+生成 view-model，`reference-renderer.js` 和 `reference.css` 更新 DOM/SVG；
+`renderer-director.js` 选择渲染器并负责 fallback。已有 `boot-canvas.js` 保留为公开默认和
+私有故障回退。启动控制器继续独占音频时钟、99.2% 暂停、fresh READY 校验、用户确认、100%
+及工作台交接；渲染器只消费冻结快照。
+
+作者公开历史提供红黑主题，未发布浅蓝私人版本的源码。参考视频内部桌面画面的颜色、文字、
+图标和时间优先于公开主题；结构和动作规则参考作者代码，真实 Codex READY 与安全边界始终
+保留。手机外框、播放器和社交界面不进入产品。MIT 代码改编和 OFL 字体许可不会覆盖私有角色、
+标志或参考音轨的权利。使用者必须自行确认这些素材的合法来源和使用范围。
+
 ## 固定目录结构
 
 schema v2 主题包必须恰好包含以下九个普通文件；不接受额外文件、子目录或符号链接：
@@ -50,6 +69,9 @@ private-themes/my-theme/package/
 ```
 
 `displayName` 最长 96 个字符且不能包含换行或 NUL。三个 `scenes` 值必须各自选择一个固定 scene basename。`boot` 的 mark、portrait 和 soundtrack 也只能使用固定 basename；不能写 URL、目录或绝对路径。`audioStartMs` 和 `audioEndMs` 是声音文件内的播放边界，必须是非负安全整数，且结束时间严格大于开始时间。
+本参考演出固定使用 2,000–22,500 ms（逻辑时长 20,500 ms），不可再次裁掉文件前 2 秒后仍沿用
+这个偏移。逻辑时间 13,300 ms 到达 99.2% 认证门；音轨和动画共同暂停，真实 READY 与确认通过后
+从同一位置恢复。参考音轨已含 BGM、系统声音和播报，不再叠加作者的独立声音文件。
 
 构建生成的运行时配置只包含固定同源 URL：`/private/boot-mark.webp`、`/private/rei-portrait.webp` 和 `/private/startup-reference.{wav,m4a}`。Rei portrait 只有在这个完整配置成功验证后才启用；公开模式不显示 portrait，任意 URL 不能覆盖该固定值。
 
@@ -107,12 +129,22 @@ PRIVATE_AUDIO_READY bytes=<整数> duration_ms=<整数> sha256=<64 位摘要>
 ```bash
 npm ci
 npm run verify
+npm run licenses:check
+npm audit --audit-level=high
+npm run test:e2e
 npm run pack:private -- --theme private-themes/my-theme/package
 ```
 
 成功产物位于 `dist-private/mac-arm64/`（Apple Silicon）或 `dist-private/mac/`（Intel），不会覆盖公开的 `dist/`。命令不接受环境变量暗中指定主题，也不会把 manifest 内容或本机绝对路径输出到稳定错误信息中。自动化打包烟测会比较私人 ASAR 中 mark、portrait、soundtrack 的 fixture 摘要，同时证明公开 ASAR 不含这些路径，运行时配置也不含来源目录。
+真实私有包还应核对五张图和声音共六项源摘要与最终 ASAR 字节，并检查运行时配置的音频边界。
+通过 Node/E2E 不等于已完成实际声卡试听；安装后仍需完整播放和 Escape 跳过各验收一次，确认音画、
+99.2% READY 门、确认、100% 和工作台交接。可恢复安装与失败恢复见
+[完整工作流](workflow.md#私人构建可恢复安装与回退)。
 
-这个目录包仍然未签名、未公证。发送给另一位使用者后，对方仍会遇到 macOS Gatekeeper；应使用 Finder 的“打开”或“系统设置 → 隐私与安全性 → 仍要打开”，不要建议关闭 Gatekeeper。
+构建产物没有开发者身份签名、未公证。安装流程可对明确的本地私人副本执行 ad-hoc 签名，
+以重建重打包后失效的资源封印；这不授予 Apple 信任，也不是分发签名。发送给另一位使用者后，
+对方仍会遇到 macOS Gatekeeper；应使用 Finder 的“打开”或“系统设置 → 隐私与安全性 → 仍要打开”，
+不要建议关闭 Gatekeeper。
 
 同一 Codex 账号不会自动同步应用文件、`dist-private` 产物或私人主题。要在另一台 Mac 使用，必须通过双方认可的私密方式单独传输应用或主题，并确认接收方也拥有相应素材使用权。
 

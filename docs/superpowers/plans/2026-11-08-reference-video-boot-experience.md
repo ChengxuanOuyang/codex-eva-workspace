@@ -751,7 +751,7 @@ git commit -m "test: verify the reference boot experience end to end"
 运行：
 
 ```bash
-npm run prepare:private-audio -- --input "/absolute/path/to/609_1794013039.mp4" --output "/absolute/path/to/private-themes/rei/package/startup-reference.m4a"
+npm run prepare:private-audio -- --input "/absolute/path/to/reference.mp4" --output "/absolute/path/to/private-themes/rei/package/startup-reference.m4a"
 ```
 
 预期：只输出 `PRIVATE_AUDIO_READY`、媒体摘要和 SHA-256；随后用 `afinfo` 确认 AAC、44.1 kHz、单声道、约 28.055 秒。私人 `theme.json` 设置 `audioStartMs: 2000`、`audioEndMs: 22500`，播放段长度 20.5 秒。
@@ -792,7 +792,7 @@ npm run pack:private -- --theme private-themes/rei/package
 
 - [ ] **步骤 5：可恢复安装并完成两次实机验收**
 
-先确认旧应用进程已退出。把 `/Users/harrisonrio/Applications/PROJECT ZERO — REI PRIVATE THEME.app` 移到带时间戳的废纸篓备份，再复制新 app 到原路径。启动后完成：
+先确认旧应用进程已退出。把 `~/Applications/PROJECT ZERO — PRIVATE THEME.app` 移到带时间戳的废纸篓备份，再复制新 app 到原路径。启动后完成：
 
 1. 一次不跳过的完整 20.5 秒演出，检查声音、扫描、99.2%、确认、100%、退出全屏和工作台 READY。
 2. 一次重新启动并按 `Escape` 跳过，检查 150 ms 淡出、99.2% 门和工作台 READY。

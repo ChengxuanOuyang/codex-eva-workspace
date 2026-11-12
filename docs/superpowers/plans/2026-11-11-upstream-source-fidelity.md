@@ -537,7 +537,7 @@ npm run pack:private -- --theme private-themes/rei/package
 
 ```bash
 git ls-files | rg '^(private-themes|dist-private|\.private-build|\.superpowers)' && exit 1 || true
-rg -n '/Users/harrisonrio|BF\.JUV|609_1794013039|REI PRIVATE' README.md docs renderer app scripts tests package.json
+node --test tests/public-tree-privacy.test.cjs
 ```
 
 预期：tracked private 匹配为零；第二条只允许文档中通用示例，不允许真实路径或私人标识。
@@ -556,10 +556,10 @@ git commit -m "docs: publish the dual-renderer Rei workflow"
 确认旧进程退出。将旧应用移动到带 UTC 时间戳的废纸篓备份，不删除：
 
 ```text
-/Users/harrisonrio/.Trash/PROJECT ZERO — REI PRIVATE THEME.app.backup-YYYYMMDDTHHMMSSZ
+~/.Trash/PROJECT ZERO — PRIVATE THEME.app.backup-YYYYMMDDTHHMMSSZ
 ```
 
-复制新 app 到 `/Users/harrisonrio/Applications/PROJECT ZERO — REI PRIVATE THEME.app`。完整播放和 Escape 各验收一次；任一失败就退出新版并恢复备份。
+复制新 app 到 `~/Applications/PROJECT ZERO — PRIVATE THEME.app`。完整播放和 Escape 各验收一次；任一失败就退出新版并恢复备份。
 
 **预算：** 60–90 分钟，含两轮实机验收。
 

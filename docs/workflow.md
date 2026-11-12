@@ -14,6 +14,111 @@ npm start
 目录包可用 `npm run pack` 生成。当前构建未签名、未公证；首次打开请在 Finder 中按住 Control
 点击应用并选择“打开”，不要全局关闭 Gatekeeper。
 
+### 私人构建、可恢复安装与回退
+
+公开仓库只包含工作台引擎和原创、自由授权的占位素材。私人主题所需的角色、标志、声音和场景
+必须由使用者自行提供，并确认自己有权使用和分享；构建和摘要校验不会授予任何素材权利。
+
+完整私有主题默认使用 reference DOM/SVG；公开版默认使用 Canvas，私有媒体或 reference 失败时
+也由 Canvas 接管。两者共享真实 READY 门和音频时钟。作者代码负责结构与动作基准，参考视频
+内部桌面画面负责颜色、文字、图标和节奏；具体来源和许可边界见
+[私人主题工作流](private-themes.md#双渲染器作者源码与视频优先级)。
+
+把素材放入 Git ignored 的 `private-themes/my-theme/package/`，按
+[私人主题工作流](private-themes.md) 完成固定文件集合和 SHA-256 清单后，运行完整验证与构建：
+
+```bash
+npm run verify
+npm run licenses:check
+npm audit --audit-level=high
+npm run test:e2e
+npm run pack:private -- --theme private-themes/my-theme/package
+```
+
+Apple Silicon 的新目录包位于
+`dist-private/mac-arm64/PROJECT ZERO — PILOT CODEX WORKBENCH.app`；Intel 使用 `dist-private/mac/`。
+安装前先正常退出应用，再确认产品进程已经结束。以下示例使用不含私人标识的本机安装名，并把旧安装
+移入废纸篓中的时间戳备份；请按架构修改 `build_app`，并记下命令输出的 `backup_app` 路径：
+
+以下命令应在同一 shell 会话执行。先正常退出产品，再核对产品可执行文件进程；不要终止其他
+Electron 或 Codex 进程。安装路径和备份路径必须是明确的非符号链接路径；目标已存在时不覆盖：
+
+```bash
+if pgrep -fl '/Contents/MacOS/PROJECT ZERO — PILOT CODEX WORKBENCH($| )'; then
+  echo '应用仍在运行；请先退出再安装' >&2
+  exit 1
+fi
+
+build_app="$PWD/dist-private/mac-arm64/PROJECT ZERO — PILOT CODEX WORKBENCH.app"
+install_app="$HOME/Applications/PROJECT ZERO — PRIVATE THEME.app"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_app="$HOME/.Trash/PROJECT ZERO — PRIVATE THEME.app.backup-$timestamp"
+if [ ! -d "$build_app" ] || [ -L "$build_app" ] || [ -L "$install_app" ]; then
+  echo '待安装目录包不存在或路径为符号链接；停止安装' >&2
+  exit 1
+fi
+# 仅为本地私人副本重建资源封印，不提供开发者身份或 Apple 信任。
+/usr/bin/codesign --force --deep --sign - --timestamp=none "$build_app" || exit 1
+/usr/bin/codesign --verify --deep --strict "$build_app" || exit 1
+mkdir -p "$HOME/Applications" "$HOME/.Trash"
+if [ -e "$backup_app" ] || [ -L "$backup_app" ]; then
+  echo '备份路径已存在；停止安装' >&2
+  exit 1
+fi
+if [ -e "$install_app" ]; then
+  mv "$install_app" "$backup_app" || exit 1
+fi
+printf 'backup_app=%s\n' "$backup_app"
+if ! /usr/bin/ditto "$build_app" "$install_app"; then
+  failed_app="$HOME/.Trash/PROJECT ZERO — PRIVATE THEME.app.failed-$(date -u +%Y%m%dT%H%M%SZ)"
+  if [ -e "$failed_app" ] || [ -L "$failed_app" ]; then exit 1; fi
+  if [ -e "$install_app" ]; then mv "$install_app" "$failed_app" || exit 1; fi
+  if [ -d "$backup_app" ]; then /usr/bin/ditto "$backup_app" "$install_app"; fi
+  echo '复制失败；检查恢复结果，旧备份仍保留' >&2
+  exit 1
+fi
+```
+
+重打包可能使 Electron 原有资源封印失效，因此上面的命令只对明确的本地私人目录包执行
+ad-hoc 签名，验证通过后才移动旧安装。它没有开发者身份、没有公证，也不是 Apple 信任或
+分发签名。安装后再次校验结构、签名和摘要，再启动实机验收：
+
+```bash
+plutil -lint "$install_app/Contents/Info.plist"
+codesign --verify --deep --strict "$install_app"
+spctl --assess --type execute --verbose "$install_app"
+shasum -a 256 "$build_app/Contents/Resources/app.asar" "$install_app/Contents/Resources/app.asar"
+open "$install_app"
+```
+
+`spctl` 是只读检查；ad-hoc 且未公证的包预期可能被拒绝，不能把这种拒绝报告为 Apple 信任。
+如需首次打开，使用本节开头的 Finder 或系统设置流程。两份 ASAR 摘要必须相同。分别用重新启动的应用验收完整播放和 Escape：音轨从 2,000 ms 播放，
+13,300 ms 逻辑时间到 99.2% 并暂停；Escape 通过 150 ms 淡出跳到该认证门，不得伪造就绪。
+必须等待实际 Codex READY，确认后恢复演出，至 22,500 ms 音轨终点完成 100% 和工作台交接。
+同时试听实际音频设备；不要注入 fake bridge、伪造 READY 或以测试快进替代实机验收。
+
+若复制、结构校验、启动、完整演出、跳过、就绪门或工作台任一验收失败，先退出新版，确认上述
+产品进程检查无结果，再执行恢复。以下命令依赖刚才记录的 `backup_app`，不会删除旧备份：
+
+```bash
+if pgrep -fl '/Contents/MacOS/PROJECT ZERO — PILOT CODEX WORKBENCH($| )'; then
+  echo '应用仍在运行；请先退出再恢复' >&2
+  exit 1
+fi
+if [ ! -d "$backup_app" ] || [ -L "$backup_app" ] || [ -L "$install_app" ]; then
+  echo '未找到安全的旧安装备份；停止恢复' >&2
+  exit 1
+fi
+failed_app="$HOME/.Trash/PROJECT ZERO — PRIVATE THEME.app.failed-$(date -u +%Y%m%dT%H%M%SZ)"
+if [ -e "$failed_app" ] || [ -L "$failed_app" ]; then exit 1; fi
+if [ -e "$install_app" ]; then mv "$install_app" "$failed_app" || exit 1; fi
+/usr/bin/ditto "$backup_app" "$install_app"
+```
+
+不要删除 `backup_app`；完成恢复后再次运行 `plutil`、`codesign` 并启动旧版本确认。没有旧安装时
+应保留失败版本、停止使用并排查，不声称已恢复。私人目录包和备份都不应上传到 GitHub、公开
+release、issue 或其他公开渠道。
+
 ## 2. 添加项目
 
 在左栏“项目路径”输入现有目录的绝对路径，然后点击“添加项目”。后端会 canonicalize 该路径并
