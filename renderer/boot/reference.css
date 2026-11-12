@@ -41,8 +41,10 @@
 .reference-ring-progress { fill: none; stroke: var(--reference-blue); stroke-width: 7; stroke-linecap: round; filter: drop-shadow(0 0 3px var(--reference-blue)); }
 .reference-metric { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; color: var(--reference-ink); font-family: var(--reference-title-font); font-weight: 900; font-size: var(--reference-metric-size); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: var(--reference-metric-spacing); }
 .reference-metric-caption { position: absolute; top: 332px; font-family: var(--reference-code-font); color: var(--reference-muted); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
-.reference-completion { position: absolute; top: 492px; left: 0; right: 0; text-align: center; color: var(--reference-blue); font-family: var(--reference-title-font); font-size: 56px; font-weight: 900; letter-spacing: 0; }
-.reference-sequence[data-center-mode="complete"] .reference-heading { top: 572px; }
+.reference-completion { position: absolute; top: 392px; left: 0; right: 0; text-align: center; color: var(--reference-blue); font-family: var(--reference-title-font); font-size: 56px; font-weight: 900; letter-spacing: 0; }
+.reference-sequence[data-center-mode="complete"] .reference-heading,
+.reference-sequence[data-center-mode="overlap"] .reference-heading { top: 472px; }
+.reference-completion-unit { display: block; }
 .reference-completion-code { display: block; margin-top: 122px; color: var(--reference-muted); font-size: 12px; font-family: var(--reference-code-font); }
 .reference-completion-badge { display: grid; place-items: center; width: 116px; height: 116px; margin: 50px auto; border: 1px solid var(--reference-line-strong); border-radius: 50%; font-size: 70px; font-style: normal; color: var(--reference-white); box-shadow: 0 5px 3px var(--reference-line); }
 .reference-cue { position: absolute; top: 932px; left: 360px; right: 360px; text-align: center; color: var(--reference-ink); z-index: 7; }

@@ -111,3 +111,49 @@ for (const mode of ['reference', 'canvas']) test(`${mode}: video keyframes, real
     } else assert.equal(reduced.progress, 99.2);
   } finally { await app?.close(); }
 });
+
+for (const mode of ['reference', 'canvas']) test(`${mode}: natural media playback reaches the gate, freezes, resumes and hands off without seeking`, {timeout: 45000}, async t => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), `zero-natural-${mode}-`));
+  t.after(() => fs.rm(dataRoot, {recursive: true, force: true}));
+  let app;
+  try {
+    // Disable hardware output for silent acceptance; real WebAudio currentTime must still advance.
+    app = await electron.launch({args: ['.', '--disable-audio-output'], env: {...process.env, NODE_ENV: 'test', PROJECT_ZERO_TEST_DATA_ROOT: dataRoot,
+      PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs')}});
+    const page = await app.firstWindow();
+    await page.waitForURL(/^http:\/\/127\.0\.0\.1:/);
+    await configurePresentation(page, mode, {canvasAudio: mode === 'canvas'});
+    await page.emulateMedia({reducedMotion: 'no-preference'});
+    await page.reload({waitUntil: 'domcontentloaded'});
+    await page.waitForFunction(expected => globalThis.ProjectZeroRendererDirectorInstance?.mode() === expected && globalThis.audioAcceptance, mode);
+    assert.equal(await page.evaluate(() => audioAcceptance.mode()), 'media', 'both modes use a real decoded media clock');
+    await page.evaluate(() => {
+      globalThis.naturalBridgeSeekCount = 0;
+      addEventListener('project-zero:test-presentation-elapsed', () => { globalThis.naturalBridgeSeekCount += 1; });
+    });
+    const read = () => page.evaluate(() => ({time: audioAcceptance.time(), phase: document.body.dataset.phase,
+      stage: document.body.dataset.stage, record: ProjectZeroRendererDirectorInstance.lastRenderRecord(), clock: document.querySelector('#clock-readout').textContent}));
+    const first = await read();
+    await page.waitForFunction(time => audioAcceptance.time() >= time + .35, first.time);
+    const advanced = await read();
+    assert.ok(advanced.time > first.time + .3);
+    assert.notEqual(advanced.clock, first.clock);
+    await page.waitForFunction(() => document.body.dataset.stage === 'authorize' && document.querySelector('#progress-value').textContent === '99.2', null, {timeout: 18000});
+    const held = await read();
+    assert.ok(Math.abs(held.time - 13.3) < .08);
+    await page.waitForTimeout(450);
+    assert.deepEqual(await read(), held, 'natural playback freezes audio, visual frame and state at the authorization gate');
+    await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
+    await page.getByRole('button', {name: /确认驾驶员授权并完成同步/}).click();
+    await page.waitForFunction(() => audioAcceptance.time() > 13.65 && document.body.dataset.phase === 'completing');
+    const resumed = await read();
+    assert.ok(resumed.time > held.time + .3);
+    assert.equal(resumed.stage, 'connect');
+    await page.locator('#workbench-shell').waitFor({state: 'visible', timeout: 12000});
+    await windowMode(page, 'windowed');
+    assert.equal(await page.evaluate(() => document.body.dataset.phase), 'complete');
+    assert.ok(await page.evaluate(() => audioAcceptance.time() >= 20.49));
+    assert.equal(await page.evaluate(() => naturalBridgeSeekCount), 0);
+    assert.deepEqual(await page.evaluate(() => audioAcceptance.calls.filter(call => call.name === 'seek')), []);
+  } finally { await app?.close(); }
+});

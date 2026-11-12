@@ -31,8 +31,11 @@ reference 的进度遵循视频实测曲线（10500 ms 为 29.0%，12500 ms 为 
 
 源码视觉 E2E 在 reference 和 Canvas 两模式、1440×900 和 1280×800 两视口读取真实绘制记录和
 DOM computed style，并截图到系统临时目录。reference 额外核对中文标题、逐节点明暗、裸六边形标签、
-字体加载、私人 mark、液面扰动前沿、扫描高度/透明度、圆环角度和完成标题；实际 DOM opacity 偏差必须
-使验收断言失败。reduced motion 保持信息，抑制波动和闪光。音频检查覆盖 99.2% 暂停与确认后恢复。
+字体加载、私人 mark、液面扰动前沿、扫描高度/透明度、圆环角度和完成标题。14100 ms 同时核对 100% 圆环、淡入 EVANGELION-00/正在连接工作台与访问字幕，
+清单包含各中央层文字/opacity/cue，CLI 另做中央标题、字幕、数字、圆环区域的独立像素对比；实际 DOM opacity 偏差必须
+使验收断言失败。reduced motion 保持信息，抑制波动和闪光。音频检查覆盖 99.2% 暂停与确认后恢复。新增两模式自然播放测试不调用 presentation seek，
+从真实解码 WebAudio currentTime 的推进、13.3 s 冻结到确认后自然完成 20.5 s 及 windowed/workbench；
+合成静音验收使用 --disable-audio-output 避免本机 CoreAudio 输出后端阻滞，不注入 currentTime 或 context.resume。
 完整播放、按钮跳过、Escape、断线恢复和 fullscreen→windowed 均覆盖两模式，关闭后检查 listener 与子进程。
 
 运行指定串行验收：
@@ -52,7 +55,9 @@ node scripts/verify-reference-frames.cjs --video <absolute mp4> --screenshots <a
 ```
 
 脚本只接受普通 MP4 和非 symlink 临时目录/普通截图文件，读取原文件而不复制视频，不写入仓库；输出
-稳定的逐项 PASS/FAIL、SHA 和总结果，不打印本地路径。它用 macOS AVFoundation 逐帧读取原视频，
+稳定的逐项 PASS/FAIL、SHA 和总结果，不打印本地路径。它在 mode 0700 的受控临时目录中建立与已持有 inode 一致的 hardlink，AVFoundation 只读取该链接；
+解码前后通过同一个 held fd 重算 SHA 并比较 size/mtime/ctime/dev/ino，最后清理链接和目录。链接创建/删除
+会改变 inode 的 link count/ctime，媒体字节和 mtime 不变；跨文件系统无法 hardlink 时 fail closed。脚本用 macOS AVFoundation 逐帧读取原视频，
 核对 DOM 数值、截图尺寸、背景/液面与逐节点 RGB 采样。源视频确认时的短暂缩放通过显式 videoMs 映射到稳定帧，全部 12 帧均检查逐节点颜色与几何；
 20500 ms 验证工作台交接，不与启动层做错误的整图比较。截图目录使用后自行删除。
 该脚本要求本地 macOS Swift/AVFoundation 和 owner 视频；缺少视频时 manifest、单测及合成素材 E2E 仍可运行。

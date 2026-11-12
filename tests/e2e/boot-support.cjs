@@ -2,15 +2,15 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-async function configurePresentation(page, mode) {
-  if (mode === 'reference') {
+async function configurePresentation(page, mode, {canvasAudio = false} = {}) {
+  if (mode === 'reference' || canvasAudio) {
     const fixture = path.join(__dirname, '..', 'fixtures', 'private-theme-valid');
     await page.route('**/private/theme.json', route => route.fulfill({json: {
       displayName: 'PROJECT ZERO // TEST PRIVATE THEME', mark: '/private/boot-mark.webp',
       portrait: '/private/rei-portrait.webp', soundtrack: '/private/startup-reference.wav',
       audioStartMs: 0, audioEndMs: 20500
     }}));
-    await page.route('**/private/boot-mark.webp', route => route.fulfill({path: path.join(fixture, 'boot-mark.webp'), contentType: 'image/webp'}));
+    await page.route('**/private/boot-mark.webp', route => route.fulfill(mode === 'canvas' ? {body: 'invalid mark forces canvas fallback', contentType: 'image/webp'} : {path: path.join(fixture, 'boot-mark.webp'), contentType: 'image/webp'}));
     await page.route('**/private/rei-portrait.webp', route => route.fulfill({path: path.join(fixture, 'rei-portrait.webp'), contentType: 'image/webp'}));
     await page.route('**/private/startup-reference.wav', route => route.fulfill({body: silentWav(), contentType: 'audio/wav'}));
   }

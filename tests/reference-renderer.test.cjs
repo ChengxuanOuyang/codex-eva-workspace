@@ -129,6 +129,20 @@ test('real Chromium DOM renders computed records and keeps the canvas fallback i
     assert.equal(frames[3].metricText, '');
   });
 
+  await t.test('authorized crossfade draws all layers and DOM changes fail the independent manifest oracle', async () => {
+    const {verifyRecord} = require('../scripts/verify-reference-frames.cjs');
+    const expected = manifest.frames.find(frame => frame.logicalMs === 14100);
+    await page.evaluate(() => referenceTestRenderer.render(ProjectZeroTimeline.sampleTimeline(14100, {authorized: true})));
+    verifyRecord(await page.evaluate(() => referenceTestRenderer.lastRenderRecord()), expected);
+    for (const selector of ['.reference-heading', '.reference-completion-unit', '.reference-rings', '.reference-cue-zh']) {
+      await page.evaluate(target => { document.querySelector(target).style.opacity = '0'; }, selector);
+      const altered = await page.evaluate(() => referenceTestRenderer.lastRenderRecord());
+      assert.throws(() => verifyRecord(altered, expected), selector);
+      await page.evaluate(() => referenceTestRenderer.render(ProjectZeroTimeline.sampleTimeline(14100, {authorized: true})));
+    }
+    await page.evaluate(() => referenceTestRenderer.render(ProjectZeroTimeline.sampleTimeline(20500, {authorized: true})));
+  });
+
   await t.test('responsive scale centers the fixed logical surface without overflow or resetting the frame', async () => {
     for (const viewport of [{width: 1440, height: 900}, {width: 2560, height: 1600}, {width: 390, height: 844}]) {
       await page.setViewportSize(viewport);

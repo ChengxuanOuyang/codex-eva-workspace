@@ -17,7 +17,8 @@
     "authorizationMapping": "Source includes a human authorization delay. Authorized logical keyframes map explicitly to source videoMs. 20500 is the workbench handoff, not a boot screenshot.",
     "nodeOrder": "row-major, left then right; sixth row explicitly hidden",
     "opacityQuantization": 0.01,
-    "activeThreshold": 0.5
+    "activeThreshold": 0.5,
+    "centralOpacity": "Quantized 18000 ms crossfade estimate: completion/title/code 0.5, metric 0.75, ring 1; independently checked by central contrast ROIs."
   },
   "calibration": {
     "palette": {
@@ -46,7 +47,9 @@
         "inset": 16,
         "width": 1
       },
-      "headingY": 700
+      "headingY": 700,
+      "completionUnitY": 392,
+      "completionTitleY": 472
     },
     "typography": {
       "headingSize": 76,
@@ -64,7 +67,11 @@
       "opacity": 0.015,
       "scanRatio": 0.002,
       "ringDegrees": 0.02,
-      "sampleChannel": 18
+      "sampleChannel": 18,
+      "centralContrastRatio": {
+        "min": 0.5,
+        "max": 1.8
+      }
     }
   },
   "nodeOpacitySamples": [
@@ -1175,6 +1182,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "0.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "",
+          "opacity": 0
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     },
     {
@@ -1318,6 +1367,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 1
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "0.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "系统唤醒",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "EVANGELION-00 / REI PRIVATE WORKSTATION",
+          "opacity": 1
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "ネルフ、システム起動。",
+          "opacity": 1
+        },
+        "cueZh": {
+          "text": "NERV 系统启动",
+          "opacity": 1
+        }
+      },
+      "cue": {
+        "ja": "ネルフ、システム起動。",
+        "zh": "NERV 系统启动"
       }
     },
     {
@@ -1461,6 +1552,48 @@
           "position": 0.0,
           "top": 980.0
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 1
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "0.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "系统唤醒",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "EVANGELION-00 / REI PRIVATE WORKSTATION",
+          "opacity": 1
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     },
     {
@@ -1604,6 +1737,48 @@
           "position": 0.9766205557100867,
           "top": 228.0021721032333
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 1
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "0.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "系统唤醒",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "EVANGELION-00 / REI PRIVATE WORKSTATION",
+          "opacity": 1
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "LCL、注入開始。",
+          "opacity": 1
+        },
+        "cueZh": {
+          "text": "LCL 循环注入",
+          "opacity": 1
+        }
+      },
+      "cue": {
+        "ja": "LCL、注入開始。",
+        "zh": "LCL 循环注入"
       }
     },
     {
@@ -1747,6 +1922,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "0.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "",
+          "opacity": 0
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "シンクロ、開始。",
+          "opacity": 1
+        },
+        "cueZh": {
+          "text": "开始驾驶员同步",
+          "opacity": 1
+        }
+      },
+      "cue": {
+        "ja": "シンクロ、開始。",
+        "zh": "开始驾驶员同步"
       }
     },
     {
@@ -1890,6 +2107,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 1
+        },
+        "metric": {
+          "text": "29.0%",
+          "opacity": 1
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "",
+          "opacity": 0
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     },
     {
@@ -2033,6 +2292,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 1
+        },
+        "metric": {
+          "text": "95.5%",
+          "opacity": 1
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "",
+          "opacity": 0
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "同期、確認。",
+          "opacity": 1
+        },
+        "cueZh": {
+          "text": "驾驶员同步确认",
+          "opacity": 1
+        }
+      },
+      "cue": {
+        "ja": "同期、確認。",
+        "zh": "驾驶员同步确认"
       }
     },
     {
@@ -2176,6 +2477,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 1
+        },
+        "metric": {
+          "text": "99.2%",
+          "opacity": 1
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0
+        },
+        "title": {
+          "text": "",
+          "opacity": 0
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     },
     {
@@ -2185,8 +2528,8 @@
       "held": false,
       "sourceState": "authorized",
       "stage": "connect",
-      "title": "",
-      "mode": "sync",
+      "title": "正在连接工作台",
+      "mode": "overlap",
       "progress": 100,
       "metricText": "100.0%",
       "ringDegrees": 360.0,
@@ -2319,7 +2662,86 @@
           "position": null,
           "top": null
         }
-      }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 1
+        },
+        "metric": {
+          "text": "100.0%",
+          "opacity": 0.75
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 0.5
+        },
+        "title": {
+          "text": "正在连接工作台",
+          "opacity": 0.5
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 0.5
+        },
+        "cueJa": {
+          "text": "アクセス許可。",
+          "opacity": 1
+        },
+        "cueZh": {
+          "text": "访问已授权",
+          "opacity": 1
+        }
+      },
+      "cue": {
+        "ja": "アクセス許可。",
+        "zh": "访问已授权"
+      },
+      "centralProbes": [
+        {
+          "name": "unit",
+          "x": 224,
+          "y": 121,
+          "width": 146,
+          "height": 18
+        },
+        {
+          "name": "title",
+          "x": 205,
+          "y": 148,
+          "width": 180,
+          "height": 23
+        },
+        {
+          "name": "metric",
+          "x": 263,
+          "y": 137,
+          "width": 67,
+          "height": 13
+        },
+        {
+          "name": "subtitle",
+          "x": 204,
+          "y": 277,
+          "width": 184,
+          "height": 35
+        },
+        {
+          "name": "ring",
+          "x": 280,
+          "y": 82,
+          "width": 32,
+          "height": 16
+        }
+      ]
     },
     {
       "logicalMs": 15450,
@@ -2462,6 +2884,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "100.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 1
+        },
+        "title": {
+          "text": "正在连接工作台",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 1
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     },
     {
@@ -2605,6 +3069,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "100.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 1
+        },
+        "title": {
+          "text": "工作台已就绪",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 1
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     },
     {
@@ -2748,6 +3254,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "100.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 1
+        },
+        "title": {
+          "text": "工作台已就绪",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 1
+        },
+        "cueJa": {
+          "text": "システム、オンライン。",
+          "opacity": 1
+        },
+        "cueZh": {
+          "text": "系统在线",
+          "opacity": 1
+        }
+      },
+      "cue": {
+        "ja": "システム、オンライン。",
+        "zh": "系统在线"
       }
     },
     {
@@ -2891,6 +3439,48 @@
           "position": null,
           "top": null
         }
+      },
+      "centerLayers": {
+        "mark": {
+          "text": "",
+          "opacity": 0
+        },
+        "ring": {
+          "text": "",
+          "opacity": 0
+        },
+        "metric": {
+          "text": "100.0%",
+          "opacity": 0
+        },
+        "unit": {
+          "text": "EVANGELION-00",
+          "opacity": 1
+        },
+        "title": {
+          "text": "工作台已就绪",
+          "opacity": 1
+        },
+        "subtitle": {
+          "text": "",
+          "opacity": 0
+        },
+        "code": {
+          "text": "CODEX / 本地链路已建立",
+          "opacity": 1
+        },
+        "cueJa": {
+          "text": "",
+          "opacity": 0
+        },
+        "cueZh": {
+          "text": "",
+          "opacity": 0
+        }
+      },
+      "cue": {
+        "ja": "",
+        "zh": ""
       }
     }
   ]

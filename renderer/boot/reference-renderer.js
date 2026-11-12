@@ -109,8 +109,9 @@
       r: geometry.rings[0], pathLength: 360, transform: 'rotate(-90)', 'stroke-dasharray': '0 360'}, rings);
     const metric = element('output', 'reference-metric', '', hub);
     element('small', 'reference-metric-caption', '同步率', metric);
-    const complete = element('div', 'reference-completion', 'EVANGELION-00', center);
-    element('span', 'reference-completion-code', 'CODEX / 本地链路已建立', complete);
+    const complete = element('div', 'reference-completion', undefined, center);
+    const completionUnit = element('strong', 'reference-completion-unit', 'EVANGELION-00', complete);
+    const completionCode = element('span', 'reference-completion-code', 'CODEX / 本地链路已建立', complete);
     element('i', 'reference-completion-badge', '◎', complete);
     const liquidSvg = svgElement('svg', {class: 'reference-liquid-front', preserveAspectRatio: 'none', 'aria-hidden': 'true'}, scan);
     const liquidFront = svgElement('path', {fill: 'none'}, liquidSvg);
@@ -165,14 +166,15 @@
       subtitle.textContent = frame.center.subtitle;
       metric.replaceChildren(document.createTextNode(frame.center.metric));
       element('small', 'reference-metric-caption', '同步率', metric);
-      hub.style.opacity = String(frame.center.opacity);
-      heading.style.opacity = String(frame.center.opacity);
-      subtitle.style.opacity = String(frame.center.opacity);
-      metric.hidden = frame.center.mode !== 'sync';
-      rings.hidden = frame.center.mode !== 'sync';
-      rings.style.display = rings.hidden ? 'none' : '';
-      mark.hidden = frame.center.mode !== 'mark';
-      complete.hidden = frame.center.mode !== 'complete';
+      hub.style.opacity = '1';
+      const layerNodes = {mark, ring: rings, metric, unit: completionUnit, title: heading,
+        subtitle, code: completionCode, cueJa, cueZh};
+      for (const [name, node] of Object.entries(layerNodes)) {
+        const state = frame.center.layers[name];
+        node.hidden = state.opacity <= 0;
+        node.style.opacity = String(state.opacity);
+      }
+      complete.hidden = frame.center.layers.unit.opacity <= 0 && frame.center.layers.code.opacity <= 0;
       progressRing.setAttribute('stroke-dasharray', `${frame.center.ringDegrees} 360`);
       scan.hidden = !frame.scan.visible;
       scan.style.height = `${frame.scan.height}px`;
@@ -217,6 +219,16 @@
       }
       const rect = node.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
+    }
+
+    function effectiveOpacity(node) {
+      let opacity = 1;
+      for (let current = node; current && current !== document.documentElement; current = current.parentElement) {
+        const style = window.getComputedStyle(current);
+        if (current.hidden || style.display === 'none' || style.visibility === 'hidden') return 0;
+        opacity *= Number(style.opacity);
+      }
+      return Number(opacity.toFixed(5));
     }
 
     function lastRenderRecord() {
@@ -265,6 +277,11 @@
           nodeSize: window.getComputedStyle(nodes[0].label).fontSize, nodeSpacing: window.getComputedStyle(nodes[0].label).letterSpacing,
           borderWidth: window.getComputedStyle(grid).borderLeftWidth,
           nodeFill: window.getComputedStyle(nodes[0].node.querySelector('polygon')).fill}),
+        centerLayers: Object.freeze(Object.fromEntries(Object.entries({mark: [mark, ''], ring: [rings, ''],
+          metric: [metric, metric.firstChild.textContent], unit: [completionUnit, completionUnit.textContent],
+          title: [heading, heading.textContent], subtitle: [subtitle, subtitle.textContent], code: [completionCode, completionCode.textContent],
+          cueJa: [cueJa, cueJa.textContent], cueZh: [cueZh, cueZh.textContent]}).map(([name, [node, text]]) =>
+          [name, Object.freeze({text, opacity: effectiveOpacity(node)})]))),
         centerMode: root.dataset.centerMode, completionText: visible(complete) ? complete.firstChild.textContent : '',
         subtitleText: visible(subtitle) ? subtitle.textContent : ''
       };

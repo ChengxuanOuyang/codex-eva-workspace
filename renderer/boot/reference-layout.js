@@ -238,10 +238,16 @@
     const progress = stage === 'authorize' ? 99.2 : stage === 'connect'
       ? interpolate([[13300, 99.2], [14100, 100]], elapsedMs)
       : stage === 'synchronize' ? interpolate([[8800, 0], [9200, .8], [10500, 29], [12500, 95.5], [13300, 99.2]], elapsedMs) : 0;
-    const mode = stage === 'connect' && elapsedMs >= 15450 ? 'complete'
+    const isConnecting = stage === 'connect';
+    const completionOpacity = isConnecting ? interpolate([[13300, 0], [14100, .5], [14800, 1]], elapsedMs) : 0;
+    const ringOpacity = ['synchronize', 'authorize'].includes(stage) ? clamp((elapsedMs - 8800) / 400, 0, 1)
+      : isConnecting ? interpolate([[13300, 1], [14100, 1], [14800, 0]], elapsedMs) : 0;
+    const metricOpacity = isConnecting ? interpolate([[13300, 1], [14100, .75], [14800, 0]], elapsedMs) : ringOpacity;
+    const mode = completionOpacity > 0 && ringOpacity > 0 ? 'overlap' : completionOpacity > 0 ? 'complete'
       : ['synchronize', 'authorize', 'connect'].includes(stage) ? 'sync' : 'mark';
-    const title = mode === 'mark' ? elapsedMs > 0 ? '系统唤醒' : ''
-      : mode === 'complete' ? elapsedMs >= 18600 ? '工作台已就绪' : '正在连接工作台' : '';
+    const introOpacity = mode === 'mark' ? clamp(elapsedMs / 1500, 0, 1) : 0;
+    const title = completionOpacity > 0 ? elapsedMs >= 18600 ? '工作台已就绪' : '正在连接工作台'
+      : mode === 'mark' && elapsedMs > 0 ? '系统唤醒' : '';
     const nodeSamples = REFERENCE_LAYOUT.nodeOpacitySamples;
     const labelSample = nodeSamples.reduce((previous, sample) => sample[0] <= elapsedMs ? sample : previous, nodeSamples[0]);
     const nodes = Array.from({length: 12}, (_, index) => {
@@ -262,12 +268,26 @@
     const scanVisible = elapsedMs >= 3000 && elapsedMs < 9200 && scanHeight > 0 && scanOpacity > 0;
     const waveOffsets = Array.from({length: 33}, (_, index) => reducedMotion || !scanVisible ? 0
       : Number((Math.sin(index * .64 + elapsedMs / 330) * 4.8 + Math.sin(index * 1.43 - elapsedMs / 210) * 2.2).toFixed(3)));
-    const cue = REFERENCE_CUES.find(item => elapsedMs / 1000 >= item.start && elapsedMs / 1000 < item.end);
+    const cue = isConnecting && elapsedMs >= 14000 && elapsedMs < 15000
+      ? {ja: 'アクセス許可。', zh: '访问已授权'}
+      : isConnecting && elapsedMs >= 19000 && elapsedMs < 20000 ? {ja: 'システム、オンライン。', zh: '系统在线'}
+        : REFERENCE_CUES.find(item => item.start < 14 && elapsedMs / 1000 >= item.start && elapsedMs / 1000 < item.end);
+    const layers = {
+      mark: {text: '', opacity: introOpacity},
+      ring: {text: '', opacity: ringOpacity},
+      metric: {text: `${progress.toFixed(1)}%`, opacity: metricOpacity},
+      unit: {text: 'EVANGELION-00', opacity: completionOpacity},
+      title: {text: title, opacity: completionOpacity || introOpacity},
+      subtitle: {text: mode === 'mark' && elapsedMs > 0 ? 'EVANGELION-00 / REI PRIVATE WORKSTATION' : '', opacity: introOpacity},
+      code: {text: 'CODEX / 本地链路已建立', opacity: completionOpacity},
+      cueJa: {text: cue?.ja || '', opacity: cue?.ja ? 1 : 0},
+      cueZh: {text: cue?.zh || '', opacity: cue?.zh ? 1 : 0}
+    };
     const frame = deepFreeze({
       stage, elapsedMs, reducedMotion,
       logicalSize: REFERENCE_LAYOUT.logicalSize, palette: REFERENCE_LAYOUT.palette,
       header: REFERENCE_LAYOUT.header, footer: REFERENCE_LAYOUT.footer,
-      center: {title, subtitle: mode === 'mark' ? 'EVANGELION-00 / REI PRIVATE WORKSTATION' : '', mode,
+      center: {title, subtitle: layers.subtitle.text, mode, layers,
         opacity: mode === 'mark' ? clamp(elapsedMs / 1500, 0, 1) : mode === 'sync' ? clamp((elapsedMs - 8800) / 400, 0, 1) : 1,
         metric: `${progress.toFixed(1)}%`, ringDegrees: Number((progress * 3.6).toFixed(5))},
       cue: cue ? {ja: cue.ja, zh: cue.zh} : {ja: '', zh: ''},
