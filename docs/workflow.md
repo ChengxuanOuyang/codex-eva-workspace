@@ -84,15 +84,42 @@ ad-hoc 签名，验证通过后才移动旧安装。它没有开发者身份、�
 分发签名。安装后再次校验结构、签名和摘要，再启动实机验收：
 
 ```bash
-plutil -lint "$install_app/Contents/Info.plist"
-codesign --verify --deep --strict "$install_app"
-spctl --assess --type execute --verbose "$install_app"
-shasum -a 256 "$build_app/Contents/Resources/app.asar" "$install_app/Contents/Resources/app.asar"
+verification_failed() {
+  echo '安装验证失败；不要启动应用，请按下面的恢复步骤恢复旧版。' >&2
+  exit 1
+}
+if [ -z "${build_app:-}" ] || [ -z "${install_app:-}" ]; then
+  verification_failed
+fi
+plutil -lint "$install_app/Contents/Info.plist" || verification_failed
+codesign --verify --deep --strict "$install_app" || verification_failed
+build_asar_summary="$(shasum -a 256 "$build_app/Contents/Resources/app.asar")" || verification_failed
+installed_asar_summary="$(shasum -a 256 "$install_app/Contents/Resources/app.asar")" || verification_failed
+build_asar_digest="${build_asar_summary%% *}"
+installed_asar_digest="${installed_asar_summary%% *}"
+if [ "${#build_asar_digest}" -ne 64 ] || [ "${#installed_asar_digest}" -ne 64 ]; then
+  verification_failed
+fi
+case "$build_asar_digest$installed_asar_digest" in
+  *[!0123456789abcdef]*) verification_failed ;;
+esac
+if [ "$build_asar_digest" != "$installed_asar_digest" ]; then
+  verification_failed
+fi
 open "$install_app"
 ```
 
-`spctl` 是只读检查；ad-hoc 且未公证的包预期可能被拒绝，不能把这种拒绝报告为 Apple 信任。
-如需首次打开，使用本节开头的 Finder 或系统设置流程。两份 ASAR 摘要必须相同。分别用重新启动的应用验收完整播放和 Escape：音轨从 2,000 ms 播放，
+上述代码块会在 plist、strict codesign 或 ASAR 读取与摘要比较失败时非零退出，不启动应用；
+它只提示按下面的恢复步骤处理，不自动移动或删除文件。通过后可另行运行下面的非阻塞只读检查。
+ad-hoc 且未公证的包预期可能被 Gatekeeper 拒绝，不能把这种拒绝报告为 Apple 信任：
+
+```bash
+if ! spctl --assess --type execute --verbose "$install_app"; then
+  echo 'Gatekeeper 未接受此包；本地 ad-hoc、未公证的包预期可能被拒绝。' >&2
+fi
+```
+
+如需首次打开，使用本节开头的 Finder 或系统设置流程。分别用重新启动的应用验收完整播放和 Escape：音轨从 2,000 ms 播放，
 13,300 ms 逻辑时间到 99.2% 并暂停；Escape 通过 150 ms 淡出跳到该认证门，不得伪造就绪。
 必须等待实际 Codex READY，确认后恢复演出，至 22,500 ms 音轨终点完成 100% 和工作台交接。
 同时试听实际音频设备；不要注入 fake bridge、伪造 READY 或以测试快进替代实机验收。
