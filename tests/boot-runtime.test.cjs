@@ -150,7 +150,8 @@ async function fixture(apiOverrides = {}, options = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'boot', 'boot.js'), 'utf8');
   const sandbox = {
     AbortController,
-    ProjectZeroReferenceTiming: {REFERENCE_TIMING}
+    ProjectZeroReferenceTiming: {REFERENCE_TIMING},
+    ProjectZeroRendererDirector: options.director ? require('../renderer/boot/renderer-director.js') : undefined
   };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, {filename: 'renderer/boot/boot.js'});
@@ -161,7 +162,7 @@ async function fixture(apiOverrides = {}, options = {}) {
     '#backend-state', '#phase-caption', '#clock-readout', '#confirm-button',
     '#diagnostic-text', '#retry-button', '#sync-heading', '#progress-value', '#ring-progress',
     '#ring-stroke', '#skip-button', '#boot-screen', '#workbench-shell', '#boot-live-status',
-    '#pilot-authorization',
+    '#pilot-authorization', '#reference-sequence', '#boot-sequence',
     '#shell-readiness-text', '#shell-link-state', '#shell-diagnostic-text', '#shell-retry-button'
   ];
   const elements = Object.fromEntries(selectors.map(selector => [
@@ -191,6 +192,7 @@ async function fixture(apiOverrides = {}, options = {}) {
   };
   const rootListeners = new Map();
   const root = {
+    innerWidth: 1440, innerHeight: 900,
     addEventListener: (type, listener) => rootListeners.set(type, listener),
     removeEventListener: (type, listener) => {
       if (rootListeners.get(type) === listener) rootListeners.delete(type);
@@ -206,6 +208,18 @@ async function fixture(apiOverrides = {}, options = {}) {
       events.push(`canvas.render:${snapshot.elapsedMs}`);
     }
   };
+  const reference = {
+    snapshots: [], failRender: false, failResize: false, destroys: 0,
+    render(snapshot, assets) {
+      this.snapshots.push(snapshot);
+      this.assets = assets;
+      if (this.failRender) throw Error('reference render failed');
+    },
+    resize(viewport) { this.viewport = viewport; if (this.failResize) throw Error('reference resize failed'); },
+    lastRenderRecord: () => ({renderer: 'reference'}),
+    destroy() { this.destroys += 1; }
+  };
+  const mark = {decoded: true};
   const configFetches = [];
   const fetchPrivate = options.fetch || (async url => {
     configFetches.push(url);
@@ -249,6 +263,16 @@ async function fixture(apiOverrides = {}, options = {}) {
     bootCanvas: canvas,
     clock,
     createAudioClock,
+    createReferenceRenderer: options.director ? () => {
+      if (options.failReferenceCreation) throw Error('reference unavailable');
+      return reference;
+    } : undefined,
+    prepareBootAssets: options.director ? async () => {
+      if (options.markDecode) await options.markDecode.promise;
+      if (options.markDecodeFails) throw Error('decode failed');
+      return {mark};
+    } : undefined,
+    createImage: () => ({}),
     document,
     fetch: fetchPrivate,
     loadSequenceAudio,
@@ -270,6 +294,7 @@ async function fixture(apiOverrides = {}, options = {}) {
     elements,
     events,
     rootListeners,
+    root, reference, mark,
     startPromise
   };
 }
@@ -961,4 +986,95 @@ test('automatic startup remains a singleton and uses no legacy interval ticker',
   assert.equal(sandbox.ProjectZeroBootController, controller);
   assert.equal(audioStarts, 1);
   assert.equal(clock.intervals.size, 0);
+});
+
+function completePrivateTheme() {
+  return response({json: {
+    displayName: 'PRIVATE', mark: '/private/boot-mark.webp', portrait: '/private/rei-portrait.webp',
+    soundtrack: '/private/startup-reference.wav', audioStartMs: 250, audioEndMs: 20_750
+  }});
+}
+
+test('complete decoded private theme selects reference without recreating audio on fallback', async () => {
+  const view = await fixture({health: async () => ({ready: true, code: 'READY'})}, {
+    director: true, fetch: async () => completePrivateTheme()
+  });
+  const director = view.root.ProjectZeroRendererDirectorInstance;
+  assert.equal(director.mode(), 'reference');
+  assert.equal(view.reference.assets.mark, view.mark);
+  assert.equal(view.elements['#reference-sequence'].hidden, false);
+  assert.equal(view.elements['#boot-sequence'].hidden, true);
+  await view.clock.fireTimeout(0);
+  view.audioClock.tick(10500);
+  const audioCalls = JSON.stringify(view.audioClock.calls);
+  const liveWrites = view.elements['#boot-live-status'].textWrites;
+  const state = view.controller.getState();
+  view.reference.failRender = true;
+  view.audioClock.tick(10500);
+  assert.equal(director.mode(), 'canvas');
+  assert.equal(view.canvas.lastSnapshot, view.reference.snapshots.at(-1));
+  assert.equal(JSON.stringify(view.audioClock.calls), audioCalls);
+  assert.equal(view.controller.getState(), state);
+  assert.equal(view.controller.getState().ready, true);
+  assert.equal(view.elements['#boot-live-status'].textWrites, liveWrites);
+  assert.equal(view.elements['#reference-sequence'].hidden, true);
+  assert.equal(view.elements['#boot-sequence'].hidden, false);
+  assert.ok(view.events.indexOf('canvas.render:10500') < view.events.lastIndexOf('#reference-sequence.hidden:true'));
+});
+
+test('public, private 404, mark decode failure and reference creation failure select Canvas', async () => {
+  for (const options of [
+    {}, {fetch: async () => response({status: 404})},
+    {fetch: async () => completePrivateTheme(), markDecodeFails: true},
+    {fetch: async () => completePrivateTheme(), failReferenceCreation: true}
+  ]) {
+    const view = await fixture({}, {director: true, ...options});
+    assert.equal(view.root.ProjectZeroRendererDirectorInstance.mode(), 'canvas');
+    assert.equal(view.reference.snapshots.length, 0);
+    assert.equal(view.audioClock.calls.start, 1);
+    view.audioClock.tick(10500);
+    assert.equal(view.canvas.lastSnapshot.elapsedMs, 10500);
+    view.controller.destroy();
+  }
+});
+
+test('reference resize failure keeps the reduced snapshot, audio and accessible state unchanged', async () => {
+  const view = await fixture({}, {director: true, reducedMotion: true, fetch: async () => completePrivateTheme()});
+  view.audioClock.tick(10500);
+  const snapshot = view.reference.snapshots.at(-1);
+  const calls = JSON.stringify(view.audioClock.calls);
+  const liveWrites = view.elements['#boot-live-status'].textWrites;
+  view.reference.failResize = true;
+  view.root.innerWidth = 390;
+  view.root.innerHeight = 844;
+  view.rootListeners.get('resize')();
+  assert.equal(view.root.ProjectZeroRendererDirectorInstance.mode(), 'canvas');
+  assert.equal(view.canvas.lastSnapshot, snapshot);
+  assert.equal(view.canvas.lastSnapshot.reducedMotion, true);
+  assert.equal(JSON.stringify(view.audioClock.calls), calls);
+  assert.equal(view.elements['#boot-live-status'].textWrites, liveWrites);
+  view.controller.destroy();
+  view.controller.destroy();
+  assert.equal(view.reference.destroys, 1);
+  assert.equal(view.rootListeners.has('resize'), false);
+});
+
+
+test('destroy during pending mark decode closes the private track and never creates a renderer or clock', async () => {
+  const markDecode = deferred();
+  let closeCalls = 0;
+  const view = await fixture({}, {
+    director: true, markDecode, awaitStart: false, fetch: async () => completePrivateTheme(),
+    decodedTrack: {duration: 30, close: async () => { closeCalls += 1; }}
+  });
+  await flushMicrotasks(10);
+  view.controller.destroy();
+  const eventCount = view.events.length;
+  markDecode.resolve();
+  await view.startPromise;
+  assert.equal(closeCalls, 1);
+  assert.equal(view.audioClock, undefined);
+  assert.equal(view.root.ProjectZeroRendererDirectorInstance, undefined);
+  assert.equal(view.reference.snapshots.length, 0);
+  assert.equal(view.events.length, eventCount);
 });

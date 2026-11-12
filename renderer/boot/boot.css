@@ -19,7 +19,7 @@ body { background: var(--ice); }
 body:not([data-phase="complete"]) { overflow: hidden; }
 body[data-phase="complete"] { overflow: auto; }
 button { color: inherit; font: inherit; }
-#boot-screen[hidden], #workbench-shell[hidden] { display: none; }
+#boot-screen[hidden], #workbench-shell[hidden], #boot-sequence[hidden] { display: none; }
 
 .boot-presentation {
   position: fixed;
@@ -227,11 +227,13 @@ body[data-scene="online"] #workbench-shell:not([hidden]) .workbench-scene { opac
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #boot-sequence { transition: opacity 180ms linear; }
+  #boot-sequence,
+  #reference-sequence { transition: opacity 180ms linear; }
   .boot-control-layer { transition: opacity 180ms linear; }
   .transition-curtain { transition: opacity 180ms linear; }
   .workbench-scene { transition: opacity 180ms linear; }
 }
-body[data-motion="reduced"] #boot-sequence { transition: opacity 180ms linear; }
+body[data-motion="reduced"] #boot-sequence,
+body[data-motion="reduced"] #reference-sequence { transition: opacity 180ms linear; }
 body[data-motion="reduced"] .boot-control-layer { transition: opacity 180ms linear; }
 body[data-motion="reduced"] .transition-curtain { transition: opacity 180ms linear; }

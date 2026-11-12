@@ -415,6 +415,7 @@ function createWorkbenchService({
     ['/reference-timing.js', {root: bootRoot, fileName: 'reference-timing.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/reference-layout.js', {root: bootRoot, fileName: 'reference-layout.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/reference-renderer.js', {root: bootRoot, fileName: 'reference-renderer.js', contentType: 'text/javascript; charset=utf-8'}],
+    ['/renderer-director.js', {root: bootRoot, fileName: 'renderer-director.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/reference.css', {root: bootRoot, fileName: 'reference.css', contentType: 'text/css; charset=utf-8'}],
     ['/timeline.js', {root: bootRoot, fileName: 'timeline.js', contentType: 'text/javascript; charset=utf-8'}],
     ['/boot-canvas.js', {root: bootRoot, fileName: 'boot-canvas.js', contentType: 'text/javascript; charset=utf-8'}],

@@ -88,6 +88,10 @@
     bootCanvas = root.ProjectZeroBootCanvasInstance,
     clock,
     createAudioClock = root.ProjectZeroAudioClock?.createAudioClock,
+    createRendererDirector = root.ProjectZeroRendererDirector?.createRendererDirector,
+    createReferenceRenderer = root.ProjectZeroReferenceRenderer?.createReferenceRenderer,
+    prepareBootAssets = root.ProjectZeroBootCanvas?.prepareBootAssets,
+    createImage = () => document.createElement('img'),
     document,
     fetch: fetchPrivate = typeof root.fetch === 'function' ? root.fetch.bind(root) : undefined,
     loadSequenceAudio = root.ProjectZeroSequenceAudio?.loadSequenceAudio,
@@ -140,6 +144,9 @@
     let audioClock;
     let presentationPromise;
     let pendingTestElapsedMs;
+    let renderer = bootCanvas;
+    let rendererAssets;
+    let rendererDirector;
 
     function setText(element, value) {
       if (!destroyed && element && element.textContent !== value) element.textContent = value;
@@ -323,7 +330,7 @@
       });
       currentSnapshot = snapshot;
       document.body.dataset.stage = snapshot.stage;
-      bootCanvas?.render?.(snapshot);
+      renderer?.render?.(snapshot, rendererAssets);
       const delta = snapshot.progress - state.progress;
       if (delta > 0) dispatch({type: 'tick', delta});
       else render();
@@ -586,6 +593,48 @@
       eventRoot.removeEventListener('keydown', onKeydown);
     }
 
+    function resizeRenderer() {
+      if (destroyed) return;
+      rendererDirector?.resize({width: eventRoot.innerWidth, height: eventRoot.innerHeight});
+    }
+
+    async function selectRenderer(theme, privateAudioDecoded) {
+      if (typeof createRendererDirector !== 'function') return;
+      const referenceLayer = document.querySelector('#reference-sequence');
+      const canvasLayer = document.querySelector('#boot-sequence');
+      let reference;
+      let assets;
+      if (theme.mark === PRIVATE_MARK_URL && privateAudioDecoded
+        && typeof prepareBootAssets === 'function' && typeof createReferenceRenderer === 'function'
+        && referenceLayer) {
+        try {
+          const mark = createImage();
+          mark.src = PRIVATE_MARK_URL;
+          assets = await prepareBootAssets({mark});
+          if (destroyed) return;
+          if (assets?.mark) {
+            reference = createReferenceRenderer(referenceLayer, {exposeRenderRecord: testBridgeAvailable()});
+          }
+        } catch { /* An unavailable private mark or reference surface uses Canvas. */ }
+      }
+      if (destroyed) return;
+      const canvas = {
+        render: snapshot => bootCanvas?.render?.(snapshot),
+        resize: viewport => bootCanvas?.resize?.(viewport?.width, viewport?.height),
+        lastRenderRecord: () => bootCanvas?.lastRenderRecord?.() ?? null,
+        destroy: () => bootCanvas?.destroy?.()
+      };
+      if (assets?.mark) bootCanvas?.setAssets?.(assets);
+      rendererAssets = assets;
+      rendererDirector = createRendererDirector({
+        reference, canvas, preferReference: Boolean(reference), referenceLayer, canvasLayer
+      });
+      renderer = rendererDirector;
+      eventRoot.ProjectZeroRendererDirectorInstance = rendererDirector;
+      renderer.render(currentSnapshot, rendererAssets);
+      eventRoot.addEventListener('resize', resizeRenderer);
+    }
+
     function destroy() {
       if (destroyed) return;
       destroyed = true;
@@ -599,6 +648,8 @@
       const resolveTransition = transitionResolve;
       transitionResolve = undefined;
       resolveTransition?.(false);
+      rendererDirector?.destroy();
+      eventRoot.removeEventListener('resize', resizeRenderer);
       if (audioClock) void Promise.resolve(audioClock.destroy()).catch(() => {});
       unbindBootInteractions();
       elements.shellRetry.removeEventListener('click', retryInitialization);
@@ -611,6 +662,7 @@
       if (destroyed) return;
       applyPrivatePresentation(theme);
       let decodedTrack = silentTrack();
+      let privateAudioDecoded = false;
       if (theme.audio && typeof loadSequenceAudio === 'function') {
         try {
           const loadedTrack = await loadSequenceAudio(theme.audio, {
@@ -619,6 +671,7 @@
           });
           if (trackCoversPresentation(loadedTrack, theme)) {
             decodedTrack = loadedTrack;
+            privateAudioDecoded = true;
           } else {
             await Promise.resolve(loadedTrack?.close?.()).catch(() => {});
             theme = PUBLIC_PRESENTATION;
@@ -630,6 +683,11 @@
           decodedTrack = silentTrack();
         }
       }
+      if (destroyed) {
+        await Promise.resolve(decodedTrack.close?.()).catch(() => {});
+        return;
+      }
+      await selectRenderer(theme, privateAudioDecoded);
       if (destroyed) {
         await Promise.resolve(decodedTrack.close?.()).catch(() => {});
         return;
@@ -677,7 +735,7 @@
       eventRoot.addEventListener('pagehide', destroy);
       elements.skip.hidden = forceFullPlayback;
       currentSnapshot = sampleTimeline(0, {authorized: false, reducedMotion});
-      bootCanvas?.render?.(currentSnapshot);
+      renderer?.render?.(currentSnapshot, rendererAssets);
       render();
       scheduleHealth(0);
       presentationPromise = initializePresentation().catch(() => {

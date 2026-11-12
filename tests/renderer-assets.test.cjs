@@ -107,7 +107,7 @@ test('boot scripts load in the required deterministic order', async () => {
   const start = scripts.indexOf('/shared/api.js');
 
   assert.notEqual(start, -1);
-  assert.deepEqual(scripts.slice(start, start + 11), [
+  assert.deepEqual(scripts.slice(start, start + 12), [
     '/shared/api.js',
     '/motion.js',
     '/stage-layout.js',
@@ -118,6 +118,7 @@ test('boot scripts load in the required deterministic order', async () => {
     '/boot-canvas.js',
     '/sequence-audio.js',
     '/audio-clock.js',
+    '/renderer-director.js',
     '/boot.js'
   ]);
 });
@@ -178,7 +179,8 @@ test('declarative boot modules are served through exact allowlist entries only',
     'timeline.js',
     'boot-canvas.js',
     'sequence-audio.js',
-    'audio-clock.js'
+    'audio-clock.js',
+    'renderer-director.js'
   ];
 
   try {
@@ -197,6 +199,7 @@ test('declarative boot modules are served through exact allowlist entries only',
       const response = await request(address, `/${script}`);
       assert.equal(response.status, 200, script);
       assert.equal(response.headers['content-type'], 'text/javascript; charset=utf-8', script);
+      assert.equal(response.headers['content-security-policy'], "default-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; object-src 'none'", script);
     }
 
     for (const requestPath of [
@@ -211,7 +214,12 @@ test('declarative boot modules are served through exact allowlist entries only',
       '/%2e%2e/reference-renderer.js',
       '/boot\\reference-layout.js',
       '/reference-renderer.js.bak',
-      '/reference-unlisted.js'
+      '/reference-unlisted.js',
+      '/renderer-director.js?cache=1',
+      '/boot/../renderer-director.js',
+      '/%2e%2e/renderer-director.js',
+      '/boot\\renderer-director.js',
+      '/renderer-director.js.bak'
     ]) {
       const unknown = await request(address, requestPath);
       assert.equal(unknown.status, 404, requestPath);
