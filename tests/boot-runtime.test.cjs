@@ -279,6 +279,7 @@ async function fixture(apiOverrides = {}, options = {}) {
     now: () => 0,
     reducedMotion: options.reducedMotion === true,
     root,
+    referenceFrame: options.director ? require('../renderer/boot/reference-layout.js').referenceFrame : undefined,
     sampleTimeline
   });
   const startPromise = controller.start();
@@ -1038,12 +1039,24 @@ test('public, private 404, mark decode failure and reference creation failure se
   }
 });
 
-test('reference resize failure keeps the reduced snapshot, audio and accessible state unchanged', async () => {
-  const view = await fixture({}, {director: true, reducedMotion: true, fetch: async () => completePrivateTheme()});
+test('reference resize fallback synchronizes progress without advancing the reduced snapshot or resetting state', async () => {
+  const view = await fixture({health: async () => ({ready: true, code: 'READY'})}, {
+    director: true, reducedMotion: true, fetch: async () => completePrivateTheme()
+  });
+  await view.clock.fireTimeout(0);
   view.audioClock.tick(10500);
   const snapshot = view.reference.snapshots.at(-1);
+  const canvasRenders = view.canvas.renders;
   const calls = JSON.stringify(view.audioClock.calls);
   const liveWrites = view.elements['#boot-live-status'].textWrites;
+  const state = view.controller.getState();
+  assert.equal(state.ready, true);
+  assert.equal(view.elements['#progress-value'].textContent, '29.0');
+  assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '29.0');
+  view.rootListeners.get('resize')();
+  assert.equal(view.reference.snapshots.at(-1), snapshot);
+  assert.equal(view.canvas.renders, canvasRenders);
+  assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '29.0');
   view.reference.failResize = true;
   view.root.innerWidth = 390;
   view.root.innerHeight = 844;
@@ -1051,6 +1064,11 @@ test('reference resize failure keeps the reduced snapshot, audio and accessible 
   assert.equal(view.root.ProjectZeroRendererDirectorInstance.mode(), 'canvas');
   assert.equal(view.canvas.lastSnapshot, snapshot);
   assert.equal(view.canvas.lastSnapshot.reducedMotion, true);
+  assert.equal(view.canvas.lastSnapshot.elapsedMs, 10500);
+  assert.equal(view.canvas.renders, canvasRenders + 1);
+  assert.equal(view.elements['#progress-value'].textContent, '99.2');
+  assert.equal(view.elements['#ring-progress'].getAttribute('aria-valuenow'), '99.2');
+  assert.equal(view.controller.getState(), state);
   assert.equal(JSON.stringify(view.audioClock.calls), calls);
   assert.equal(view.elements['#boot-live-status'].textWrites, liveWrites);
   view.controller.destroy();

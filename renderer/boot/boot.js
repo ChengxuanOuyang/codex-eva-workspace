@@ -263,14 +263,18 @@
       return Math.max(0, Math.min(100, value));
     }
 
-    function renderAccessibleState(snapshot) {
+    function renderAccessibleProgress(snapshot) {
       const progress = presentationProgress(snapshot);
-      const text = stageText(snapshot);
-      document.body.dataset.stage = snapshot.stage;
       setText(elements.progress, progress.toFixed(1));
-      setText(elements.clock, `T+${(snapshot.elapsedMs / 1000).toFixed(1).padStart(5, '0')}`);
       elements.ring.setAttribute('stroke-dashoffset', String(circumference * (1 - progress / 100)));
       elements.progressbar.setAttribute('aria-valuenow', progress.toFixed(1));
+    }
+
+    function renderAccessibleState(snapshot) {
+      const text = stageText(snapshot);
+      document.body.dataset.stage = snapshot.stage;
+      renderAccessibleProgress(snapshot);
+      setText(elements.clock, `T+${(snapshot.elapsedMs / 1000).toFixed(1).padStart(5, '0')}`);
       elements.authorization.hidden = snapshot.stage !== 'authorize' || state.confirmed;
       elements.confirm.disabled = confirmationInFlight
         || !(snapshot.stage === 'authorize'
@@ -603,6 +607,7 @@
     function resizeRenderer() {
       if (destroyed) return;
       rendererDirector?.resize({width: eventRoot.innerWidth, height: eventRoot.innerHeight});
+      if (currentSnapshot) renderAccessibleProgress(currentSnapshot);
     }
 
     async function selectRenderer(theme, privateAudioDecoded) {

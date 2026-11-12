@@ -296,9 +296,11 @@ test('real browser selects both renderers, keeps one accessible control layer an
       elapsedMs: ProjectZeroBootCanvasInstance.lastSnapshot().elapsedMs,
       activeNodes: ProjectZeroRendererDirectorInstance.lastRenderRecord().activeNodes,
       referenceHidden: document.querySelector('#reference-sequence').hidden,
-      hiddenDuringPaint: canvasPaintReferenceHidden
+      hiddenDuringPaint: canvasPaintReferenceHidden,
+      progress: document.querySelector('#progress-value').textContent,
+      ariaProgress: document.querySelector('#ring-progress').getAttribute('aria-valuenow')
     })), {sameSnapshot: true, elapsedMs: 10500, activeNodes: 12,
-      referenceHidden: true, hiddenDuringPaint: false});
+      referenceHidden: true, hiddenDuringPaint: false, progress: '99.2', ariaProgress: '99.2'});
     for (const scenario of ['missing private', 'undecodable mark']) {
       privateAvailable = scenario !== 'missing private';
       markDecodes = scenario !== 'undecodable mark';

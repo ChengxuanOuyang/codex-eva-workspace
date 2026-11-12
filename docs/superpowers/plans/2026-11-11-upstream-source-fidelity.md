@@ -60,7 +60,7 @@ test('upstream engineering baseline is pinned to the inspected public source', (
 });
 ```
 
-运行：`node --test tests/upstream-attribution.test.cjs`  
+运行：`node --test tests/upstream-attribution.test.cjs`
 预期：FAIL，因为文档仍固定旧提交 `b12753e...`。
 
 - [ ] **步骤 3：更新来源与许可边界**
@@ -74,7 +74,7 @@ private-only: NERV, Rei, reference soundtrack
 not available upstream: light-blue EVANGELION-00 private source
 ```
 
-运行：`node --test tests/upstream-attribution.test.cjs tests/asset-licenses.test.cjs`  
+运行：`node --test tests/upstream-attribution.test.cjs tests/asset-licenses.test.cjs`
 预期：PASS。
 
 - [ ] **步骤 4：提交来源锁定**
@@ -112,7 +112,7 @@ test('reference font is exact-allowlisted with its OFL notice', async () => {
 
 并断言 `/fonts/../package.json`、query、反斜杠和未知字体均为 404。
 
-运行：`node --test tests/renderer-assets.test.cjs tests/asset-licenses.test.cjs`  
+运行：`node --test tests/renderer-assets.test.cjs tests/asset-licenses.test.cjs`
 预期：FAIL，资源尚不存在。
 
 - [ ] **步骤 2：从固定提交复制并验证字体**
@@ -137,7 +137,7 @@ shasum -a 256 /tmp/unit02-mincho-black.woff2
 
 在 `workbench/service.cjs` 只加入两个字体路由；CSP 保持 `default-src 'self'`、`font-src 'self'`，不增加远端域名。
 
-运行：`node --test tests/renderer-assets.test.cjs tests/service-security.test.cjs tests/asset-licenses.test.cjs`  
+运行：`node --test tests/renderer-assets.test.cjs tests/service-security.test.cjs tests/asset-licenses.test.cjs`
 预期：PASS。
 
 - [ ] **步骤 4：提交字体**
@@ -174,7 +174,7 @@ test('reference timing matches the author sequence and recorded absolute clock',
 });
 ```
 
-运行：`node --test tests/boot-timeline.test.cjs tests/boot-runtime.test.cjs`  
+运行：`node --test tests/boot-timeline.test.cjs tests/boot-runtime.test.cjs`
 预期：FAIL，因为当前门是 15,500 ms。
 
 - [ ] **步骤 2：实现不可变作者时间表**
@@ -257,7 +257,7 @@ test('hold frame reproduces the EVANGELION-00 reference inventory', () => {
 });
 ```
 
-运行：`node --test tests/reference-layout.test.cjs`  
+运行：`node --test tests/reference-layout.test.cjs`
 预期：FAIL，模块不存在。
 
 - [ ] **步骤 2：实现纯 reference view-model**
@@ -345,7 +345,7 @@ test('complete private theme selects reference and a render failure falls back i
 
 并覆盖 public、private 404、mark decode 失败、reference resize 失败、destroy 期间失败与重复 fallback。
 
-运行：`node --test tests/renderer-director.test.cjs tests/boot-runtime.test.cjs`  
+运行：`node --test tests/renderer-director.test.cjs tests/boot-runtime.test.cjs`
 预期：FAIL，director 不存在。
 
 - [ ] **步骤 2：实现统一 director**
