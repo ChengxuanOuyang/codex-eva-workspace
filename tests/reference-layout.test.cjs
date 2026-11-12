@@ -7,21 +7,19 @@ const vm = require('node:vm');
 const {referenceFrame} = require('../renderer/boot/reference-layout.js');
 const {sampleTimeline} = require('../renderer/boot/timeline.js');
 const timing = require('../renderer/boot/reference-timing.js');
+const hold = require('./fixtures/reference-video-manifest.json').frames.find(frame => frame.logicalMs === 13300);
 
 test('hold frame reproduces the EVANGELION-00 reference inventory', () => {
   const frame = referenceFrame(Object.freeze({elapsedMs: 13_300, stage: 'authorize', progress: 99.2, activeNodes: 12}));
   assert.equal(frame.header.unit, 'EVANGELION-00');
   assert.equal(frame.header.pilot, '零号机');
   assert.equal(frame.center.metric, '99.2%');
-  assert.deepEqual(frame.nodes.map(node => node.label), [
-    'WARNING', 'EMERGENCY', 'WARNING', 'EMERGENCY', 'WARNING', 'EMERGENCY',
-    'WARNING', 'EMERGENCY', 'WARNING', 'EMERGENCY', 'WARNING', 'EMERGENCY'
-  ]);
-  assert.equal(frame.palette.background, '#edf6fa');
+  assert.deepEqual(frame.nodes.map(node => node.label), hold.nodes.map(node => node.label));
+  assert.equal(frame.palette.background, '#eaf2fd');
   assert.deepEqual(frame.logicalSize, {width: 1920, height: 1080});
   assert.equal(frame.scan.visible, false);
   assert.equal(frame.center.ringDegrees, 357.12);
-  assert.equal(frame.nodes.filter(node => node.active).length, 12);
+  assert.equal(frame.nodes.filter(node => node.active).length, 2);
 });
 
 test('frame is deeply frozen and rejects arbitrary snapshot presentation fields', () => {
@@ -49,7 +47,7 @@ test('stage branches derive scan, cues, ring, and bounded authorization flash fr
   assert.ok(scan.scan.height > 0 && scan.scan.height <= 1080);
   const sync = referenceFrame(sampleTimeline(10500));
   assert.equal(sync.center.mode, 'sync');
-  assert.equal(sync.nodes.filter(node => node.active).length, 4);
+  assert.equal(sync.nodes.filter(node => node.active).length, 5);
   assert.ok(sync.center.ringDegrees > 0 && sync.center.ringDegrees < 357.12);
   const full = referenceFrame(sampleTimeline(14100, {authorized: true}));
   assert.equal(full.center.metric, '100.0%');
@@ -58,16 +56,17 @@ test('stage branches derive scan, cues, ring, and bounded authorization flash fr
   const complete = referenceFrame(sampleTimeline(20500, {authorized: true}));
   assert.equal(complete.flash.visible, false);
   assert.equal(complete.center.mode, 'complete');
-  assert.equal(complete.center.title, 'SYSTEM ONLINE');
+  assert.equal(complete.center.title, '工作台已就绪');
 });
 
-test('scan recedes on the reference clock, and reduced motion uses static keyframes', () => {
+test('scan fades at full height on the reference clock, and reduced motion uses static keyframes', () => {
   const filling = referenceFrame(sampleTimeline(6400));
   const clearing = referenceFrame(sampleTimeline(8000));
   assert.equal(filling.scan.height, 1080);
-  assert.ok(clearing.scan.height < filling.scan.height);
+  assert.equal(clearing.scan.height, filling.scan.height);
+  assert.ok(clearing.scan.opacity < filling.scan.opacity);
   const reduced = referenceFrame(sampleTimeline(5500, {reducedMotion: true}));
-  assert.equal(reduced.scan.height, 1080);
+  assert.equal(reduced.scan.height, 1080 * .8949);
   assert.equal(reduced.reducedMotion, true);
   assert.equal(referenceFrame(sampleTimeline(14800, {authorized: true, reducedMotion: true})).flash.visible, false);
 });

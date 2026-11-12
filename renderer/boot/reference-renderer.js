@@ -16,14 +16,6 @@
   if (!layout?.referenceFrame) throw new Error('REFERENCE_LAYOUT_UNAVAILABLE');
   const {REFERENCE_LAYOUT, referenceFrame, isReferenceFrame} = layout;
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const ICON_PATHS = Object.freeze({
-    core: 'M0 -14 12 -7V7L0 14 -12 7V-7ZM0 -6 5 -3V3L0 6 -5 3V-3Z',
-    link: 'M-3 -10H-10L-15 -5V5L-10 10H-3M3 -10H10L15 -5V5L10 10H3M-7 0H7',
-    data: 'M-13 -12H13V12H-13ZM-8 -6H8M-8 0H8M-8 6H4',
-    shield: 'M0 -15 13 -9V2L7 11 0 16 -7 11 -13 2V-9ZM-6 0 -1 5 8 -5',
-    render: 'M-15 -11H15V9H-15ZM-7 15H7M0 9V15M-8 -5H8M-8 1H4',
-    pilot: 'M-6 -6V-12L0 -16 6 -12V-6L0 -2ZM-13 15V7L-7 2H7L13 7V15Z'
-  });
 
   function createReferenceRenderer(root, options = {}) {
     if (!root?.ownerDocument || !root.classList.contains('reference-sequence')) {
@@ -66,12 +58,15 @@
     const geometry = REFERENCE_LAYOUT.geometry;
     css('center-x', `${geometry.center.x}px`);
     css('center-y', `${geometry.center.y}px`);
-    css('title-y', `${geometry.titleY}px`);
-    css('node-diameter', `${geometry.nodes.radius * 2}px`);
+    css('title-y', `${geometry.headingY}px`);
+    css('node-width', `${geometry.nodes.width}px`);
+    css('node-height', `${geometry.nodes.height}px`);
+    for (const [name, value] of Object.entries(REFERENCE_LAYOUT.typography)) {
+      if (typeof value === 'number') css(name, `${value}px`);
+    }
     css('border-inset', `${geometry.border.inset}px`);
     css('border-width', `${geometry.border.width}px`);
-    css('corner-size', `${geometry.border.corner}px`);
-    css('grid-step', `${geometry.grid.step}px`);
+
     const header = slot('reference-header', 'header');
     const grid = slot('reference-grid');
     const left = slot('reference-node-column--left');
@@ -84,18 +79,20 @@
     const flash = slot('reference-flash');
     flash.hidden = true;
     const slots = [header, grid, left, right, center, scan, footer, flash];
+    const headerMark = element('div', 'reference-header-mark', '', header);
     const unit = element('strong', 'reference-unit', REFERENCE_LAYOUT.header.unit, header);
     const pilot = element('span', 'reference-pilot', REFERENCE_LAYOUT.header.pilot, header);
     element('span', 'reference-header-code', REFERENCE_LAYOUT.header.code, header);
-    for (const corner of ['tl', 'tr', 'bl', 'br']) element('i', `reference-corner reference-corner--${corner}`, undefined, grid);
+
     const nodes = Array.from({length: 12}, (_, index) => {
       const parent = index % 2 ? right : left;
       const node = element('div', 'reference-node', undefined, parent);
-      const svg = svgElement('svg', {viewBox: '-48 -48 96 96', 'aria-hidden': 'true'}, node);
-      svgElement('polygon', {class: 'reference-node-hex', points: '0,-48 41.57,-24 41.57,24 0,48 -41.57,24 -41.57,-24'}, svg);
-      const icon = svgElement('path', {class: 'reference-node-icon', d: ICON_PATHS[REFERENCE_LAYOUT.nodeIcons[Math.floor(index / 2)]]}, svg);
+      const svg = svgElement('svg', {viewBox: '-104 -72 208 144', 'aria-hidden': 'true'}, node);
+      svgElement('polygon', {class: 'reference-node-hex', points: '-60,-68 60,-68 102,0 60,68 -60,68 -102,0'}, svg);
       const label = element('span', 'reference-node-label', '', node);
-      return {node, icon, label};
+      node.dataset.side = index % 2 ? 'right' : 'left';
+      node.dataset.row = Math.floor(index / 2);
+      return {node, label};
     });
     const heading = element('h1', 'reference-heading', '', center);
     const subtitle = element('p', 'reference-subtitle', '', center);
@@ -111,8 +108,14 @@
     const progressRing = svgElement('circle', {class: 'reference-ring-progress', cx: 0, cy: 0,
       r: geometry.rings[0], pathLength: 360, transform: 'rotate(-90)', 'stroke-dasharray': '0 360'}, rings);
     const metric = element('output', 'reference-metric', '', hub);
-    const complete = element('div', 'reference-completion', 'EVANGELION-00', hub);
-    const cue = element('div', 'reference-cue', undefined, center);
+    element('small', 'reference-metric-caption', '同步率', metric);
+    const complete = element('div', 'reference-completion', 'EVANGELION-00', center);
+    element('span', 'reference-completion-code', 'CODEX / 本地链路已建立', complete);
+    element('i', 'reference-completion-badge', '◎', complete);
+    const liquidSvg = svgElement('svg', {class: 'reference-liquid-front', preserveAspectRatio: 'none', 'aria-hidden': 'true'}, scan);
+    const liquidFront = svgElement('path', {fill: 'none'}, liquidSvg);
+    const cue = slot('reference-cue');
+    slots.push(cue);
     const cueJa = element('p', 'reference-cue-ja', '', cue);
     const cueZh = element('p', 'reference-cue-zh', '', cue);
     element('span', 'reference-footer-left', REFERENCE_LAYOUT.footer.left, footer);
@@ -135,6 +138,7 @@
       if (image === markSource) return;
       markSource = image;
       mark.querySelector('img')?.remove();
+      headerMark.replaceChildren();
       fallback.hidden = Boolean(image);
       if (image) {
         // Only the already-decoded, fixed private endpoint is referenced. No
@@ -144,6 +148,10 @@
         privateImage.alt = '';
         privateImage.decoding = 'sync';
         mark.append(privateImage);
+        const mini = document.createElement('img');
+        mini.src = '/private/boot-mark.webp';
+        mini.alt = '';
+        headerMark.append(mini);
       }
     }
 
@@ -155,7 +163,11 @@
       root.dataset.centerMode = frame.center.mode;
       heading.textContent = frame.center.title;
       subtitle.textContent = frame.center.subtitle;
-      metric.textContent = frame.center.metric;
+      metric.replaceChildren(document.createTextNode(frame.center.metric));
+      element('small', 'reference-metric-caption', '同步率', metric);
+      hub.style.opacity = String(frame.center.opacity);
+      heading.style.opacity = String(frame.center.opacity);
+      subtitle.style.opacity = String(frame.center.opacity);
       metric.hidden = frame.center.mode !== 'sync';
       rings.hidden = frame.center.mode !== 'sync';
       rings.style.display = rings.hidden ? 'none' : '';
@@ -164,17 +176,22 @@
       progressRing.setAttribute('stroke-dasharray', `${frame.center.ringDegrees} 360`);
       scan.hidden = !frame.scan.visible;
       scan.style.height = `${frame.scan.height}px`;
+      scan.style.opacity = String(frame.scan.opacity);
+      const points = frame.scan.waveOffsets.map((offset, index) => [index * 60, offset]);
+      scan.style.clipPath = `polygon(${points.map(([x, y]) => `${x}px ${Math.max(0, y + 7)}px`).join(',')},100% 100%,0 100%)`;
+      liquidSvg.setAttribute('viewBox', `0 0 1920 ${Math.max(1, frame.scan.height)}`);
+      liquidFront.setAttribute('d', points.map(([x, y], index) => `${index ? 'L' : 'M'}${x} ${Math.max(0, y + 7)}`).join(' '));
       flash.hidden = !frame.flash.visible;
       cueJa.textContent = frame.cue.ja;
       cueZh.textContent = frame.cue.zh;
       cue.hidden = !frame.cue.ja && !frame.cue.zh;
       frame.nodes.forEach((state, index) => {
-        const {node, icon, label} = nodes[index];
+        const {node, label} = nodes[index];
         node.hidden = !state.visible;
         node.classList.toggle('is-active', state.active);
         node.style.left = `${state.x}px`;
         node.style.top = `${state.y}px`;
-        icon.dataset.icon = state.icon;
+        node.style.opacity = String(state.opacity);
         label.textContent = state.label;
       });
       setMark(assets);
@@ -206,7 +223,7 @@
       if (!recordEnabled || destroyed || !rendered) return null;
       const visibleNodes = nodes.filter(({node}) => visible(node));
       const activeNodeCount = visibleNodes.filter(({node}) => node.classList.contains('is-active')).length;
-      const metricText = visible(metric) ? metric.textContent : '';
+      const metricText = visible(metric) ? metric.firstChild.textContent : '';
       const scanVisible = visible(scan);
       const ringVisible = visible(rings);
       const styles = window.getComputedStyle(root);
@@ -215,16 +232,41 @@
         renderCount, stage: root.dataset.stage, headingText: visible(heading) ? heading.textContent : '',
         header: Object.freeze({unit: visible(unit) ? unit.textContent : '', pilot: visible(pilot) ? pilot.textContent : ''}),
         visibleNodeCount: visibleNodes.length, activeNodeCount, activeNodes: activeNodeCount,
+        totalNodeCount: nodes.length,
         nodeLabels: Object.freeze(visibleNodes.map(({label}) => label.textContent)),
-        iconStates: Object.freeze(visibleNodes.map(({node, icon}) => `${icon.dataset.icon}:${node.classList.contains('is-active') ? 'active' : 'idle'}`)),
+        nodes: Object.freeze(nodes.map(({node, label}) => Object.freeze({
+          side: node.dataset.side, row: Number(node.dataset.row), visible: visible(node),
+          opacity: Number(window.getComputedStyle(node).opacity),
+          active: visible(node) && node.classList.contains('is-active'), label: label.textContent
+        }))),
+        nodeGeometry: Object.freeze(nodes.map(({node}) => {
+          const style = window.getComputedStyle(node);
+          return Object.freeze({x: Number.parseFloat(style.left), y: Number.parseFloat(style.top),
+            width: Number.parseFloat(style.width), height: Number.parseFloat(style.height)});
+        })),
+        centerGeometry: Object.freeze({x: Number.parseFloat(window.getComputedStyle(hub).left),
+          y: Number.parseFloat(window.getComputedStyle(hub).top),
+          ringRadius: Number(rings.querySelector('.reference-ring-guide').getAttribute('r'))}),
+        footer: Object.freeze({left: footer.querySelector('.reference-footer-left').textContent,
+          right: footer.querySelector('.reference-footer-right').textContent}),
+        iconStates: Object.freeze([]),
         metricText, progress: metricText ? Number.parseFloat(metricText) : null, progressDrawn: Boolean(metricText),
         scanVisible, scanHeight: scanVisible ? Number.parseFloat(window.getComputedStyle(scan).height) : 0,
+        scanOpacity: scanVisible ? Number(window.getComputedStyle(scan).opacity) : 0,
+        scanWavePath: scanVisible ? liquidFront.getAttribute('d') : '',
         ringDegrees: ringVisible ? Number.parseFloat(window.getComputedStyle(progressRing).strokeDasharray) : 0,
         flashVisible: visible(flash), cue: Object.freeze({ja: visible(cueJa) ? cueJa.textContent : '', zh: visible(cueZh) ? cueZh.textContent : ''}),
         mark: !visible(mark) ? 'not-drawn' : privateImage && visible(privateImage)
           && privateImage.complete && privateImage.naturalWidth > 0 ? 'private' : visible(fallback) ? 'fallback' : 'not-drawn',
         reducedMotion: root.dataset.motion === 'reduced',
-        computed: Object.freeze({backgroundColor: styles.backgroundColor, titleFontFamily: window.getComputedStyle(heading).fontFamily})
+        computed: Object.freeze({backgroundColor: styles.backgroundColor, titleFontFamily: window.getComputedStyle(heading).fontFamily,
+          headingSize: window.getComputedStyle(heading).fontSize, headingSpacing: window.getComputedStyle(heading).letterSpacing,
+          metricSize: window.getComputedStyle(metric).fontSize, metricSpacing: window.getComputedStyle(metric).letterSpacing,
+          nodeSize: window.getComputedStyle(nodes[0].label).fontSize, nodeSpacing: window.getComputedStyle(nodes[0].label).letterSpacing,
+          borderWidth: window.getComputedStyle(grid).borderLeftWidth,
+          nodeFill: window.getComputedStyle(nodes[0].node.querySelector('polygon')).fill}),
+        centerMode: root.dataset.centerMode, completionText: visible(complete) ? complete.firstChild.textContent : '',
+        subtitleText: visible(subtitle) ? subtitle.textContent : ''
       };
       return Object.freeze(record);
     }

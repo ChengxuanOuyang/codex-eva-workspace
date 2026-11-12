@@ -10,6 +10,8 @@ const path = require('node:path');
 const {promisify} = require('node:util');
 const {_electron: electron} = require('playwright');
 
+const {configurePresentation} = require('./boot-support.cjs');
+
 const execFileAsync = promisify(execFile);
 
 function requestFails(url) {
@@ -49,7 +51,7 @@ async function waitForTestPage(app) {
   await page.waitForFunction(() =>
     typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
       && typeof globalThis.ProjectZeroTestBridge?.readWindowMode === 'function'
-      && typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord === 'function');
+      && typeof globalThis.ProjectZeroRendererDirectorInstance?.lastRenderRecord === 'function');
   return page;
 }
 
@@ -75,19 +77,20 @@ async function waitForWindowMode(page, expected) {
 
 async function assertClockPausedAtGate(page) {
   const before = await page.evaluate(() => ({
-    render: globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord(),
+    render: globalThis.ProjectZeroRendererDirectorInstance.lastRenderRecord(),
     clock: document.querySelector('#clock-readout').textContent
   }));
   await page.waitForTimeout(250);
   const after = await page.evaluate(() => ({
-    render: globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord(),
+    render: globalThis.ProjectZeroRendererDirectorInstance.lastRenderRecord(),
     clock: document.querySelector('#clock-readout').textContent
   }));
   assert.deepEqual(after, before);
   assert.equal(after.render.stage, 'authorize');
   assert.equal(after.render.progress, 99.2);
-  assert.equal(after.render.activeNodes, 12);
-  assert.equal(after.clock, 'T+015.5');
+  assert.equal(after.render.activeNodes, after.render.nodes ? 2 : 12);
+  assert.ok(Math.abs(await page.evaluate(() => audioAcceptance.time()) - 13.3) < .001);
+  assert.equal(after.clock, 'T+013.3');
 }
 
 async function finishConfirmedPresentation(page) {
@@ -99,7 +102,7 @@ async function finishConfirmedPresentation(page) {
   await waitForWindowMode(page, 'windowed');
 }
 
-test('skip button pauses at 99.2, preserves READY gating, restores window mode and closes cleanly',
+for (const mode of ['reference', 'canvas']) test(`${mode}: skip button pauses at 99.2, preserves READY gating, restores window mode and closes cleanly`,
   {timeout: 30000}, async () => {
     let app;
     let origin;
@@ -120,14 +123,17 @@ test('skip button pauses at 99.2, preserves READY gating, restores window mode a
           PROJECT_ZERO_TEST_DISCONNECT_SIGNAL: disconnectSignalPath
         }
       });
+      const initialPage = await app.firstWindow();
+      await initialPage.waitForURL(/^http:\/\/127\.0\.0\.1:/);
+      await configurePresentation(initialPage, mode);
       const page = await waitForTestPage(app);
       await waitForWindowMode(page, 'fullscreen');
       assert.equal(await page.evaluate(() => globalThis.ProjectZeroTestBridge.readWindowMode()), 'fullscreen');
 
       await page.getByRole('button', {name: /跳过动态演示/}).click();
       await page.waitForFunction(() =>
-        globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.stage === 'authorize'
-          && globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.progress === 99.2);
+        globalThis.ProjectZeroRendererDirectorInstance.lastRenderRecord()?.stage === 'authorize'
+          && globalThis.ProjectZeroRendererDirectorInstance.lastRenderRecord()?.progress === 99.2);
       assert.equal(await page.locator('#progress-value').textContent(), '99.2');
       assert.equal(await page.locator('body').getAttribute('data-stage'), 'authorize');
       await assertClockPausedAtGate(page);
@@ -212,7 +218,7 @@ test('skip button pauses at 99.2, preserves READY gating, restores window mode a
     assert.deepEqual(taskProcessIds.filter(pid => survivingPids.has(pid)), [], 'the app left no task child alive');
   });
 
-test('Escape invokes the same paused READY-gated skip path', {timeout: 30000}, async t => {
+for (const mode of ['reference', 'canvas']) test(`${mode}: Escape invokes the same paused READY-gated skip path`, {timeout: 30000}, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-escape-e2e-'));
   t.after(() => fs.rm(root, {recursive: true, force: true}));
   let app;
@@ -227,11 +233,14 @@ test('Escape invokes the same paused READY-gated skip path', {timeout: 30000}, a
         PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs')
       }
     });
+    const initialPage = await app.firstWindow();
+    await initialPage.waitForURL(/^http:\/\/127\.0\.0\.1:/);
+    await configurePresentation(initialPage, mode);
     const page = await waitForTestPage(app);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() =>
-      globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.stage === 'authorize'
-        && globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord()?.progress === 99.2);
+      globalThis.ProjectZeroRendererDirectorInstance.lastRenderRecord()?.stage === 'authorize'
+        && globalThis.ProjectZeroRendererDirectorInstance.lastRenderRecord()?.progress === 99.2);
     assert.equal(await page.locator('#progress-value').textContent(), '99.2');
     await assertClockPausedAtGate(page);
     await assertExactReady(page);

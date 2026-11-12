@@ -90,6 +90,7 @@
     createAudioClock = root.ProjectZeroAudioClock?.createAudioClock,
     createRendererDirector = root.ProjectZeroRendererDirector?.createRendererDirector,
     createReferenceRenderer = root.ProjectZeroReferenceRenderer?.createReferenceRenderer,
+    referenceFrame = root.ProjectZeroReferenceLayout?.referenceFrame,
     prepareBootAssets = root.ProjectZeroBootCanvas?.prepareBootAssets,
     createImage = () => document.createElement('img'),
     document,
@@ -256,8 +257,14 @@
       return STAGE_TEXT[snapshot?.stage] || STAGE_TEXT.wake;
     }
 
+    function presentationProgress(snapshot) {
+      const value = rendererDirector?.mode() === 'reference' && typeof referenceFrame === 'function'
+        ? Number.parseFloat(referenceFrame(snapshot).center.metric) : snapshot.progress;
+      return Math.max(0, Math.min(100, value));
+    }
+
     function renderAccessibleState(snapshot) {
-      const progress = Math.max(0, Math.min(100, snapshot.progress));
+      const progress = presentationProgress(snapshot);
       const text = stageText(snapshot);
       document.body.dataset.stage = snapshot.stage;
       setText(elements.progress, progress.toFixed(1));
@@ -630,6 +637,7 @@
         reference, canvas, preferReference: Boolean(reference), referenceLayer, canvasLayer
       });
       renderer = rendererDirector;
+      bootCanvas?.releaseWindowResize?.();
       eventRoot.ProjectZeroRendererDirectorInstance = rendererDirector;
       renderer.render(currentSnapshot, rendererAssets);
       eventRoot.addEventListener('resize', resizeRenderer);

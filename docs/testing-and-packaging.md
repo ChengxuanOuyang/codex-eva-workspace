@@ -18,23 +18,49 @@
 
 ### 启动演出视觉与窗口验收
 
-源码 E2E 通过 Playwright 的 reduced-motion 媒体模拟和一个窄测试桥，在
-`0、1500、3500、5500、8500、10500、12500、15500 ms` 采样确定性 Canvas 快照。
-每个采样点核对 stage、进度、激活节点、扫描位置、图标状态和 heading key，并分别以
-1440×900、1280×800 截图到系统临时目录。测试同时要求页面没有滚动溢出、没有远程资源，
-并验证完整播放、按钮跳过和 `Escape` 跳过都受真实 `READY` 门控，99.2% 等待点的音频保持暂停，
-确认后窗口从 fullscreen 恢复为 windowed，关闭后本地 listener 与任务子进程消失。
-这些 Canvas 断言读取实际 title、icon、scan、ring 和 mark 绘制分支生成的 render record，
-不是把传入的 timeline snapshot 原样回显；未安装测试桥的 production renderer 不暴露该 record。
+`tests/fixtures/reference-video-manifest.json` 是不含媒体的数字验收清单。它记录原视频 SHA256、
+592×333 内容裁剪、1920×1080 逻辑坐标，以及 `0、1500、3000、5500、8800、10500、12500、
+13300、14100、15450、18600、19850、20500 ms` 的阶段、文字、进度、扫描高度/透明度、颜色和
+每个节点的 visible/opacity/active。12 个兼容节点中，第六行明确 hidden，画面每侧显示 5 个裸横向
+六边形，只显示交替 WARNING/EMERGENCY。250 ms 的数字采样控制左右交错的点亮和熄灭。
 
-测试桥只有在 `NODE_ENV=test`、应用未打包且显式加载外置 fake bridge 时才安装。renderer 只获得
-“设置 presentation elapsed ms”和“读取 window mode”两个方法；没有任意代码执行、文件路径或
-文件读写能力。window mode 同时读取 Electron native fullscreen 与 macOS simple fullscreen。
-packaged smoke 即使收到同名环境变量也必须看不到该 renderer bridge。
+reference 是有效私人音轨和徽记加载后的默认验收目标，Canvas 是公开配置或资源不可用时的 fallback。
+reference 的进度遵循视频实测曲线（10500 ms 为 29.0%，12500 ms 为 95.5%）；无障碍数值随所选
+画面派生。控制器仍在逻辑 13300 ms 锁定 99.2%，只有 fresh exact READY 和用户确认才能继续。
+原视频含人类确认等待，清单将 authorized/held 与 videoMs 单独记录，确认后帧不假定统一的 2000 ms 偏移。
 
-人工视觉验收把临时截图与主 EVA 参考的规范化裁剪并排检查，清单包括图标、mark、节点、标签、
-颜色、圆环、扫描层、认证卡和音效点。次要动作参考只用于核对节点级联、认证闪屏、进度联动和
-连续交接，不作为品牌视觉基准；参考媒体、裁剪和本地路径都不进入仓库。
+源码视觉 E2E 在 reference 和 Canvas 两模式、1440×900 和 1280×800 两视口读取真实绘制记录和
+DOM computed style，并截图到系统临时目录。reference 额外核对中文标题、逐节点明暗、裸六边形标签、
+字体加载、私人 mark、液面扰动前沿、扫描高度/透明度、圆环角度和完成标题；实际 DOM opacity 偏差必须
+使验收断言失败。reduced motion 保持信息，抑制波动和闪光。音频检查覆盖 99.2% 暂停与确认后恢复。
+完整播放、按钮跳过、Escape、断线恢复和 fullscreen→windowed 均覆盖两模式，关闭后检查 listener 与子进程。
+
+运行指定串行验收：
+
+```bash
+npm run pack
+npm run pack:private -- --theme private-themes/rei/package
+node --test --test-concurrency=1 tests/e2e/boot-visual.test.cjs tests/e2e/boot.test.cjs tests/e2e/packaged-smoke.test.cjs tests/e2e/private-packaged-smoke.test.cjs
+```
+
+本地视频比较可先创建一个系统临时目录，将其绝对路径设置为 `PROJECT_ZERO_REFERENCE_SCREENSHOTS`，
+运行 `tests/e2e/boot-visual.test.cjs`。该选项额外保存 1920×1080 的 `reference-<logicalMs>.png` 与
+computed-DOM JSON（不含媒体来源或本机路径），并保留目录供检查。然后运行：
+
+```text
+node scripts/verify-reference-frames.cjs --video <absolute mp4> --screenshots <absolute temp dir>
+```
+
+脚本只接受普通 MP4 和非 symlink 临时目录/普通截图文件，读取原文件而不复制视频，不写入仓库；输出
+稳定的逐项 PASS/FAIL、SHA 和总结果，不打印本地路径。它用 macOS AVFoundation 逐帧读取原视频，
+核对 DOM 数值、截图尺寸、背景/液面与逐节点 RGB 采样。源视频确认时的短暂缩放通过显式 videoMs 映射到稳定帧，全部 12 帧均检查逐节点颜色与几何；
+20500 ms 验证工作台交接，不与启动层做错误的整图比较。截图目录使用后自行删除。
+该脚本要求本地 macOS Swift/AVFoundation 和 owner 视频；缺少视频时 manifest、单测及合成素材 E2E 仍可运行。
+
+测试桥仅在 `NODE_ENV=test`、应用未打包且显式加载外置 fake bridge 时安装，只提供“设置 presentation
+elapsed ms”和“读取 window mode”。production 不暴露 renderer record 或测试桥，private packaged smoke
+也验证这点。合成 E2E 使用即时生成的 20.5 秒静音 WAV，只证明音频时钟/画面同步与生命周期；实际声线、
+响度和听感仍需 owner 对私人包试听。参考媒体、裁剪、截图和本地绝对路径不进入仓库。
 
 ## 确定性目录包
 

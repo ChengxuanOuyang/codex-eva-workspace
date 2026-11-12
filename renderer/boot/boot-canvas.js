@@ -35,8 +35,11 @@
         reducedMotion: false
       };
       instance.render(initialSnapshot);
-      root.ProjectZeroBootCanvasInstance = instance;
-      root.addEventListener('resize', () => instance.resize());
+      const resizeCanvas = () => instance.resize();
+      root.addEventListener('resize', resizeCanvas);
+      root.ProjectZeroBootCanvasInstance = Object.freeze({...instance,
+        releaseWindowResize: () => root.removeEventListener('resize', resizeCanvas)
+      });
       void api.loadBootAssets({
         createImage: () => root.document.createElement('img'),
         fetch: typeof root.fetch === 'function' ? root.fetch.bind(root) : undefined

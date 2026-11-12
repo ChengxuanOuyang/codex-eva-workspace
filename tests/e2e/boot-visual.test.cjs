@@ -1,212 +1,113 @@
 'use strict';
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {_electron: electron} = require('playwright');
+const manifest = require('../fixtures/reference-video-manifest.json');
+const {verifyRecord, validateDirectory} = require('../../scripts/verify-reference-frames.cjs');
+const {configurePresentation, seekPresentation} = require('./boot-support.cjs');
+const VIEWPORTS = [{width: 1440, height: 900}, {width: 1280, height: 800}];
+const ICONS = ['core', 'core', 'link', 'link', 'data', 'data', 'shield', 'shield', 'render', 'render', 'pilot', 'pilot'];
 
-const KEYFRAMES = Object.freeze([
-  Object.freeze({elapsedMs: 0, stage: 'wake', progress: 0, activeNodes: 0,
-    scan: {drawn: false, position: null, top: null}, headingText: 'SYSTEM WAKE', mark: 'fallback'}),
-  Object.freeze({elapsedMs: 1500, stage: 'wake', progress: 0, activeNodes: 0,
-    scan: {drawn: false, position: null, top: null}, headingText: 'SYSTEM WAKE', mark: 'fallback'}),
-  Object.freeze({elapsedMs: 3000, stage: 'scan', progress: 0, activeNodes: 0,
-    scan: {drawn: true, position: 1, top: 210}, headingText: 'SYSTEM CHECK', mark: 'fallback'}),
-  Object.freeze({elapsedMs: 5500, stage: 'scan', progress: 0, activeNodes: 0,
-    scan: {drawn: true, position: 1, top: 210}, headingText: 'SYSTEM CHECK', mark: 'fallback'}),
-  Object.freeze({elapsedMs: 8800, stage: 'synchronize', progress: 99.2, activeNodes: 12,
-    scan: {drawn: false, position: null, top: null}, headingText: 'SYNCHRONIZATION', mark: 'not-drawn'}),
-  Object.freeze({elapsedMs: 10500, stage: 'synchronize', progress: 99.2, activeNodes: 12,
-    scan: {drawn: false, position: null, top: null}, headingText: 'SYNCHRONIZATION', mark: 'not-drawn'}),
-  Object.freeze({elapsedMs: 12500, stage: 'synchronize', progress: 99.2, activeNodes: 12,
-    scan: {drawn: false, position: null, top: null}, headingText: 'SYNCHRONIZATION', mark: 'not-drawn'}),
-  Object.freeze({elapsedMs: 13300, stage: 'authorize', progress: 99.2, activeNodes: 12,
-    scan: {drawn: false, position: null, top: null}, headingText: 'PILOT AUTHORIZATION', mark: 'not-drawn'})
-]);
-const ICONS = Object.freeze(['core', 'core', 'link', 'link', 'data', 'data',
-  'shield', 'shield', 'render', 'render', 'pilot', 'pilot']);
-const VIEWPORTS = Object.freeze([
-  Object.freeze({width: 1440, height: 900}),
-  Object.freeze({width: 1280, height: 800})
-]);
-
-function expectedIconStates(activeNodes) {
-  return ICONS.map((icon, index) => `${icon}:${index < activeNodes ? 'active' : 'idle'}`);
+async function windowMode(page, expected) {
+  await page.waitForFunction(async mode => await ProjectZeroTestBridge.readWindowMode() === mode, expected);
 }
 
-async function pngSize(file) {
-  const header = await fs.readFile(file);
-  assert.equal(header.subarray(1, 4).toString('ascii'), 'PNG');
-  return {width: header.readUInt32BE(16), height: header.readUInt32BE(20)};
+function verifyCanvas(actual, frame) {
+  const expected = frame.canvas;
+  assert.equal(actual.stage, frame.stage);
+  assert.equal(actual.headingText, expected.headingText);
+  assert.ok(Math.abs(actual.progress - expected.progress) < .00001, `logical ${frame.logicalMs}: ${actual.progress} != ${expected.progress}`);
+  assert.equal(actual.activeNodes, expected.activeNodes);
+  assert.equal(actual.progressDrawn, expected.progressDrawn);
+  assert.equal(actual.mark, expected.mark);
+  assert.deepEqual(actual.iconStates, ICONS.map((icon, index) => `${icon}:${index < expected.activeNodes ? 'active' : 'idle'}`));
+  assert.equal(actual.scan.drawn, expected.scan.drawn);
+  for (const field of ['position', 'top']) {
+    if (expected.scan[field] === null) assert.equal(actual.scan[field], null);
+    else assert.ok(Math.abs(actual.scan[field] - expected.scan[field]) < .00001);
+  }
 }
 
-async function setPresentationElapsed(page, elapsedMs) {
-  const renderCount = await page.evaluate(() =>
-    globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord().renderCount);
-  await page.evaluate(value => globalThis.ProjectZeroTestBridge.setPresentationElapsed(value), elapsedMs);
-  await page.waitForFunction(previousCount =>
-    globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord?.()?.renderCount > previousCount,
-  renderCount);
-}
-
-async function readWindowMode(page) {
-  return page.evaluate(() => globalThis.ProjectZeroTestBridge.readWindowMode());
-}
-
-async function waitForWindowMode(page, expected) {
-  await page.evaluate(async mode => {
-    const deadline = performance.now() + 5000;
-    while (performance.now() < deadline) {
-      if (await globalThis.ProjectZeroTestBridge.readWindowMode() === mode) return;
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
-    throw new Error(`Window did not enter ${mode} mode`);
-  }, expected);
-}
-
-test('deterministic reduced-motion keyframes render at both acceptance viewports and complete fullscreen playback',
-  {timeout: 60000}, async t => {
-    const captureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-boot-frames-'));
-    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-zero-boot-data-'));
-    t.after(() => Promise.all([
-      fs.rm(captureRoot, {recursive: true, force: true}),
-      fs.rm(dataRoot, {recursive: true, force: true})
-    ]));
-    let app;
-
-    try {
-      app = await electron.launch({
-        args: ['.'],
-        env: {
-          ...process.env,
-          NODE_ENV: 'test',
-          PROJECT_ZERO_TEST_DATA_ROOT: dataRoot,
-          PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs')
-        }
-      });
-      let page = await app.firstWindow();
-      await page.waitForURL(/^http:\/\/127\.0\.0\.1:/);
-      await page.waitForFunction(() => document.body?.dataset?.stage === 'wake');
-      assert.deepEqual(
-        await page.evaluate(() => [
-          typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed,
-          typeof globalThis.ProjectZeroTestBridge?.readWindowMode
-        ]),
-        ['function', 'function'],
-        'unpackaged NODE_ENV=test must install the narrow presentation test bridge'
-      );
-      await page.emulateMedia({reducedMotion: 'reduce'});
+for (const mode of ['reference', 'canvas']) test(`${mode}: video keyframes, real styles, audio gate and fullscreen handoff`, {timeout: 120000}, async t => {
+  const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), `zero-visual-${mode}-data-`));
+  const requestedCapture = mode === 'reference' ? process.env.PROJECT_ZERO_REFERENCE_SCREENSHOTS : null;
+  const captureRoot = requestedCapture ? await validateDirectory(requestedCapture)
+    : await fs.mkdtemp(path.join(os.tmpdir(), `zero-visual-${mode}-frames-`));
+  t.after(async () => { await fs.rm(dataRoot, {recursive: true, force: true}); if (!requestedCapture) await fs.rm(captureRoot, {recursive: true, force: true}); });
+  let app;
+  try {
+    app = await electron.launch({args: ['.'], env: {...process.env, NODE_ENV: 'test', PROJECT_ZERO_TEST_DATA_ROOT: dataRoot,
+      PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs')}});
+    const page = await app.firstWindow();
+    await page.waitForURL(/^http:\/\/127\.0\.0\.1:/);
+    await configurePresentation(page, mode);
+    await windowMode(page, 'fullscreen');
+    const viewports = requestedCapture ? [...VIEWPORTS, {width: 1920, height: 1080}] : VIEWPORTS;
+    for (const viewport of viewports) {
+      await page.emulateMedia({reducedMotion: 'no-preference'});
       await page.reload({waitUntil: 'domcontentloaded'});
-      await page.waitForFunction(() =>
-        typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
-          && typeof globalThis.ProjectZeroTestBridge?.readWindowMode === 'function'
-          && typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord === 'function');
-      await waitForWindowMode(page, 'fullscreen');
-      assert.equal(await readWindowMode(page), 'fullscreen');
-
-      for (const viewport of VIEWPORTS) {
-        await page.setViewportSize(viewport);
-        await page.waitForFunction(({width, height}) =>
-          innerWidth === width && innerHeight === height, viewport);
-
-        for (const expected of KEYFRAMES) {
-          await setPresentationElapsed(page, expected.elapsedMs);
-          const actual = await page.evaluate(() => {
-            const snapshot = globalThis.ProjectZeroBootCanvasInstance.lastRenderRecord();
-            return {
-              stage: snapshot.stage,
-              domStage: document.body.dataset.stage,
-              progress: snapshot.progress,
-              progressDrawn: snapshot.progressDrawn,
-              progressText: document.querySelector('#progress-value').textContent,
-              activeNodes: snapshot.activeNodes,
-              scan: snapshot.scan,
-              iconStates: [...snapshot.iconStates],
-              headingKey: snapshot.headingKey,
-              headingText: snapshot.headingText,
-              mark: snapshot.mark,
-              reducedMotion: snapshot.reducedMotion
-            };
-          });
-          assert.deepEqual(actual, {
-            stage: expected.stage,
-            domStage: expected.stage,
-            progress: expected.progress,
-            progressDrawn: ['synchronize', 'authorize'].includes(expected.stage),
-            progressText: expected.progress.toFixed(1),
-            activeNodes: expected.activeNodes,
-            scan: expected.scan,
-            iconStates: expectedIconStates(expected.activeNodes),
-            headingKey: `boot.${expected.stage}.heading`,
-            headingText: expected.headingText,
-            mark: expected.mark,
-            reducedMotion: true
-          });
-
-          const layout = await page.evaluate(() => ({
-            innerWidth,
-            innerHeight,
-            scrollWidth: document.documentElement.scrollWidth,
-            scrollHeight: document.documentElement.scrollHeight
-          }));
-          assert.equal(layout.scrollWidth, layout.innerWidth);
-          assert.equal(layout.scrollHeight, layout.innerHeight);
-
-          const capture = path.join(
-            captureRoot,
-            `${viewport.width}x${viewport.height}-${String(expected.elapsedMs).padStart(5, '0')}.png`
-          );
-          await page.screenshot({path: capture});
-          assert.deepEqual(await pngSize(capture), viewport);
+      await page.waitForFunction(expected => globalThis.ProjectZeroRendererDirectorInstance?.mode() === expected && globalThis.audioAcceptance, mode);
+      await page.setViewportSize(viewport);
+      await page.evaluate(() => document.fonts.load('900 76px "Unit02 Mincho"'));
+      assert.equal(await page.evaluate(() => document.fonts.check('900 76px "Unit02 Mincho"')), true);
+      for (const frame of manifest.frames) {
+        if (frame.logicalMs === 14100) {
+          const before = await page.evaluate(() => ({time: audioAcceptance.time(), record: ProjectZeroRendererDirectorInstance.lastRenderRecord()}));
+          await page.waitForTimeout(150);
+          assert.deepEqual(await page.evaluate(() => ({time: audioAcceptance.time(), record: ProjectZeroRendererDirectorInstance.lastRenderRecord()})), before, '99.2 gate freezes audio and nodes');
+          assert.ok(Math.abs(before.time - 13.3) < .001);
+          await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
+          await page.getByRole('button', {name: /确认驾驶员授权并完成同步/}).click();
+          await page.waitForFunction(() => document.body.dataset.phase === 'completing');
+          assert.ok(await page.evaluate(() => audioAcceptance.calls.some(call => call.name === 'resume')));
         }
-      }
-
-      const remoteResources = await page.evaluate(() => {
-        const localOrigin = location.origin;
-        return performance.getEntriesByType('resource')
-          .map(entry => entry.name)
-          .filter(url => new URL(url).origin !== localOrigin);
-      });
-      assert.deepEqual(remoteResources, []);
-
-      await app.close();
-      app = await electron.launch({
-        args: ['.'],
-        env: {
-          ...process.env,
-          NODE_ENV: 'test',
-          PROJECT_ZERO_TEST_DATA_ROOT: dataRoot,
-          PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs')
+        await seekPresentation(page, frame.logicalMs);
+        if (frame.logicalMs === 20500) {
+          await page.locator('#workbench-shell').waitFor({state: 'visible'});
+          await windowMode(page, 'windowed');
+          assert.equal(await page.locator('#boot-screen').isHidden(), true);
+          continue;
         }
-      });
-      page = await app.firstWindow();
-      await page.waitForURL(/^http:\/\/127\.0\.0\.1:/);
-      await page.waitForFunction(() =>
-        typeof globalThis.ProjectZeroTestBridge?.setPresentationElapsed === 'function'
-          && typeof globalThis.ProjectZeroBootCanvasInstance?.lastRenderRecord === 'function');
-      await waitForWindowMode(page, 'fullscreen');
-      assert.equal(await readWindowMode(page), 'fullscreen');
-      for (const keyframe of KEYFRAMES) {
-        await setPresentationElapsed(page, keyframe.elapsedMs);
+        const record = await page.evaluate(() => ProjectZeroRendererDirectorInstance.lastRenderRecord());
+        assert.equal(await page.locator('body').getAttribute('data-stage'), frame.stage);
+        if (mode === 'reference') {
+          verifyRecord(record, frame);
+          assert.equal(await page.locator('#progress-value').textContent(), frame.progress.toFixed(1));
+          assert.equal(await page.locator('#ring-progress').getAttribute('aria-valuenow'), frame.progress.toFixed(1));
+          assert.equal(record.mark, frame.mode === 'mark' && frame.logicalMs > 0 ? 'private' : 'not-drawn');
+          assert.equal(await page.locator('.reference-node-icon').count(), 0);
+          assert.equal(await page.locator('.reference-node[hidden]').count(), frame.logicalMs === 0 ? 12 : 2);
+          assert.equal(await page.evaluate(() => [...document.querySelectorAll('.reference-node')].every(node => /^(WARNING|EMERGENCY)$/.test(node.textContent))), true);
+          if (requestedCapture && viewport.width === 1920) {
+            const base = path.join(captureRoot, `reference-${frame.logicalMs}`);
+            await page.locator('#reference-sequence').screenshot({path: `${base}.png`, scale: 'css'});
+            await fs.writeFile(`${base}.json`, JSON.stringify(record));
+          }
+        } else verifyCanvas(record, frame);
+        const layout = await page.evaluate(() => [document.documentElement.scrollWidth === innerWidth, document.documentElement.scrollHeight === innerHeight]);
+        assert.deepEqual(layout, [true, true]);
+        await page.screenshot({path: path.join(captureRoot, `${mode}-${viewport.width}x${viewport.height}-${frame.logicalMs}.png`), scale: 'css'});
       }
-
-      const readiness = await page.evaluate(async () => {
-        const response = await fetch('/health', {cache: 'no-store'});
-        const health = await response.json();
-        return {ready: health.ready, code: health.code};
-      });
-      assert.deepEqual(readiness, {ready: true, code: 'READY'});
-      await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
-      await page.getByRole('button', {name: /确认驾驶员授权并完成同步/}).click();
-      await page.waitForFunction(() => document.body.dataset.phase === 'completing');
-      await setPresentationElapsed(page, 20500);
-      await page.waitForFunction(() => document.body.dataset.phase === 'complete');
-      await page.locator('#workbench-shell').waitFor({state: 'visible'});
-      await waitForWindowMode(page, 'windowed');
-      assert.equal(await readWindowMode(page), 'windowed');
-    } finally {
-      await app?.close();
     }
-  });
+    assert.deepEqual(await page.evaluate(() => performance.getEntriesByType('resource').map(entry => entry.name).filter(url => new URL(url).origin !== location.origin)), []);
+    // Reduced motion retains sampled information while suppressing wave movement and flashes.
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    await page.reload({waitUntil: 'domcontentloaded'});
+    await page.waitForFunction(expected => globalThis.ProjectZeroRendererDirectorInstance?.mode() === expected && globalThis.audioAcceptance, mode);
+    await seekPresentation(page, 10500);
+    const reduced = await page.evaluate(() => ProjectZeroRendererDirectorInstance.lastRenderRecord());
+    assert.equal(reduced.reducedMotion, true);
+    if (mode === 'reference') {
+      assert.equal(reduced.metricText, '29.0%');
+      assert.equal(reduced.flashVisible, false);
+      // Prove that the acceptance oracle fails for actual DOM deviations.
+      const sampled = manifest.frames.find(frame => frame.logicalMs === 10500);
+      await page.evaluate(() => { document.querySelector('.reference-node').style.opacity = '1'; });
+      const altered = await page.evaluate(() => ProjectZeroRendererDirectorInstance.lastRenderRecord());
+      assert.throws(() => verifyRecord(altered, sampled));
+    } else assert.equal(reduced.progress, 99.2);
+  } finally { await app?.close(); }
+});

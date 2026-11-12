@@ -252,6 +252,8 @@ test('real browser selects both renderers, keeps one accessible control layer an
     assert.equal(reference.record.flashVisible, false);
     assert.equal(reference.record.reducedMotion, true);
     assert.equal(reference.elapsedMs, 10500);
+    assert.equal(await page.locator('#progress-value').textContent(), '29.0');
+    assert.equal(await page.locator('#ring-progress').getAttribute('aria-valuenow'), '29.0');
     await page.setViewportSize({width: 390, height: 844});
     const resized = await page.evaluate(() => ({elapsedMs: referenceSnapshot.elapsedMs,
       activeNodes: ProjectZeroRendererDirectorInstance.lastRenderRecord().activeNodes}));
@@ -273,8 +275,14 @@ test('real browser selects both renderers, keeps one accessible control layer an
     assert.equal(fallback.hiddenDuringPaint, false);
     assert.equal(fallback.referenceHidden, true);
     assert.notEqual(fallback.canvasDisplay, 'none');
-    assert.equal(fallback.record.activeNodes, reference.record.activeNodes);
+    assert.equal(fallback.record.activeNodes, 12);
     assert.equal(fallback.record.reducedMotion, true);
+    const resizePaints = await page.evaluate(() => {
+      const before = ProjectZeroBootCanvasInstance.lastRenderRecord().renderCount;
+      dispatchEvent(new Event('resize'));
+      return ProjectZeroBootCanvasInstance.lastRenderRecord().renderCount - before;
+    });
+    assert.equal(resizePaints, 1, 'the director is the sole resize owner after selection');
     await page.reload({waitUntil: 'networkidle'});
     await page.waitForFunction(() => globalThis.ProjectZeroRendererDirectorInstance?.mode() === 'reference');
     await page.evaluate(() => {
@@ -289,7 +297,7 @@ test('real browser selects both renderers, keeps one accessible control layer an
       activeNodes: ProjectZeroRendererDirectorInstance.lastRenderRecord().activeNodes,
       referenceHidden: document.querySelector('#reference-sequence').hidden,
       hiddenDuringPaint: canvasPaintReferenceHidden
-    })), {sameSnapshot: true, elapsedMs: 10500, activeNodes: reference.record.activeNodes,
+    })), {sameSnapshot: true, elapsedMs: 10500, activeNodes: 12,
       referenceHidden: true, hiddenDuringPaint: false});
     for (const scenario of ['missing private', 'undecodable mark']) {
       privateAvailable = scenario !== 'missing private';

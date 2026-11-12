@@ -7,6 +7,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const {chromium} = require('playwright');
 const {createReferenceRenderer} = require('../renderer/boot/reference-renderer.js');
+const manifest = require('./fixtures/reference-video-manifest.json');
+const hold = manifest.frames.find(frame => frame.logicalMs === 13300);
 const {createWorkbenchService} = require('../workbench/service.cjs');
 
 test('renderer exports a CSP-safe browser UMD API', () => {
@@ -52,21 +54,29 @@ test('real Chromium DOM renders computed records and keeps the canvas fallback i
 
   await t.test('render record comes from computed DOM styles and visible nodes', async () => {
     const record = await page.evaluate(() => referenceTestRenderer.lastRenderRecord());
-    assert.equal(record.visibleNodeCount, 12);
-    assert.equal(record.activeNodeCount, 12);
+    assert.equal(record.visibleNodeCount, 10);
+    assert.equal(record.activeNodeCount, 2);
     assert.equal(record.metricText, '99.2%');
     assert.equal(record.scanVisible, false);
-    assert.equal(record.computed.backgroundColor, 'rgb(237, 246, 250)');
+    assert.equal(record.computed.backgroundColor, 'rgb(234, 242, 253)');
     assert.match(record.computed.titleFontFamily, /Unit02 Mincho/);
     assert.equal(record.header.unit, 'EVANGELION-00');
     assert.equal(record.header.pilot, '零号机');
-    assert.equal(record.headingText, 'PILOT AUTHORIZATION');
+    assert.equal(record.headingText, '');
     assert.equal(record.ringDegrees, 357.12);
     assert.deepEqual(await page.evaluate(() => ({
       guide: getComputedStyle(document.querySelector('.reference-ring-guide')).stroke,
       nodeFill: getComputedStyle(document.querySelector('.reference-node-hex')).fill
-    })), {guide: 'rgb(167, 208, 216)', nodeFill: 'rgb(167, 208, 216)'});
-    assert.deepEqual(record.nodeLabels, Array.from({length: 12}, (_, i) => i % 2 ? 'EMERGENCY' : 'WARNING'));
+    })), {guide: 'rgb(185, 215, 236)', nodeFill: 'rgb(185, 215, 236)'});
+    assert.deepEqual(record.nodeLabels, hold.nodes.filter(node => node.visible).map(node => node.label));
+    assert.deepEqual(record.nodes, hold.nodes);
+    assert.equal(await page.locator('.reference-node-icon').count(), 0);
+    assert.equal(record.computed.headingSize, '76px');
+    assert.ok(['normal', '0px'].includes(record.computed.headingSpacing));
+    assert.equal(record.computed.nodeSize, '24px');
+    assert.equal(record.computed.borderWidth, '1px');
+    assert.deepEqual(record.nodeGeometry?.[0], {x: 250, y: 201, width: 208, height: 144});
+    assert.deepEqual(record.centerGeometry, {x: 960, y: 486, ringRadius: 196});
     const fontLoaded = await page.evaluate(async () => {
       await document.fonts.load('900 40px "Unit02 Mincho"');
       return document.fonts.check('900 40px "Unit02 Mincho"');
@@ -82,7 +92,7 @@ test('real Chromium DOM renders computed records and keeps the canvas fallback i
       const after = referenceTestRenderer.lastRenderRecord();
       return [before.headingText, after.headingText, document.querySelectorAll('#reference-sequence img').length,
         after.iconStates.some(icon => icon.startsWith('evil'))];
-    }), ['PILOT AUTHORIZATION', 'PILOT AUTHORIZATION', 0, false]);
+    }), ['', '', 0, false]);
   });
 
   await t.test('records observe actual DOM visibility and computed CSS rather than cached input', async () => {
@@ -92,8 +102,8 @@ test('real Chromium DOM renders computed records and keeps the canvas fallback i
       document.querySelector('#reference-sequence').style.backgroundColor = 'rgb(1, 2, 3)';
       return referenceTestRenderer.lastRenderRecord();
     });
-    assert.equal(record.visibleNodeCount, 11);
-    assert.equal(record.activeNodeCount, 11);
+    assert.equal(record.visibleNodeCount, 9);
+    assert.equal(record.activeNodeCount, 2);
     assert.equal(record.metricText, 'DOM VALUE');
     assert.equal(record.computed.backgroundColor, 'rgb(1, 2, 3)');
     await page.evaluate(() => {
@@ -108,13 +118,14 @@ test('real Chromium DOM renders computed records and keeps the canvas fallback i
       return referenceTestRenderer.lastRenderRecord();
     }));
     assert.equal(frames[0].scanVisible, true);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.reference-node-column')).mixBlendMode), 'multiply');
     assert.ok(frames[0].scanHeight > 0 && frames[0].scanHeight < 1080);
     assert.equal(frames[0].cue.zh, 'LCL 循环注入');
-    assert.equal(frames[1].activeNodeCount, 4);
+    assert.equal(frames[1].activeNodeCount, 5);
     assert.equal(frames[1].scanVisible, false);
     assert.equal(frames[2].flashVisible, true);
     assert.equal(frames[3].flashVisible, false);
-    assert.equal(frames[3].headingText, 'SYSTEM ONLINE');
+    assert.equal(frames[3].headingText, '工作台已就绪');
     assert.equal(frames[3].metricText, '');
   });
 
@@ -132,7 +143,7 @@ test('real Chromium DOM renders computed records and keeps the canvas fallback i
       assert.ok(Math.abs(size.height - 1080 * scale) < 0.01);
       assert.ok(Math.abs(size.x - (viewport.width - size.width) / 2) < 0.01);
       assert.ok(Math.abs(size.y - (viewport.height - size.height) / 2) < 0.01);
-      assert.equal(size.heading, 'SYSTEM ONLINE');
+      assert.equal(size.heading, '工作台已就绪');
     }
   });
 

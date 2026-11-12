@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {_electron: electron} = require('playwright');
 const pkg = require('../../package.json');
+const {silentWav} = require('./boot-support.cjs');
 const {packPrivateTheme} = require('../../scripts/pack-private-theme.cjs');
 const {
   runElectronBuilder,
@@ -21,7 +22,7 @@ const {
 } = require('./asar-assertions.cjs');
 
 const projectRoot = path.join(__dirname, '..', '..');
-const themeRoot = path.join(__dirname, '..', 'fixtures', 'private-theme-valid');
+const sourceThemeRoot = path.join(__dirname, '..', 'fixtures', 'private-theme-valid');
 const projectEntries = [
   'app', 'assets', 'LICENSE', 'NOTICE.md', 'package.json',
   'renderer', 'THIRD_PARTY_NOTICES.md', 'workbench'
@@ -61,10 +62,24 @@ async function isolatedProject(t) {
   return root;
 }
 
+async function isolatedTheme(t) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'zero-private-visual-theme-'));
+  t.after(() => fs.rm(directory, {recursive: true, force: true}));
+  await fs.cp(sourceThemeRoot, directory, {recursive: true});
+  const wav = silentWav();
+  await fs.writeFile(path.join(directory, 'startup-reference.wav'), wav);
+  const manifestPath = path.join(directory, 'assets.json');
+  const themeManifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  themeManifest.assets.find(asset => asset.file === 'startup-reference.wav').sha256 = sha256(wav);
+  await fs.writeFile(manifestPath, JSON.stringify(themeManifest));
+  return directory;
+}
+
 test('synthetic private theme packs independently, preserves public files, and launches', {
   timeout: 120000
 }, async t => {
   const before = await trackedHashes();
+  const themeRoot = await isolatedTheme(t);
   const temporaryProject = await isolatedProject(t);
   await runElectronBuilder({
     projectRoot: temporaryProject,
@@ -131,10 +146,20 @@ test('synthetic private theme packs independently, preserves public files, and l
         'Contents',
         'MacOS',
         pkg.build.productName
-      )
+      ),
+      env: {...process.env, NODE_ENV: 'test', PROJECT_ZERO_TEST_BRIDGE_MODULE: path.join(__dirname, '..', 'support', 'fake-codex.cjs')}
     });
     const page = await app.firstWindow();
-    await page.locator('#boot-sequence').waitFor();
+    await page.locator('#reference-sequence').waitFor({state: 'visible'});
+    assert.equal(await page.locator('#boot-sequence').isHidden(), true);
+    assert.deepEqual(await page.evaluate(() => ({mode: ProjectZeroRendererDirectorInstance.mode(),
+      bridge: typeof globalThis.ProjectZeroTestBridge, record: ProjectZeroRendererDirectorInstance.lastRenderRecord(),
+      labelsValid: [...document.querySelectorAll('.reference-node')].every(node => /^(WARNING|EMERGENCY)$/.test(node.textContent)),
+      icons: document.querySelectorAll('.reference-node-icon').length
+    })), {mode: 'reference', bridge: 'undefined', record: null,
+      labelsValid: true, icons: 0});
+    await page.getByRole('button', {name: /跳过动态演示/}).click();
+    await page.locator('.reference-metric').filter({hasText: '99.2%'}).waitFor();
     assert.equal(await page.title(), 'PROJECT ZERO // TEST PRIVATE THEME');
   } finally {
     await app?.close();

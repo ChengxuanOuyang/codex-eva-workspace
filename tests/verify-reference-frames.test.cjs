@@ -1,0 +1,33 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const {parseArguments, validateDirectory, openRegular, verifyReferenceFrames} = require('../scripts/verify-reference-frames.cjs');
+
+test('reference verifier accepts only the narrow absolute MP4 and temporary screenshot interface', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'zero-reference-security-'));
+  t.after(() => fs.rm(directory, {recursive: true, force: true}));
+  for (const args of [[], ['--video', 'relative.mp4', '--screenshots', directory], ['--video', '/video.mov', '--screenshots', directory], ['--video', '/video.mp4', '--screenshots', directory, '--force']]) assert.throws(() => parseArguments(args));
+  assert.deepEqual(parseArguments(['--video', '/video.mp4', '--screenshots', directory]), {video: '/video.mp4', screenshots: directory});
+  const real = path.join(directory, 'real');
+  await fs.mkdir(real);
+  const link = path.join(directory, 'link');
+  await fs.symlink(real, link);
+  await assert.rejects(validateDirectory(link));
+  await assert.rejects(validateDirectory(process.cwd()));
+  await assert.rejects(validateDirectory(os.tmpdir()));
+  const regular = path.join(directory, 'video.mp4');
+  await fs.writeFile(regular, '0000ftypisom');
+  const videoLink = path.join(directory, 'linked.mp4');
+  await fs.symlink(regular, videoLink);
+  await assert.rejects(openRegular(videoLink, 100));
+  await assert.rejects(openRegular(directory, 100));
+  const logs = [];
+  const result = await verifyReferenceFrames({argv: ['--video', regular, '--screenshots', real], log: line => logs.push(line)});
+  assert.equal(result.passed, false);
+  assert.ok(logs.some(line => line.startsWith('SHA256 ')));
+  assert.ok(logs.includes('FAIL video-identity'));
+  assert.equal(logs.some(line => line.includes(directory)), false);
+});
