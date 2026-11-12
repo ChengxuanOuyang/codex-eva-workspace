@@ -96,15 +96,16 @@
           <strong>PZ</strong><small>00</small>
         </div>
         <div>
-          <p class="eyebrow">LOCAL WORKBENCH / SYSTEM ONLINE</p>
+          <p class="unit-title" data-workbench-unit>PROJECT ZERO</p>
           <p class="workbench-title">PROJECT ZERO <span>//</span> PILOT CODEX WORKBENCH</p>
         </div>
       </div>
+      <div class="workbench-telemetry"><p class="eyebrow">LOCAL WORKBENCH / SYSTEM ONLINE</p><p class="pilot-label" data-workbench-pilot>LOCAL / PILOT-00</p></div>
       <p class="shell-status"><span class="signal-dot"></span><span id="shell-readiness-text">正在检查本地链路</span></p>
     </header>
     <div id="workbench-app" class="core-workbench" data-feature="chat">
       <aside class="project-column" aria-label="项目和任务">
-        <p class="rail-title">PROJECTS / THREADS</p>
+        <p class="rail-title"><span class="panel-symbol" aria-hidden="true">◇</span> PROJECTS / THREADS <span class="panel-slashes" aria-hidden="true">///</span></p>
         <form id="project-form" class="project-form">
           <label for="project-path">项目路径</label>
           <div><input id="project-path" name="path" type="text" autocomplete="off" placeholder="/path/to/project"><button type="submit">添加项目</button></div>
@@ -117,7 +118,7 @@
 
       <section class="conversation-column" aria-labelledby="workbench-heading">
         <div class="conversation-heading">
-          <div><p class="stage-index">00—WORKBENCH / LOCAL</p><h1 id="workbench-heading">核心工作台</h1></div>
+          <div><p class="panel-code" aria-hidden="true">CORE WORKSPACE</p><h1 id="workbench-heading">核心工作台</h1></div>
           <p id="turn-state" class="turn-state">待命</p>
         </div>
         <div id="message-list" class="message-list" role="log" aria-live="polite">
@@ -145,8 +146,8 @@
             <button id="shell-retry-button" class="retry-button" type="button" hidden>重新检查 Codex</button>
           </div>
         </section>
-        <section><div class="column-heading"><h2>审批</h2><span id="approval-count">00</span></div><div id="approval-list" class="approval-list"></div></section>
-        <section><div class="column-heading"><h2>执行记录</h2></div><div id="tool-list" class="tool-list"></div></section>
+        <section class="approvals-panel"><p class="panel-code" aria-hidden="true">APPROVALS <span class="panel-slashes">///</span></p><div class="column-heading"><h2>审批</h2><span id="approval-count">00</span></div><div id="approval-list" class="approval-list"></div></section>
+        <section class="activity-panel"><p class="panel-code" aria-hidden="true">TOOL ACTIVITY <span class="panel-slashes">///</span></p><div class="column-heading"><h2>执行记录</h2></div><div id="tool-list" class="tool-list"></div></section>
         <section class="files-panel"><div class="column-heading"><h2>项目文件</h2><button id="refresh-files-button" type="button" disabled>刷新</button></div><div id="file-list" class="file-list"></div><pre id="file-preview" class="file-preview" hidden></pre></section>
       </aside>
       <section id="tool-dock" class="tool-dock" aria-label="本地工具">

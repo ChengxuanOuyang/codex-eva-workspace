@@ -15,6 +15,12 @@
     '/private/startup-reference.wav',
     '/private/startup-reference.m4a'
   ]);
+  const PUBLIC_PRESENTATION = Object.freeze({
+    unit: 'PROJECT ZERO', pilot: 'LOCAL / PILOT-00', portraitUrl: null
+  });
+  const PRIVATE_PRESENTATION = Object.freeze({
+    unit: 'EVANGELION-00', pilot: 'REI / 绫波丽', portraitUrl: PRIVATE_PORTRAIT
+  });
   const appliedColors = new Set();
   const element = root.document.documentElement;
   let privateWorkbench = element.style.getPropertyValue('--theme-workbench-portrait') ===
@@ -36,6 +42,11 @@
 
   function syncPrivatePortrait() {
     element.dataset.privateWorkbench = String(privateWorkbench);
+    const presentation = privateWorkbench ? PRIVATE_PRESENTATION : PUBLIC_PRESENTATION;
+    const unit = root.document.querySelector?.('[data-workbench-unit]');
+    const pilot = root.document.querySelector?.('[data-workbench-pilot]');
+    if (unit) unit.textContent = privateWorkbench ? `${presentation.unit} 零号机` : presentation.unit;
+    if (pilot) pilot.textContent = presentation.pilot;
     if (privateWorkbench) {
       element.style.setProperty('--theme-workbench-portrait', PRIVATE_PORTRAIT_CSS);
     } else {
@@ -76,5 +87,8 @@
   }
 
   syncPrivatePortrait();
-  root.ProjectZeroThemes = Object.freeze({option, apply, applyPrivateConfig});
+  root.ProjectZeroThemes = Object.freeze({
+    option, apply, applyPrivateConfig,
+    get presentation() { return privateWorkbench ? PRIVATE_PRESENTATION : PUBLIC_PRESENTATION; }
+  });
 })(window);

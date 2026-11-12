@@ -304,3 +304,14 @@ test('reference DOM is a hidden companion surface with local styles and fixed lo
   assert.match(css, /--reference-scale/);
   assert.doesNotMatch(css, /https?:\/\/|data:image|#(?:ff0000|000000)\b/i);
 });
+
+test('workbench assets keep the private portrait out of public resource declarations', async () => {
+  const [html, css] = await Promise.all([read('boot/index.html'), read('workbench/workbench.css')]);
+  assert.match(html, /class="workbench-portrait" aria-hidden="true"/);
+  assert.doesNotMatch(html, /(?:src|href|style)="[^"\n]*\/private\//);
+  assert.doesNotMatch(css, /url\([^)]*\/private\//);
+  assert.match(css, /background:\s*var\(--theme-workbench-portrait, none\)/);
+  assert.match(css, /html\[data-private-workbench="false"\] \.workbench-portrait\s*\{\s*display:\s*none/);
+  assert.match(html, /data-workbench-unit>PROJECT ZERO</);
+  assert.match(html, /data-workbench-pilot>LOCAL \/ PILOT-00</);
+});

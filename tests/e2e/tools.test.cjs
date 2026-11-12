@@ -33,7 +33,7 @@ test('terminal warning, Git stage and plugin confirmation remain explicit', {tim
 
     await page.getByRole('button', {name: /跳过动态演示/}).click();
     await page.waitForFunction(() => !document.querySelector('#confirm-button').disabled);
-    await page.getByRole('button', {name: '确认并完成同步'}).click();
+    await page.getByRole('button', {name: '确认驾驶员授权并完成同步'}).click();
     await page.locator('#workbench-shell').waitFor({state: 'visible'});
     await page.getByLabel('项目路径').fill(project);
     await page.getByRole('button', {name: '添加项目'}).click();
