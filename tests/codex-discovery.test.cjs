@@ -6,12 +6,13 @@ const path = require('node:path');
 const {candidatePaths, findCodex} = require('../app/codex-discovery.cjs');
 
 const bundledCodex = '/Applications/ChatGPT.app/Contents/Resources/codex';
+const currentBundledCodex = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
 
 function hideBundledCodex(t) {
   const accessSync = fs.accessSync;
   const statSync = fs.statSync;
   const unavailable = candidate => {
-    if (candidate !== bundledCodex) return false;
+    if (candidate !== bundledCodex && candidate !== currentBundledCodex) return false;
     const error = Error('bundled Codex hidden for discovery test');
     error.code = 'ENOENT';
     throw error;
@@ -40,9 +41,9 @@ function temporaryCandidates(t) {
   return {directory, nonExecutable, executable};
 }
 
-test('bundled ChatGPT binary precedes PATH and user selection', () => {
-  assert.deepEqual(candidatePaths('/custom/codex', '/path/codex').slice(0, 3), [
-    '/Applications/ChatGPT.app/Contents/Resources/codex', '/path/codex', '/custom/codex'
+test('current bundled ChatGPT binary precedes legacy, PATH, and user selection', () => {
+  assert.deepEqual(candidatePaths('/custom/codex', '/path/codex').slice(0, 4), [
+    currentBundledCodex, bundledCodex, '/path/codex', '/custom/codex'
   ]);
 });
 

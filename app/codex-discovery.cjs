@@ -4,6 +4,7 @@ const fs = require('node:fs');
 
 function candidatePaths(userPath, pathCodex) {
   return [
+    '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
     '/Applications/ChatGPT.app/Contents/Resources/codex',
     pathCodex,
     userPath
